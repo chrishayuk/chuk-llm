@@ -1,4 +1,4 @@
-# chuk_llm/providers/anthropic_client.py
+# chuk_llm/llm/providers/anthropic_client.py
 """
 Anthropic chat-completion adapter
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

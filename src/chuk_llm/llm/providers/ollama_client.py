@@ -1,4 +1,4 @@
-# chuk_llm/providers/ollama_client.py
+# chuk_llm/llm/providers/ollama_client.py
 """
 Ollama chat-completion adapter.
 """

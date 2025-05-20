@@ -1,18 +1,20 @@
-# Chuk-LLM
+# chuk_llm
 
-A unified interface for interacting with multiple Large Language Model providers with a consistent API.
+A flexible and unified Python library for interacting with multiple Large Language Model (LLM) providers through a consistent interface.
 
-## Overview
+## Features
 
-Chuk-LLM provides a lightweight, unified interface to interact with various LLM providers including:
-
-- OpenAI
-- Anthropic (Claude)
-- Groq
-- Google (Gemini)
-- Ollama (local models)
-
-The library handles the differences between provider APIs, allowing you to switch models or providers with minimal code changes.
+- **Provider-agnostic API**: Use the same code to interact with multiple LLM providers
+- **Supported providers**:
+  - OpenAI (gpt-4o-mini, etc.)
+  - Groq (llama-3.3-70b-versatile, etc.)
+  - Ollama (locally-hosted models)
+  - Google Gemini (gemini-2.0-flash, etc.)
+  - Anthropic Claude (claude-3-7-sonnet-20250219, etc.)
+- **Streaming support**: Async iterators for streaming completions from supported providers
+- **Tool/function calling**: Consistent interface for tool/function calling across providers
+- **Environment variables**: Load API keys and configurations from `.env` files
+- **Configurable defaults**: Easy to customize default providers and models
 
 ## Installation
 
@@ -20,204 +22,239 @@ The library handles the differences between provider APIs, allowing you to switc
 pip install chuk-llm
 ```
 
-## Features
-
-- **Unified API**: Common interface across all supported providers
-- **Streaming Support**: Stream tokens as they're generated
-- **Function/Tool Calling**: Execute tools and functions across providers
-- **Multimodal Support**: Process images with compatible models
-- **Provider Configuration**: Centralized configuration management
-- **Async Architecture**: Modern async/await design for efficient processing
-
 ## Quick Start
 
 ```python
 import asyncio
-from chuk_llm.llm_client import get_llm_client
+from chuk_llm.llm.llm_client import get_llm_client
 
 async def main():
-    # Get a client for any supported provider
-    client = get_llm_client(provider="openai", model="gpt-4o-mini")
+    # Get a client for the default provider (OpenAI)
+    client = get_llm_client()
     
-    # Simple completion
-    response = await client.create_completion([
-        {"role": "user", "content": "Hello! How are you today?"}
-    ])
+    # Or specify a provider and model
+    # client = get_llm_client(provider="anthropic", model="claude-3-7-sonnet-20250219")
     
-    print(response["response"])
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Hello, how are you?"}
+    ]
     
-    # With streaming
-    stream = await client.create_completion([
-        {"role": "user", "content": "Count to 5 slowly"}
-    ], stream=True)
+    # Non-streaming completion
+    result = await client.create_completion(messages)
+    print(result["response"])
     
-    async for chunk in stream:
+    # Streaming completion
+    async for chunk in client.create_completion(messages, stream=True):
         print(chunk["response"], end="", flush=True)
 
-if __name__ == "__main__":
-    asyncio.run(main())
+asyncio.run(main())
 ```
 
-## Tool Calling
-
-```python
-import asyncio
-from chuk_llm.llm_client import get_llm_client
-
-# Define a tool
-WEATHER_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "get_weather",
-        "description": "Get current weather in a location",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "location": {
-                    "type": "string",
-                    "description": "City and state, e.g. San Francisco, CA"
-                }
-            },
-            "required": ["location"]
-        }
-    }
-}
-
-async def main():
-    client = get_llm_client(provider="openai", model="gpt-4o")
-    
-    # Request using tools
-    response = await client.create_completion([
-        {"role": "user", "content": "What's the weather like in London today?"}
-    ], tools=[WEATHER_TOOL])
-    
-    # Check if the model wants to call a tool
-    if tool_calls := response.get("tool_calls"):
-        for tool_call in tool_calls:
-            print(f"Tool call: {tool_call['function']['name']}")
-            print(f"Arguments: {tool_call['function']['arguments']}")
-            
-            # Here you would actually call your tool/function...
-            weather_data = {"temperature": 22, "condition": "Partly Cloudy"}
-            
-            # Send the tool's response back to the model
-            final_response = await client.create_completion([
-                {"role": "user", "content": "What's the weather like in London today?"},
-                {"role": "assistant", "content": None, "tool_calls": [tool_call]},
-                {"role": "tool", "content": str(weather_data), "tool_call_id": tool_call["id"]}
-            ])
-            
-            print(final_response["response"])
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-## Multimodal Support
-
-```python
-import asyncio
-import base64
-from chuk_llm.llm_client import get_llm_client
-
-async def main():
-    # Use a model with vision capabilities
-    client = get_llm_client(provider="openai", model="gpt-4o")
-    
-    # Load an image (base64 encoded)
-    with open("image.jpg", "rb") as f:
-        image_data = base64.b64encode(f.read()).decode("utf-8")
-    
-    # Create a multimodal message
-    messages = [{
-        "role": "user",
-        "content": [
-            {"type": "text", "text": "What's in this image?"},
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_data}"}}
-        ]
-    }]
-    
-    response = await client.create_completion(messages)
-    print(response["response"])
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-## Provider Configuration
-
-Create a custom configuration with your preferred settings:
-
-```python
-from chuk_llm.llm.provider_config import ProviderConfig
-from chuk_llm.llm_client import get_llm_client
-
-# Create a configuration with custom settings
-config = ProviderConfig({
-    "openai": {
-        "api_key": "your-key-here",
-        "default_model": "gpt-4-turbo"
-    },
-    "anthropic": {
-        "api_key": "your-anthropic-key",
-        "default_model": "claude-3-sonnet-20240229"
-    }
-})
-
-# Use this configuration when getting a client
-client = get_llm_client(provider="anthropic", config=config)
-```
-
-## Diagnostics Tool
-
-The package includes a diagnostics script to test various providers:
-
-```bash
-# Run basic diagnostics on all providers
-python -m chuk_llm.diagnostics
-
-# Check specific providers
-python -m chuk_llm.diagnostics --providers openai anthropic
-
-# List models available in your Ollama installation
-python -m chuk_llm.diagnostics --show-ollama-models
-
-# Use specific models
-python -m chuk_llm.diagnostics --model "ollama:llama3.2"
-```
-
-## Advanced Usage
+## Configuration
 
 ### Environment Variables
 
-The library respects provider-specific environment variables:
+Create a `.env` file in your project directory:
 
-- `OPENAI_API_KEY` - For OpenAI
-- `ANTHROPIC_API_KEY` - For Anthropic
-- `GROQ_API_KEY` - For Groq
-- `GOOGLE_API_KEY` or `GEMINI_API_KEY` - For Google Gemini
+```
+# OpenAI
+OPENAI_API_KEY=your_openai_api_key
 
-### Custom API Base URLs
+# Anthropic
+ANTHROPIC_API_KEY=your_anthropic_api_key
+
+# Groq
+GROQ_API_KEY=your_groq_api_key
+
+# Google/Gemini
+GOOGLE_API_KEY=your_google_api_key
+# or
+GEMINI_API_KEY=your_gemini_api_key
+```
+
+### Provider Configuration
+
+You can configure providers programmatically:
 
 ```python
-client = get_llm_client(
-    provider="openai",
-    api_base="https://your-custom-endpoint.com/v1"
+from chuk_llm.llm.provider_config import ProviderConfig
+
+config = ProviderConfig()
+
+# Update a provider's configuration
+config.update_provider_config("openai", {
+    "api_base": "https://your-proxy.com/v1",
+    "default_model": "gpt-4-turbo"
+})
+
+# Set active provider and model
+config.set_active_provider("anthropic")
+config.set_active_model("claude-3-7-sonnet-20250219")
+
+# Use this configuration when getting a client
+from chuk_llm.llm.llm_client import get_llm_client
+client = get_llm_client(config=config)
+```
+
+## Tool/Function Calling Example
+
+```python
+import asyncio
+import json
+from chuk_llm.llm.llm_client import get_llm_client
+
+async def main():
+    client = get_llm_client(provider="openai", model="gpt-4o")
+    
+    # Define tools
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "Get the current weather in a location",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "location": {
+                            "type": "string",
+                            "description": "The city and state, e.g. San Francisco, CA"
+                        }
+                    },
+                    "required": ["location"]
+                }
+            }
+        }
+    ]
+    
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "What's the weather like in London today?"}
+    ]
+    
+    result = await client.create_completion(messages, tools=tools)
+    
+    if result["tool_calls"]:
+        for tool_call in result["tool_calls"]:
+            if tool_call["function"]["name"] == "get_weather":
+                args = json.loads(tool_call["function"]["arguments"])
+                location = args["location"]
+                print(f"The assistant wants to check the weather in {location}")
+                
+                # In a real application, you would call your weather API here
+                weather_data = {"temperature": 22, "condition": "Partly cloudy"}
+                
+                # Add the function response to messages
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call["id"],
+                    "name": "get_weather",
+                    "content": json.dumps(weather_data)
+                })
+        
+        # Get the final response with the tool results
+        final_result = await client.create_completion(messages)
+        print(final_result["response"])
+    else:
+        print(result["response"])
+
+asyncio.run(main())
+```
+
+## System Prompt Generation
+
+The library includes a `SystemPromptGenerator` class to help create structured system prompts:
+
+```python
+from chuk_llm.llm.system_prompt_generator import SystemPromptGenerator
+
+# Define available tools
+tools_json = {
+    "functions": [
+        {
+            "name": "search_database",
+            "description": "Search for information in the database",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query"
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    ]
+}
+
+# Generate a system prompt
+generator = SystemPromptGenerator()
+system_prompt = generator.generate_prompt(
+    tools=tools_json,
+    user_system_prompt="You are a database assistant that helps users find information.",
+    tool_config="Use the search_database function whenever the user asks for information."
 )
+
+# Use in messages
+messages = [
+    {"role": "system", "content": system_prompt},
+    {"role": "user", "content": "Find information about renewable energy"}
+]
 ```
 
-## Debugging
+## Supported Provider Models
 
-Set the `LOGLEVEL` environment variable to adjust logging verbosity:
+### OpenAI
+- gpt-4o
+- gpt-4o-mini
+- gpt-3.5-turbo
+- And others from OpenAI's model lineup
 
-```bash
-LOGLEVEL=DEBUG python your_script.py
-```
+### Anthropic
+- claude-3-7-sonnet-20250219
+- claude-3-opus
+- claude-3-sonnet
+- claude-3-haiku
+
+### Groq
+- llama-3.3-70b-versatile
+- llama-3-8b
+- And other models available on Groq
+
+### Google Gemini
+- gemini-2.0-flash
+- gemini-1.5-pro
+- And other Gemini models
+
+### Ollama
+- qwen3 (default)
+- llama3
+- mistral
+- and any other model available in your Ollama installation
+
+## Advanced Usage
+
+### Using the OpenAIStyleMixin
+
+Some providers share similar API patterns to OpenAI. The `OpenAIStyleMixin` provides helper methods for these providers:
+
+- `_sanitize_tool_names`: Ensures tool names are valid
+- `_call_blocking`: Runs blocking SDK calls in a thread
+- `_normalise_message`: Converts provider-specific responses to a standard format
+- `_stream_from_blocking`: Wraps blocking SDK generators into async iterators
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ## License
 
-MIT
-
-## Acknowledgements
-
-This library was created to simplify working with multiple LLM providers in Python applications.
+This project is licensed under the MIT License - see the LICENSE file for details.

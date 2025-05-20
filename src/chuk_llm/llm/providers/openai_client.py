@@ -1,4 +1,4 @@
-# chuk_llm/providers/openai_client.py
+# chuk_llm/llm/providers/openai_client.py
 """
 OpenAI chat-completion adapter.
 """

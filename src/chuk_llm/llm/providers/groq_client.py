@@ -1,4 +1,4 @@
-# chuk_llm/providers/groq_client.py
+# chuk_llm/llm/providers/groq_client.py
 """
 Groq chat-completion adapter for MCP-CLI.
 

@@ -1,4 +1,4 @@
-# chuk_llm/providers/gemini_client.py
+# chuk_llm/llm/providers/gemini_client.py
 """
 Google Gemini chat-completion adapter.
 """

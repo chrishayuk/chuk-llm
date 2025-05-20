@@ -1,4 +1,4 @@
-# chuk_llm/llm_client.py
+# chuk_llm/llm/llm_client.py
 """
 Central factory for obtaining a provider-specific LLM client.
 """

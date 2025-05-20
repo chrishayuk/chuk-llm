@@ -1,4 +1,4 @@
-# chuk_llm/system_prompt_generator.py
+# chuk_llm/llm/system_prompt_generator.py
 import json
 
 class SystemPromptGenerator:

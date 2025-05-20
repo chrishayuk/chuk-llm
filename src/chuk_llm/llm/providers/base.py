@@ -1,4 +1,4 @@
-# chuk_llm/providers/base.py
+# chuk_llm/llm/providers/base.py
 """
 Common abstract interface for every LLM adapter.
 """
