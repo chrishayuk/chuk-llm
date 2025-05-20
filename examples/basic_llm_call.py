@@ -19,8 +19,8 @@ from typing import Any, Dict, List
 from dotenv import load_dotenv
 
 # imports
-from chuk_llm.llm_client import get_llm_client
-from chuk_llm.system_prompt_generator import SystemPromptGenerator
+from chuk_llm.llm.llm_client import get_llm_client
+from chuk_llm.llm.system_prompt_generator import SystemPromptGenerator
 
 # load environment variables
 load_dotenv()

@@ -5,7 +5,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from chuk_llm.provider_config import ProviderConfig, DEFAULTS
+from chuk_llm.llm.provider_config import ProviderConfig, DEFAULTS
 
 class TestProviderConfig:
     """Tests for the ProviderConfig class."""

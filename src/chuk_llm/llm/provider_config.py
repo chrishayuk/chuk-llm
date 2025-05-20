@@ -1,4 +1,4 @@
-# chuk_llm/openai_style_mixin.py
+# chuk_llm/llm/openai_style_mixin.py
 """
 Provider configuration management.
 """
@@ -17,34 +17,34 @@ DEFAULTS: Dict[str, Dict[str, Any]] = {
         "active_model": "gpt-4o-mini",
     },
     "openai": {
-        "client": "chuk_llm.providers.openai_client:OpenAILLMClient",
+        "client": "chuk_llm.llm.providers.openai_client:OpenAILLMClient",
         "api_key_env": "OPENAI_API_KEY",
         "api_base": None,
         "api_key": None,
         "default_model": "gpt-4o-mini",
     },
     "groq": {
-        "client": "chuk_llm.providers.groq_client:GroqAILLMClient",
+        "client": "chuk_llm.llm.providers.groq_client:GroqAILLMClient",
         "api_key_env": "GROQ_API_KEY",
         "api_key": None,
         "api_base": None,
         "default_model": "llama-3.3-70b-versatile",
     },
     "ollama": {
-        "client": "chuk_llm.providers.ollama_client:OllamaLLMClient",
+        "client": "chuk_llm.llm.providers.ollama_client:OllamaLLMClient",
         "api_key_env": None,
         "api_base": "http://localhost:11434",
         "api_key": None,
         "default_model": "qwen3",
     },
     "gemini": {
-        "client": "chuk_llm.providers.gemini_client:GeminiLLMClient",
+        "client": "chuk_llm.llm.providers.gemini_client:GeminiLLMClient",
         "api_key_env": None,
         "api_key": None,
         "default_model": "gemini-2.0-flash",
     },
     "anthropic": {
-        "client": "chuk_llm.providers.anthropic_client:AnthropicLLMClient",
+        "client": "chuk_llm.llm.providers.anthropic_client:AnthropicLLMClient",
         "api_key_env": "ANTHROPIC_API_KEY",
         "api_base": None,
         "api_key": None,

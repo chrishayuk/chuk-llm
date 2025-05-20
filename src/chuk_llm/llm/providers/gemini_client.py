@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types as gtypes
 
-from chuk_llm.providers.base import BaseLLMClient
+from chuk_llm.llm.providers.base import BaseLLMClient
 
 log = logging.getLogger(__name__)
 

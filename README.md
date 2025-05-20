@@ -149,7 +149,7 @@ if __name__ == "__main__":
 Create a custom configuration with your preferred settings:
 
 ```python
-from chuk_llm.provider_config import ProviderConfig
+from chuk_llm.llm.provider_config import ProviderConfig
 from chuk_llm.llm_client import get_llm_client
 
 # Create a configuration with custom settings

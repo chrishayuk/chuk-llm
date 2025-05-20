@@ -6,7 +6,7 @@ import re
 import uuid
 from unittest.mock import MagicMock, patch, PropertyMock
 
-from chuk_llm.openai_style_mixin import OpenAIStyleMixin
+from chuk_llm.llm.openai_style_mixin import OpenAIStyleMixin
 
 # Create a concrete class that uses the mixin for testing
 class TestClient(OpenAIStyleMixin):

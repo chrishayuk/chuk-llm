@@ -7,7 +7,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 from openai import OpenAI
 
 # mixins
-from chuk_llm.openai_style_mixin import OpenAIStyleMixin
+from chuk_llm.llm.openai_style_mixin import OpenAIStyleMixin
 
 # base
 from .base import BaseLLMClient

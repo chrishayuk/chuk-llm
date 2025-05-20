@@ -5,7 +5,7 @@ from typing import Any, Dict, List
 
 import pytest
 
-from chuk_llm.providers.groq_client import GroqAILLMClient
+from chuk_llm.llm.providers.groq_client import GroqAILLMClient
 
 
 # ---------------------------------------------------------------------------

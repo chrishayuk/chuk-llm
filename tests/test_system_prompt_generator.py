@@ -1,6 +1,6 @@
 # tests/test_system_prompt_generator.py
 import json
-from chuk_llm.system_prompt_generator import SystemPromptGenerator
+from chuk_llm.llm.system_prompt_generator import SystemPromptGenerator
 
 def test_system_prompt_generator_initialization():
     """Test the initialization of SystemPromptGenerator."""

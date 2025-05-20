@@ -101,7 +101,7 @@ genai_mod.Client = DummyGenAIClient
 # Now import the adapter under test (it will pick up the stubs).
 # ---------------------------------------------------------------------------
 
-from chuk_llm.providers.gemini_client import GeminiLLMClient, _convert_messages, _convert_tools, _parse_final_response, _parse_stream_chunk  # noqa: E402  pylint: disable=wrong-import-position
+from chuk_llm.llm.providers.gemini_client import GeminiLLMClient, _convert_messages, _convert_tools, _parse_final_response, _parse_stream_chunk  # noqa: E402  pylint: disable=wrong-import-position
 
 
 # ---------------------------------------------------------------------------
@@ -424,7 +424,7 @@ def test_create_sync(monkeypatch, client):
     system_txt = "Be helpful"
     gem_contents = [MagicMock()]
     monkeypatch.setattr(
-        "chuk_llm.providers.gemini_client._convert_messages", 
+        "chuk_llm.llm.providers.gemini_client._convert_messages", 
         lambda m: (system_txt, gem_contents)
     )
     
@@ -432,7 +432,7 @@ def test_create_sync(monkeypatch, client):
     gem_tools = [MagicMock()]
     tool_cfg = MagicMock()
     monkeypatch.setattr(
-        "chuk_llm.providers.gemini_client._convert_tools", 
+        "chuk_llm.llm.providers.gemini_client._convert_tools", 
         lambda t: (gem_tools, tool_cfg)
     )
     
@@ -443,7 +443,7 @@ def test_create_sync(monkeypatch, client):
     # Mock _parse_final_response
     expected_result = {"response": "Test response", "tool_calls": []}
     monkeypatch.setattr(
-        "chuk_llm.providers.gemini_client._parse_final_response", 
+        "chuk_llm.llm.providers.gemini_client._parse_final_response", 
         lambda r: expected_result
     )
     
@@ -507,7 +507,7 @@ async def test_stream_internal(monkeypatch, client):
     system_txt = None
     gem_contents = [MagicMock()]
     monkeypatch.setattr(
-        "chuk_llm.providers.gemini_client._convert_messages", 
+        "chuk_llm.llm.providers.gemini_client._convert_messages", 
         lambda m: (system_txt, gem_contents)
     )
     
@@ -515,7 +515,7 @@ async def test_stream_internal(monkeypatch, client):
     gem_tools = [MagicMock()]
     tool_cfg = MagicMock()
     monkeypatch.setattr(
-        "chuk_llm.providers.gemini_client._convert_tools", 
+        "chuk_llm.llm.providers.gemini_client._convert_tools", 
         lambda t: (gem_tools, tool_cfg)
     )
     
@@ -539,7 +539,7 @@ async def test_stream_internal(monkeypatch, client):
     ]
     
     parse_mock = MagicMock(side_effect=parse_results)
-    monkeypatch.setattr("chuk_llm.providers.gemini_client._parse_stream_chunk", parse_mock)
+    monkeypatch.setattr("chuk_llm.llm.providers.gemini_client._parse_stream_chunk", parse_mock)
     
     # Create async queue mock
     class MockQueue:

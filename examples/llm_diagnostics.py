@@ -55,8 +55,8 @@ except ModuleNotFoundError:  # pragma: no cover
     _RICH = False
 
 # ─────────────── chuk-llm imports (local package) ──────────────
-from chuk_llm.llm_client import get_llm_client
-from chuk_llm.provider_config import DEFAULTS, ProviderConfig
+from chuk_llm.llm.llm_client import get_llm_client
+from chuk_llm.llm.provider_config import DEFAULTS, ProviderConfig
 
 # ─────────────────────── prompts & assets ──────────────────────
 TEXT_PROMPT     = "Why is testing LLM providers important? (3–4 sentences)"

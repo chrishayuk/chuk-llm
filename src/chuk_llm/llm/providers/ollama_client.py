@@ -10,7 +10,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 
 import ollama
 
-from chuk_llm.providers.base import BaseLLMClient
+from chuk_llm.llm.providers.base import BaseLLMClient
 
 log = logging.getLogger(__name__)
 

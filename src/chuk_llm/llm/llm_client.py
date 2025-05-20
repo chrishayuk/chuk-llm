@@ -16,8 +16,8 @@ from dotenv import load_dotenv
 load_dotenv() 
 
 # chuk llm
-from chuk_llm.providers.base import BaseLLMClient
-from chuk_llm.provider_config import ProviderConfig
+from chuk_llm.llm.providers.base import BaseLLMClient
+from chuk_llm.llm.provider_config import ProviderConfig
 
 # logging
 log = logging.getLogger(__name__)

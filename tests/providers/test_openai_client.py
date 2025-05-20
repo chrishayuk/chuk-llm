@@ -31,7 +31,7 @@ dummy_openai.OpenAI = DummyOpenAI
 sys.modules["openai"] = dummy_openai
 
 # Now the import is safe – it will pick up our stub instead of the real SDK.
-from chuk_llm.providers.openai_client import OpenAILLMClient  # noqa: E402  pylint: disable=wrong-import-position
+from chuk_llm.llm.providers.openai_client import OpenAILLMClient  # noqa: E402  pylint: disable=wrong-import-position
 
 
 # -----------------------------------------------------------------------------

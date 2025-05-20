@@ -3,7 +3,7 @@ import pytest
 import inspect
 from typing import Dict, Any, List, Optional
 
-from chuk_llm.providers.base import BaseLLMClient
+from chuk_llm.llm.providers.base import BaseLLMClient
 
 
 def test_cannot_instantiate_abstract():

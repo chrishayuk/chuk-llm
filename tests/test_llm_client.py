@@ -8,10 +8,10 @@ import importlib
 import os
 from unittest.mock import patch, MagicMock, PropertyMock
 
-from chuk_llm.llm_client import get_llm_client, _import_string, _supports_param, _constructor_kwargs
-from chuk_llm.provider_config import ProviderConfig
-from chuk_llm.providers.openai_client import OpenAILLMClient
-from chuk_llm.providers.base import BaseLLMClient
+from chuk_llm.llm.llm_client import get_llm_client, _import_string, _supports_param, _constructor_kwargs
+from chuk_llm.llm.provider_config import ProviderConfig
+from chuk_llm.llm.providers.openai_client import OpenAILLMClient
+from chuk_llm.llm.providers.base import BaseLLMClient
 
 
 class TestHelperFunctions:
@@ -19,7 +19,7 @@ class TestHelperFunctions:
 
     def test_import_string_valid(self):
         """Test _import_string with valid import path."""
-        imported = _import_string("chuk_llm.providers.base:BaseLLMClient")
+        imported = _import_string("chuk_llm.llm.providers.base:BaseLLMClient")
         assert imported is BaseLLMClient
 
     def test_import_string_invalid(self):
@@ -89,11 +89,11 @@ class TestGetLLMClient:
     """Test the get_llm_client factory function."""
 
     @pytest.mark.parametrize("provider_name, client_class_path", [
-        ("openai", "chuk_llm.providers.openai_client.OpenAILLMClient"),
-        ("anthropic", "chuk_llm.providers.anthropic_client.AnthropicLLMClient"),
-        ("groq", "chuk_llm.providers.groq_client.GroqAILLMClient"),
-        ("gemini", "chuk_llm.providers.gemini_client.GeminiLLMClient"),
-        ("ollama", "chuk_llm.providers.ollama_client.OllamaLLMClient"),
+        ("openai", "chuk_llm.llm.providers.openai_client.OpenAILLMClient"),
+        ("anthropic", "chuk_llm.llm.providers.anthropic_client.AnthropicLLMClient"),
+        ("groq", "chuk_llm.llm.providers.groq_client.GroqAILLMClient"),
+        ("gemini", "chuk_llm.llm.providers.gemini_client.GeminiLLMClient"),
+        ("ollama", "chuk_llm.llm.providers.ollama_client.OllamaLLMClient"),
     ])
     def test_get_client_for_provider(self, provider_name, client_class_path):
         """Test factory returns correct client type for each provider."""
@@ -101,7 +101,7 @@ class TestGetLLMClient:
             mock_instance = MagicMock()
             mock_client_class.return_value = mock_instance
             
-            with patch("chuk_llm.provider_config.ProviderConfig") as mock_config_class:
+            with patch("chuk_llm.llm.provider_config.ProviderConfig") as mock_config_class:
                 mock_config = MagicMock()
                 mock_config_class.return_value = mock_config
                 mock_config.get_provider_config.return_value = {
@@ -118,15 +118,15 @@ class TestGetLLMClient:
 
     def test_get_client_with_model_override(self):
         """Test that model parameter overrides config."""
-        with patch("chuk_llm.providers.openai_client.OpenAILLMClient") as mock_openai:
+        with patch("chuk_llm.llm.providers.openai_client.OpenAILLMClient") as mock_openai:
             mock_instance = MagicMock()
             mock_openai.return_value = mock_instance
             
-            with patch("chuk_llm.provider_config.ProviderConfig") as mock_config_class:
+            with patch("chuk_llm.llm.provider_config.ProviderConfig") as mock_config_class:
                 mock_config = MagicMock()
                 mock_config_class.return_value = mock_config
                 mock_config.get_provider_config.return_value = {
-                    "client": "chuk_llm.providers.openai_client.OpenAILLMClient",
+                    "client": "chuk_llm.llm.providers.openai_client.OpenAILLMClient",
                     "model": "default-model",
                     "api_key": None,
                     "api_base": None
@@ -140,15 +140,15 @@ class TestGetLLMClient:
 
     def test_get_client_with_api_key_override(self):
         """Test that api_key parameter overrides config."""
-        with patch("chuk_llm.providers.openai_client.OpenAILLMClient") as mock_openai:
+        with patch("chuk_llm.llm.providers.openai_client.OpenAILLMClient") as mock_openai:
             mock_instance = MagicMock()
             mock_openai.return_value = mock_instance
             
-            with patch("chuk_llm.provider_config.ProviderConfig") as mock_config_class:
+            with patch("chuk_llm.llm.provider_config.ProviderConfig") as mock_config_class:
                 mock_config = MagicMock()
                 mock_config_class.return_value = mock_config
                 mock_config.get_provider_config.return_value = {
-                    "client": "chuk_llm.providers.openai_client.OpenAILLMClient",
+                    "client": "chuk_llm.llm.providers.openai_client.OpenAILLMClient",
                     "model": "default-model",
                     "api_key": None,
                     "api_base": None
@@ -162,15 +162,15 @@ class TestGetLLMClient:
 
     def test_get_client_with_api_base_override(self):
         """Test that api_base parameter overrides config."""
-        with patch("chuk_llm.providers.openai_client.OpenAILLMClient") as mock_openai:
+        with patch("chuk_llm.llm.providers.openai_client.OpenAILLMClient") as mock_openai:
             mock_instance = MagicMock()
             mock_openai.return_value = mock_instance
             
-            with patch("chuk_llm.provider_config.ProviderConfig") as mock_config_class:
+            with patch("chuk_llm.llm.provider_config.ProviderConfig") as mock_config_class:
                 mock_config = MagicMock()
                 mock_config_class.return_value = mock_config
                 mock_config.get_provider_config.return_value = {
-                    "client": "chuk_llm.providers.openai_client.OpenAILLMClient",
+                    "client": "chuk_llm.llm.providers.openai_client.OpenAILLMClient",
                     "model": "default-model",
                     "api_key": None,
                     "api_base": None
@@ -184,13 +184,13 @@ class TestGetLLMClient:
 
     def test_get_client_with_custom_config(self):
         """Test that get_llm_client uses provided config."""
-        with patch("chuk_llm.providers.openai_client.OpenAILLMClient") as mock_openai:
+        with patch("chuk_llm.llm.providers.openai_client.OpenAILLMClient") as mock_openai:
             mock_instance = MagicMock()
             mock_openai.return_value = mock_instance
             
             custom_config = MagicMock(spec=ProviderConfig)
             custom_config.get_provider_config.return_value = {
-                "client": "chuk_llm.providers.openai_client.OpenAILLMClient",
+                "client": "chuk_llm.llm.providers.openai_client.OpenAILLMClient",
                 "model": "custom-model",
                 "api_key": "custom-key",
                 "api_base": None
@@ -205,7 +205,7 @@ class TestGetLLMClient:
 
     def test_get_client_invalid_provider(self):
         """Test that get_llm_client raises ValueError for unknown provider."""
-        with patch("chuk_llm.provider_config.ProviderConfig") as mock_config_class:
+        with patch("chuk_llm.llm.provider_config.ProviderConfig") as mock_config_class:
             mock_config = MagicMock()
             mock_config_class.return_value = mock_config
             
@@ -234,14 +234,14 @@ class TestGetLLMClient:
 
     def test_get_client_client_init_error(self):
         """Test that get_llm_client handles client initialization errors."""
-        with patch("chuk_llm.providers.openai_client.OpenAILLMClient") as mock_openai:
+        with patch("chuk_llm.llm.providers.openai_client.OpenAILLMClient") as mock_openai:
             mock_openai.side_effect = Exception("Client init error")
             
-            with patch("chuk_llm.provider_config.ProviderConfig") as mock_config_class:
+            with patch("chuk_llm.llm.provider_config.ProviderConfig") as mock_config_class:
                 mock_config = MagicMock()
                 mock_config_class.return_value = mock_config
                 mock_config.get_provider_config.return_value = {
-                    "client": "chuk_llm.providers.openai_client.OpenAILLMClient",
+                    "client": "chuk_llm.llm.providers.openai_client.OpenAILLMClient",
                     "model": "default-model"
                 }
                 
@@ -250,22 +250,22 @@ class TestGetLLMClient:
 
     def test_set_host_if_api_base_provided(self):
         """Test that set_host is called if api_base is provided and method exists."""
-        with patch("chuk_llm.providers.ollama_client.OllamaLLMClient") as mock_ollama:
+        with patch("chuk_llm.llm.providers.ollama_client.OllamaLLMClient") as mock_ollama:
             mock_instance = MagicMock()
             mock_instance.set_host = MagicMock()
             mock_ollama.return_value = mock_instance
             
-            with patch("chuk_llm.provider_config.ProviderConfig") as mock_config_class:
+            with patch("chuk_llm.llm.provider_config.ProviderConfig") as mock_config_class:
                 mock_config = MagicMock()
                 mock_config_class.return_value = mock_config
                 mock_config.get_provider_config.return_value = {
-                    "client": "chuk_llm.providers.ollama_client.OllamaLLMClient",
+                    "client": "chuk_llm.llm.providers.ollama_client.OllamaLLMClient",
                     "model": "default-model",
                     "api_base": "http://localhost:11434"
                 }
                 
                 # Check if _supports_param correctly identifies that api_base isn't in the constructor
-                with patch("chuk_llm.llm_client._supports_param", return_value=False):
+                with patch("chuk_llm.llm.llm_client._supports_param", return_value=False):
                     client = get_llm_client(provider="ollama")
                     
                     mock_instance.set_host.assert_called_once_with("http://localhost:11434")
@@ -276,7 +276,7 @@ class TestOpenAIStyleMixin:
     
     def test_sanitize_tool_names(self):
         """Test tool name sanitization logic."""
-        from chuk_llm.openai_style_mixin import OpenAIStyleMixin
+        from chuk_llm.llm.openai_style_mixin import OpenAIStyleMixin
         
         # Test with no tools
         assert OpenAIStyleMixin._sanitize_tool_names(None) is None
@@ -425,7 +425,7 @@ class TestOpenAIClient:
         client = OpenAILLMClient(model="test-model", api_key="test-key")
         
         # Call streaming method (we'll need to mock _stream_from_blocking)
-        with patch("chuk_llm.openai_style_mixin.OpenAIStyleMixin._stream_from_blocking") as mock_stream:
+        with patch("chuk_llm.llm.openai_style_mixin.OpenAIStyleMixin._stream_from_blocking") as mock_stream:
             # Set up the stream to return async iterator with chunks
             async def mock_aiter():
                 yield {"response": "Hello", "tool_calls": []}

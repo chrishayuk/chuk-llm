@@ -21,8 +21,8 @@ except ImportError:
     print("Rich library not found. Install with 'pip install rich' for prettier output.")
 
 # Import your LLM client factory
-from chuk_llm.llm_client import get_llm_client
-from chuk_llm.provider_config import ProviderConfig, DEFAULTS
+from chuk_llm.llm.llm_client import get_llm_client
+from chuk_llm.llm.provider_config import ProviderConfig, DEFAULTS
 from dotenv import load_dotenv
 
 # Load environment variables

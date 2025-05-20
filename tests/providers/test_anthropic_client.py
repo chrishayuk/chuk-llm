@@ -40,7 +40,7 @@ anthropic_mod.Anthropic = DummyAnthropic
 # Now import the client (will see the stub).
 # ---------------------------------------------------------------------------
 
-from chuk_llm.providers.anthropic_client import AnthropicLLMClient  # noqa: E402  pylint: disable=wrong-import-position
+from chuk_llm.llm.providers.anthropic_client import AnthropicLLMClient  # noqa: E402  pylint: disable=wrong-import-position
 
 
 # ---------------------------------------------------------------------------
