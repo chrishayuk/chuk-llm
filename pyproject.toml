@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chuk-llm"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+  { name = "Chris Hay", email = "chrishayuk@younknowwhere.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.51.0",
+    "google-genai>=1.15.0",
+    "groq>=0.25.0",
+    "ollama>=0.4.8",
+    "openai>=1.79.0",
+    "python-dotenv>=1.1.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["chuk_llm*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
+asyncio_default_test_loop_scope = "function"
+testpaths = ["tests"]
+python_files = "test_*.py"
+markers = [
+    "asyncio: mark a test as an async test",
+]
+addopts = "--cov=chuk_llm"
+
+[dependency-groups]
+dev = [
+    "pytest-asyncio>=0.26.0",
+    "pytest>=8.3.5",
+    "pytest-cov>=6.1.1",
+    "rich>=14.0.0",
+]
