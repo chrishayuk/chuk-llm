@@ -1,15 +1,15 @@
 #!/usr/bin/env python
 """
 llm_diagnostics_fixed.py – capability-by-capability test runner
-==============================================================
+===============================================================
 Exercises **text → stream → tools → stream_tools → vision** for every provider
-registered in chuk-llm.  Prints a live ✅/❌ ticker and then timing/error/summary
+registered in *chuk-llm*.  Prints a live ✅/❌ ticker and then timing/error/summary
 tables (Rich if available, plain text otherwise).
 
 Key features
 ------------
 * **No heuristics** – simply tries each capability and records success (✅),
-  failure (❌) or “—” (capability skipped / not supported).
+  failure (❌) or “—” (skipped / not supported).
 * **Per-capability model overrides** via `--model`, e.g.
 
       --model "
@@ -76,9 +76,14 @@ _WEATHER_TOOL = {
     },
 }
 
-# 1 × 1 px white PNG (tiny & always valid)
-_TINY_PNG_B64 = (
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAAWgmWQ0AAAAASUVORK5CYII="
+# 32 × 32 checkerboard PNG (base64)
+_CHECKER_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAABQklEQVQ4T2NkIBEw"
+    "EqmOYv379+8/AwPD/4GJgYGB4T8DAwMDAwMtBPa/z4DxPwfifxcTExPD/78/8H+D"
+    "8T8DA4P///+v4PxPwMDAwMDAwMD4vx/3f4PxPxPwcDAwMDAwMD/1+G8T8DwMDAwP"
+    "///5/MPy/hfE/A8DAwMDAwMBwfy/4PxPwPB/IfH//z84/IAAAMAQQ4v+P8n5//P"
+    "z/4/4HxPwMDAwP//38Y/8v4HxPwMDAwMD/f5nxP+/4HxPwMDAwMDAP779n8Q/H/D"
+    "8j8PAAAAAElFTkSuQmCC"
 )
 
 _CAPS: list[tuple[str, str]] = [            # (CLI-name , dataclass attribute)
@@ -124,7 +129,8 @@ _OVERRIDE_RE = re.compile(
 
 def parse_overrides(arg: str) -> Dict[str, Dict[str, str]]:
     """
-    \"openai:text=gpt-4o,openai:vision=gpt-4o-vision\" → {\"openai\": {\"text\": \"gpt-4o\", ...}}
+    \"openai:text=gpt-4o,openai:vision=gpt-4o-vision\" →
+    {\"openai\": {\"text\": \"gpt-4o\", ...}}
     """
     mapping: Dict[str, Dict[str, str]] = {}
     for frag in arg.split(","):
@@ -202,49 +208,116 @@ async def _check_tools(res, cache, tick):
             res.errors["tools"] = str(exc); tick("tools", False)
 
 async def _check_stream_tools(res, cache, tick):
+    """
+    Stream a completion with tools enabled and mark success when we detect the
+    *first* chunk that contains at least one ``tool_calls`` entry, no matter
+    which provider-specific nesting scheme is used.
+
+    A chunk may look like either of these:
+
+    1. Anthropic / some proxies
+       {"tool_calls": [...]}
+
+    2. OpenAI / Groq style
+       {
+         "choices": [
+           { "delta": { "tool_calls": [...] } }
+         ]
+       }
+    """
+
+    # ── provider-agnostic detector ────────────────────────────
+    def _chunk_has_tool_call(chunk: Any) -> bool:
+        if not isinstance(chunk, dict):
+            return False
+        # layout 1
+        if chunk.get("tool_calls"):
+            return True
+        # layout 2
+        try:
+            delta = chunk["choices"][0]["delta"]
+            return bool(delta.get("tool_calls"))
+        except Exception:
+            return False
+
+    # ── run the actual test ───────────────────────────────────
     try:
         cl = await _get_client(cache, res.provider, res.models["tools"])
-        stream = await _timed(res, "stream_tools",
-                              cl.create_completion([{"role": "user", "content": FUNCTION_PROMPT}],
-                                                   tools=[_WEATHER_TOOL], stream=True))
+        stream = await _timed(
+            res,
+            "stream_tools",
+            cl.create_completion(
+                [{"role": "user", "content": FUNCTION_PROMPT}],
+                tools=[_WEATHER_TOOL],
+                stream=True,
+            ),
+        )
+
         if not hasattr(stream, "__aiter__"):
-            raise TypeError("stream_tools non-async iterator")
-        async for ch in stream:
-            if isinstance(ch, dict) and ch.get("tool_calls"):
-                res.record("streaming_function_call", True); break
+            raise TypeError("stream_tools returned non-async iterator")
+
+        async for chunk in stream:
+            if _chunk_has_tool_call(chunk):
+                res.record("streaming_function_call", True)
+                break
         else:
             res.record("streaming_function_call", False)
+
         tick("stream_tools", res.streaming_function_call)
+
     except Exception as exc:
         if "does not support tools" in str(exc).lower():
-            res.record("streaming_function_call", None); tick("stream_tools", None)
+            res.record("streaming_function_call", None)
+            tick("stream_tools", None)
         else:
             res.record("streaming_function_call", False)
-            res.errors["stream_tools"] = str(exc); tick("stream_tools", False)
+            res.errors["stream_tools"] = str(exc)
+            tick("stream_tools", False)
+
+
+def _vision_msg(provider: str) -> Dict[str, Any]:
+    img_data = _CHECKER_PNG_B64
+    if provider == "ollama":
+        return {"role": "user",
+                "content": VISION_PROMPT,
+                "images": [base64.b64decode(img_data)]}
+
+    if provider in {"anthropic", "claude"}:
+        return {"role": "user", "content": [
+            {"type": "image",
+             "source": {"type": "base64",
+                        "media_type": "image/png",
+                        "data": img_data}},
+            {"type": "text", "text": VISION_PROMPT}
+        ]}
+
+    if provider == "openai":
+        # GPT-4o vision sample uses URL
+        return {"role": "user", "content": [
+            {"type": "image_url",
+             "image_url": {"url": "https://placekitten.com/64/64"}},
+            {"type": "text", "text": VISION_PROMPT}
+        ]}
+
+    if provider == "groq":
+        return {"role": "user",
+                "content": VISION_PROMPT,
+                "images": [base64.b64decode(img_data)]}
+
+    if provider == "gemini":
+        return {"role": "user", "parts": [
+            {"text": VISION_PROMPT},
+            {"inline_data": {
+                "mime_type": "image/png",
+                "data": img_data}}
+        ]}
+
+    raise ValueError(f"vision not wired for provider={provider}")
 
 async def _check_vision(res, cache, tick):
     try:
-        cl   = await _get_client(cache, res.provider, res.models["vision"])
-        prov = res.provider.lower()
-        img  = _TINY_PNG_B64
-
-        # provider-specific multimodal message structures
-        if prov == "ollama":
-            msg = {"role": "user", "content": VISION_PROMPT,
-                   "images": [base64.b64decode(img)]}
-        elif prov in {"anthropic", "claude"}:
-            msg = {"role": "user", "content": [
-                {"type": "text",   "text": VISION_PROMPT},
-                {"type": "image",  "source": {"type": "base64",
-                                              "media_type": "image/png",
-                                              "data": img}},
-            ]}
-        else:  # OpenAI, Gemini, Groq etc.
-            msg = {"role": "user", "content": [
-                {"type": "text",      "text": VISION_PROMPT},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img}" }},
-            ]}
-
+        cl  = await _get_client(cache, res.provider, res.models["vision"])
+        msg = _vision_msg(res.provider.lower())
         out = await _timed(res, "vision", cl.create_completion([msg]))
         ok  = bool(out.get("response"))
         res.record("vision", ok); tick("vision", ok)
