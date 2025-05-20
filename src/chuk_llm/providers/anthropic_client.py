@@ -1,7 +1,18 @@
 # chuk_llm/providers/anthropic_client.py
 """
-Anthropic chat-completion adapter.
+Anthropic chat-completion adapter
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Wraps the official `anthropic` SDK and exposes an **OpenAI-style** interface
+compatible with the rest of *chuk-llm*.
+
+Key points
+----------
+*   Converts ChatML → Claude Messages format (tools / multimodal, …)
+*   Maps Claude replies back to the common `{response, tool_calls}` schema
+*   **Streaming** – for now we return a *single* async chunk (good enough for
+    diagnostics) because Claude’s event stream doesn’t match the OpenAI one.
 """
+
 from __future__ import annotations
 
 import json
@@ -19,14 +30,18 @@ log = logging.getLogger(__name__)
 if os.getenv("LOGLEVEL"):
     logging.basicConfig(level=os.getenv("LOGLEVEL", "INFO").upper())
 
+# ────────────────────────── helpers ──────────────────────────
 
-# ─────────────────────────── helpers
-def _safe_get(obj: Any, key: str, default: Any = None) -> Any:
+
+def _safe_get(obj: Any, key: str, default: Any = None) -> Any:  # noqa: D401 – util
+    """Get *key* from dict **or** attribute-style object; fallback to *default*."""
     return obj.get(key, default) if isinstance(obj, dict) else getattr(obj, key, default)
 
 
-def _parse_claude_response(resp) -> Dict[str, Any]:
+def _parse_claude_response(resp) -> Dict[str, Any]:  # noqa: D401 – small helper
+    """Convert Claude response → standard `{response, tool_calls}` dict."""
     tool_calls: List[Dict[str, Any]] = []
+
     for blk in getattr(resp, "content", []):
         if _safe_get(blk, "type") != "tool_use":
             continue
@@ -48,11 +63,15 @@ def _parse_claude_response(resp) -> Dict[str, Any]:
     return {"response": text, "tool_calls": []}
 
 
-# ─────────────────────────── client
+# ─────────────────────────── client ───────────────────────────
+
+
 class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
+    """Adapter around the *anthropic* SDK with OpenAI-style semantics."""
+
     def __init__(
         self,
-        model: str = "claude-3-sonnet-20250219",
+        model: str = "claude-3-7-sonnet-20250219",
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
     ) -> None:
@@ -62,7 +81,8 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
             kwargs["api_key"] = api_key
         self.client = Anthropic(**kwargs)
 
-    # ------------- helpers
+    # ── tool schema helpers ─────────────────────────────────
+
     @staticmethod
     def _convert_tools(tools: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
         if not tools:
@@ -79,8 +99,8 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
                         "input_schema": fn.get("parameters") or fn.get("input_schema") or {},
                     }
                 )
-            except Exception as exc:
-                log.debug("Tool schema error (%s) – using open schema", exc)
+            except Exception as exc:  # pragma: no cover – permissive fallback
+                log.debug("Tool schema error (%s) – using permissive schema", exc)
                 converted.append(
                     {
                         "name": fn.get("name", f"tool_{uuid.uuid4().hex[:6]}"),
@@ -91,7 +111,10 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
         return converted
 
     @staticmethod
-    def _split_for_anthropic(messages: List[Dict[str, Any]]) -> tuple[str, List[Dict[str, Any]]]:
+    def _split_for_anthropic(
+        messages: List[Dict[str, Any]]
+    ) -> tuple[str, List[Dict[str, Any]]]:
+        """Separate system text & convert ChatML list to Anthropic format."""
         sys_txt: List[str] = []
         out: List[Dict[str, Any]] = []
 
@@ -102,6 +125,7 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
                 sys_txt.append(msg.get("content", ""))
                 continue
 
+            # assistant function calls → tool_use blocks
             if role == "assistant" and msg.get("tool_calls"):
                 blocks = [
                     {
@@ -115,6 +139,7 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
                 out.append({"role": "assistant", "content": blocks})
                 continue
 
+            # tool response
             if role == "tool":
                 out.append(
                     {
@@ -131,6 +156,7 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
                 )
                 continue
 
+            # normal / multimodal messages
             if role in {"user", "assistant"}:
                 cont = msg.get("content")
                 if cont is None:
@@ -142,7 +168,8 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
 
         return "\n".join(sys_txt).strip(), out
 
-    # ------------- public
+    # ── main entrypoint ─────────────────────────────────────
+
     async def create_completion(
         self,
         messages: List[Dict[str, Any]],
@@ -152,30 +179,43 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
         max_tokens: Optional[int] = None,
         **extra,
     ) -> Dict[str, Any] | AsyncIterator[Dict[str, Any]]:
+        """Generate a completion or (fake) async stream."""
 
         tools = self._sanitize_tool_names(tools)
         anth_tools = self._convert_tools(tools)
+        system_txt, msg_no_system = self._split_for_anthropic(messages)
 
-        system_text, msg_no_system = self._split_for_anthropic(messages)
-
-        payload: Dict[str, Any] = {
+        base_payload: Dict[str, Any] = {
             "model": self.model,
             "messages": msg_no_system,
-            "stream": stream,
             "tools": anth_tools,
             "max_tokens": max_tokens or 1024,
             **extra,
         }
-        if system_text:            # ← only send if non-empty
-            payload["system"] = system_text
+        if system_txt:
+            base_payload["system"] = system_txt
         if anth_tools:
-            payload["tool_choice"] = {"type": "auto"}
+            base_payload["tool_choice"] = {"type": "auto"}
 
-        log.debug("Claude payload: %s", payload)
+        log.debug("Claude payload: %s", base_payload)
 
+        # ––– streaming ----------------------------------------------------
+        # Claude streaming events are *not* OpenAI-compatible; instead of
+        # trying to shoe-horn them into the OpenAI parser we return a simple
+        # one-shot async iterator – good enough for diagnostics / basic usage.
         if stream:
-            return self._stream_from_blocking(self.client.messages.create, **payload)
+            resp = await self._call_blocking(
+                self.client.messages.create, stream=False, **base_payload
+            )
+            parsed = _parse_claude_response(resp)
 
-        resp = await self._call_blocking(self.client.messages.create, **payload)
-        log.debug("Claude raw response: %s", resp)
+            async def _single_chunk():
+                yield parsed
+
+            return _single_chunk()
+
+        # ––– non-streaming ------------------------------------------------
+        resp = await self._call_blocking(
+            self.client.messages.create, stream=False, **base_payload
+        )
         return _parse_claude_response(resp)

@@ -48,7 +48,7 @@ DEFAULTS: Dict[str, Dict[str, Any]] = {
         "api_key_env": "ANTHROPIC_API_KEY",
         "api_base": None,
         "api_key": None,
-        "default_model": "claude-3-7-sonnet",
+        "default_model": "claude-3-7-sonnet-20250219",
     },
 }
 
