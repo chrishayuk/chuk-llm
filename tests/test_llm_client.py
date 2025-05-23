@@ -310,142 +310,140 @@ class TestOpenAIStyleMixin:
         assert sanitized[3]["function"]["name"] == "invalid_name_with_chars"
 
 
+
 @pytest.mark.asyncio
 class TestOpenAIClient:
     """Test the OpenAI client implementation."""
 
-    @patch("openai.OpenAI")
-    async def test_create_completion(self, mock_openai):
+    @patch("openai.AsyncOpenAI")  # Mock AsyncOpenAI instead of OpenAI
+    async def test_create_completion(self, mock_async_openai):
         """Test that create_completion calls the OpenAI API correctly."""
-        # Set up mock client and response
-        mock_client = MagicMock()
-        mock_openai.return_value = mock_client
+        # Set up mock async client and response
+        mock_async_client = MagicMock()
+        mock_async_openai.return_value = mock_async_client
         
-        mock_message = MagicMock()
-        mock_message.content = "Test response"
-        mock_message.tool_calls = None
-        
+        # Create properly structured mock response
         mock_response = MagicMock()
-        mock_response.choices = [MagicMock(message=mock_message)]
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message = MagicMock()
+        mock_response.choices[0].message.content = "Test response"
+        mock_response.choices[0].message.tool_calls = None
         
-        # Mock run_in_executor to avoid real API calls
-        with patch("asyncio.get_running_loop") as mock_get_loop:
-            mock_loop = MagicMock()
-            mock_get_loop.return_value = mock_loop
-            
-            # Configure run_in_executor to return our mock response
-            async def mock_run_in_executor(*args, **kwargs):
-                return mock_response
-                
-            mock_loop.run_in_executor = MagicMock(side_effect=lambda *args: mock_run_in_executor())
-            
-            # Create client and call method
-            client = OpenAILLMClient(model="test-model", api_key="test-key")
-            result = await client.create_completion(
-                messages=[{"role": "user", "content": "Hello"}]
-            )
-            
-            # Verify the result
-            assert isinstance(result, dict)
-            assert "response" in result
-            assert result["response"] == "Test response"
-            assert "tool_calls" in result
-            assert isinstance(result["tool_calls"], list)
-            assert len(result["tool_calls"]) == 0
+        # Mock the async create method
+        from unittest.mock import AsyncMock
+        mock_async_client.chat.completions.create = AsyncMock(return_value=mock_response)
+        
+        # Create client and call method with new interface
+        client = OpenAILLMClient(model="test-model", api_key="test-key")
+        
+        # Use new interface - get awaitable then await
+        result_awaitable = client.create_completion(
+            messages=[{"role": "user", "content": "Hello"}],
+            stream=False
+        )
+        result = await result_awaitable
+        
+        # Verify the result
+        assert isinstance(result, dict)
+        assert "response" in result
+        assert result["response"] == "Test response"
+        assert "tool_calls" in result
+        assert isinstance(result["tool_calls"], list)
+        assert len(result["tool_calls"]) == 0
 
-    @patch("openai.OpenAI")
-    async def test_create_completion_with_tools(self, mock_openai):
+    @patch("openai.AsyncOpenAI")  # Mock AsyncOpenAI instead of OpenAI  
+    async def test_create_completion_with_tools(self, mock_async_openai):
         """Test create_completion with tool calls."""
-        # Set up mock client
-        mock_client = MagicMock()
-        mock_openai.return_value = mock_client
+        # Set up mock async client
+        mock_async_client = MagicMock()
+        mock_async_openai.return_value = mock_async_client
         
-        # Set up the mock response with tool calls
+        # Create properly structured mock response with tool calls
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message = MagicMock()
+        mock_response.choices[0].message.content = None
+        
+        # Create mock tool call
         mock_tool_call = MagicMock()
         mock_tool_call.id = "call_1"
         mock_tool_call.function = MagicMock()
         mock_tool_call.function.name = "test_tool"
         mock_tool_call.function.arguments = '{"test": "value"}'
+        mock_response.choices[0].message.tool_calls = [mock_tool_call]
         
-        mock_message = MagicMock()
-        mock_message.content = None
-        mock_message.tool_calls = [mock_tool_call]
+        # Mock the async create method
+        from unittest.mock import AsyncMock
+        mock_async_client.chat.completions.create = AsyncMock(return_value=mock_response)
         
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock(message=mock_message)]
+        # Create client and call method with new interface
+        client = OpenAILLMClient(model="test-model", api_key="test-key")
+        result_awaitable = client.create_completion(
+            messages=[{"role": "user", "content": "Use tool"}],
+            tools=[{"type": "function", "function": {"name": "test_tool"}}],
+            stream=False
+        )
+        result = await result_awaitable
         
-        # Mock run_in_executor to avoid real API calls
-        with patch("asyncio.get_running_loop") as mock_get_loop:
-            mock_loop = MagicMock()
-            mock_get_loop.return_value = mock_loop
-            
-            # Configure run_in_executor to return our mock response
-            async def mock_run_in_executor(*args, **kwargs):
-                return mock_response
-                
-            mock_loop.run_in_executor = MagicMock(side_effect=lambda *args: mock_run_in_executor())
-            
-            # Create client and call method
-            client = OpenAILLMClient(model="test-model", api_key="test-key")
-            result = await client.create_completion(
-                messages=[{"role": "user", "content": "Use tool"}],
-                tools=[{"type": "function", "function": {"name": "test_tool"}}]
-            )
-            
-            # Verify the result structure for tool calls
-            assert isinstance(result, dict)
-            assert "response" in result
-            assert result["response"] is None  # None when tools are used
-            assert "tool_calls" in result
-            assert len(result["tool_calls"]) == 1
-            assert result["tool_calls"][0]["function"]["name"] == "test_tool"
-            assert result["tool_calls"][0]["id"] == "call_1"
+        # Verify the result structure for tool calls
+        assert isinstance(result, dict)
+        assert "response" in result
+        assert result["response"] is None  # None when tools are used
+        assert "tool_calls" in result
+        assert len(result["tool_calls"]) == 1
+        assert result["tool_calls"][0]["function"]["name"] == "test_tool"
+        assert result["tool_calls"][0]["id"] == "call_1"
 
-    @patch("openai.OpenAI")
-    async def test_create_completion_streaming(self, mock_openai):
+    @patch("openai.AsyncOpenAI")  # Mock AsyncOpenAI instead of OpenAI
+    async def test_create_completion_streaming(self, mock_async_openai):
         """Test streaming mode of create_completion."""
-        mock_client = MagicMock()
-        mock_openai.return_value = mock_client
+        mock_async_client = MagicMock()
+        mock_async_openai.return_value = mock_async_client
         
-        # Set up streaming response generator
-        class MockStreamingResponse:
-            def __init__(self):
-                self.chunks = [
-                    MagicMock(choices=[MagicMock(delta=MagicMock(content="Hello", tool_calls=[]))]),
-                    MagicMock(choices=[MagicMock(delta=MagicMock(content=" World", tool_calls=[]))]),
-                ]
+        # Create mock streaming response
+        async def mock_stream():
+            # Create proper chunk objects with the right structure
+            chunk1 = MagicMock()
+            chunk1.choices = [MagicMock()]
+            chunk1.choices[0].delta = MagicMock()
+            chunk1.choices[0].delta.content = "Hello"
+            chunk1.choices[0].delta.tool_calls = None
+            chunk1.model = "gpt-4o-mini"
+            chunk1.id = "chatcmpl-test"
             
-            def __iter__(self):
-                return iter(self.chunks)
+            chunk2 = MagicMock()
+            chunk2.choices = [MagicMock()]
+            chunk2.choices[0].delta = MagicMock()
+            chunk2.choices[0].delta.content = " World"
+            chunk2.choices[0].delta.tool_calls = None
+            chunk2.model = "gpt-4o-mini"
+            chunk2.id = "chatcmpl-test"
+            
+            yield chunk1
+            yield chunk2
         
-        # Set up the chat completions create method to return streaming response
-        mock_client.chat.completions.create = MagicMock(return_value=MockStreamingResponse())
+        # Mock the async create method to return stream
+        from unittest.mock import AsyncMock
+        mock_async_client.chat.completions.create = AsyncMock(return_value=mock_stream())
         
         # Create client
         client = OpenAILLMClient(model="test-model", api_key="test-key")
         
-        # Call streaming method (we'll need to mock _stream_from_blocking)
-        with patch("chuk_llm.llm.openai_style_mixin.OpenAIStyleMixin._stream_from_blocking") as mock_stream:
-            # Set up the stream to return async iterator with chunks
-            async def mock_aiter():
-                yield {"response": "Hello", "tool_calls": []}
-                yield {"response": " World", "tool_calls": []}
-            
-            mock_stream.return_value = mock_aiter()
-            
-            result = await client.create_completion(
-                messages=[{"role": "user", "content": "Hello"}],
-                stream=True
-            )
-            
-            # Test we get an async iterator
-            assert hasattr(result, "__aiter__")
-            
-            # Collect the chunks
-            chunks = []
-            async for chunk in result:
-                chunks.append(chunk)
-            
-            assert len(chunks) == 2
-            assert chunks[0]["response"] == "Hello"
-            assert chunks[1]["response"] == " World"
+        # Use new interface - get async generator directly (NO await)
+        result = client.create_completion(
+            messages=[{"role": "user", "content": "Hello"}],
+            stream=True
+        )
+        
+        # Should be async generator
+        assert hasattr(result, "__aiter__")
+        
+        # Collect chunks
+        chunks = []
+        async for chunk in result:
+            chunks.append(chunk)
+        
+        # Verify chunks
+        assert len(chunks) == 2
+        assert chunks[0]["response"] == "Hello"
+        assert chunks[1]["response"] == " World"

@@ -9,8 +9,7 @@ Key points
 ----------
 *   Converts ChatML → Claude Messages format (tools / multimodal, …)
 *   Maps Claude replies back to the common `{response, tool_calls}` schema
-*   **Streaming** – for now we return a *single* async chunk (good enough for
-    diagnostics) because Claude’s event stream doesn’t match the OpenAI one.
+*   **Real Streaming** - uses Anthropic's native async streaming API
 """
 
 from __future__ import annotations
@@ -19,9 +18,9 @@ import json
 import logging
 import os
 import uuid
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
-from anthropic import Anthropic
+from anthropic import AsyncAnthropic
 
 from chuk_llm.llm.openai_style_mixin import OpenAIStyleMixin
 from chuk_llm.llm.providers.base import BaseLLMClient
@@ -76,9 +75,16 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
         api_base: Optional[str] = None,
     ) -> None:
         self.model = model
+        
+        # Use AsyncAnthropic for real streaming support
         kwargs: Dict[str, Any] = {"base_url": api_base} if api_base else {}
         if api_key:
             kwargs["api_key"] = api_key
+        
+        self.async_client = AsyncAnthropic(**kwargs)
+        
+        # Keep sync client for backwards compatibility if needed
+        from anthropic import Anthropic
         self.client = Anthropic(**kwargs)
 
     # ── tool schema helpers ─────────────────────────────────
@@ -170,7 +176,7 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
 
     # ── main entrypoint ─────────────────────────────────────
 
-    async def create_completion(
+    def create_completion(
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
@@ -178,8 +184,13 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
         stream: bool = False,
         max_tokens: Optional[int] = None,
         **extra,
-    ) -> Dict[str, Any] | AsyncIterator[Dict[str, Any]]:
-        """Generate a completion or (fake) async stream."""
+    ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
+        """
+        FIXED: Generate a completion with real streaming support.
+        
+        • stream=False → returns awaitable that resolves to standardised dict
+        • stream=True  → returns async iterator that yields chunks in real-time
+        """
 
         tools = self._sanitize_tool_names(tools)
         anth_tools = self._convert_tools(tools)
@@ -199,23 +210,113 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
 
         log.debug("Claude payload: %s", base_payload)
 
-        # ––– streaming ----------------------------------------------------
-        # Claude streaming events are *not* OpenAI-compatible; instead of
-        # trying to shoe-horn them into the OpenAI parser we return a simple
-        # one-shot async iterator – good enough for diagnostics / basic usage.
+        # ––– streaming: use real async streaming -------------------------
         if stream:
-            resp = await self._call_blocking(
-                self.client.messages.create, stream=False, **base_payload
-            )
-            parsed = _parse_claude_response(resp)
+            return self._stream_completion_async(base_payload)
 
-            async def _single_chunk():
-                yield parsed
+        # ––– non-streaming: use async client ------------------------------
+        return self._regular_completion(base_payload)
 
-            return _single_chunk()
+    async def _stream_completion_async(
+        self, 
+        payload: Dict[str, Any]
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """
+        NEW: Real streaming using AsyncAnthropic.
+        This provides true real-time streaming from Anthropic's API.
+        """
+        try:
+            # Use async client for real streaming
+            async with self.async_client.messages.stream(
+                **payload
+            ) as stream:
+                
+                # Handle different event types from Anthropic's stream
+                async for event in stream:
+                    # Text content events
+                    if hasattr(event, 'type') and event.type == 'content_block_delta':
+                        if hasattr(event, 'delta') and hasattr(event.delta, 'text'):
+                            yield {
+                                "response": event.delta.text,
+                                "tool_calls": []
+                            }
+                    
+                    # Tool use events
+                    elif hasattr(event, 'type') and event.type == 'content_block_start':
+                        if hasattr(event, 'content_block') and event.content_block.type == 'tool_use':
+                            tool_call = {
+                                "id": event.content_block.id,
+                                "type": "function",
+                                "function": {
+                                    "name": event.content_block.name,
+                                    "arguments": json.dumps(getattr(event.content_block, 'input', {}))
+                                }
+                            }
+                            yield {
+                                "response": "",
+                                "tool_calls": [tool_call]
+                            }
+        
+        except Exception as e:
+            log.error(f"Error in Anthropic streaming: {e}")
+            yield {
+                "response": f"Streaming error: {str(e)}",
+                "tool_calls": [],
+                "error": True
+            }
 
-        # ––– non-streaming ------------------------------------------------
+    async def _regular_completion(
+        self, 
+        payload: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Non-streaming completion using async client."""
+        try:
+            resp = await self.async_client.messages.create(**payload)
+            return _parse_claude_response(resp)
+            
+        except Exception as e:
+            log.error(f"Error in Anthropic completion: {e}")
+            return {
+                "response": f"Error: {str(e)}",
+                "tool_calls": [],
+                "error": True
+            }
+
+    # ── DEPRECATED: Keep old method for backwards compatibility ──────────
+    async def _fake_streaming_completion(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        max_tokens: Optional[int] = None,
+        **extra,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """
+        ⚠️  DEPRECATED: Old fake streaming method.
+        This returns the entire response as a single chunk.
+        Use _stream_completion_async for real streaming.
+        """
+        tools = self._sanitize_tool_names(tools)
+        anth_tools = self._convert_tools(tools)
+        system_txt, msg_no_system = self._split_for_anthropic(messages)
+
+        base_payload: Dict[str, Any] = {
+            "model": self.model,
+            "messages": msg_no_system,
+            "tools": anth_tools,
+            "max_tokens": max_tokens or 1024,
+            **extra,
+        }
+        if system_txt:
+            base_payload["system"] = system_txt
+        if anth_tools:
+            base_payload["tool_choice"] = {"type": "auto"}
+
         resp = await self._call_blocking(
             self.client.messages.create, stream=False, **base_payload
         )
-        return _parse_claude_response(resp)
+        parsed = _parse_claude_response(resp)
+
+        async def _single_chunk():
+            yield parsed
+
+        return _single_chunk()

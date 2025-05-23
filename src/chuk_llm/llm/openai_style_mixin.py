@@ -29,6 +29,7 @@ class OpenAIStyleMixin:
       • _call_blocking          - run blocking SDK in thread
       • _normalise_message      - convert full message → MCP dict
       • _stream_from_blocking   - wrap *stream=True* SDK generators
+      • _stream_from_async      - NEW: for native async streaming
     """
 
     # ------------------------------------------------------------------ sanitise
@@ -105,14 +106,8 @@ class OpenAIStyleMixin:
         Wrap a *blocking* SDK streaming generator (``stream=True``) and yield
         MCP-style *delta dictionaries* asynchronously.
 
-        Usage inside provider adapter::
-
-            return self._stream_from_blocking(
-                self.client.chat.completions.create,
-                model=self.model,
-                messages=messages,
-                tools=tools or [],
-            )
+        ⚠️  WARNING: This method has buffering issues and should be avoided.
+        Use _stream_from_async for better real-time streaming.
         """
         queue: asyncio.Queue = asyncio.Queue()
 
@@ -137,3 +132,63 @@ class OpenAIStyleMixin:
 
         asyncio.get_running_loop().run_in_executor(None, _worker)
         return _aiter()
+
+    # ------------------------------------------------------------------ NEW: async streaming
+    @staticmethod
+    async def _stream_from_async(
+        async_stream,
+        normalize_chunk: Optional[Callable] = None
+    ) -> AsyncIterator[LLMResult]:
+        """
+        Stream from an async iterator with real-time yielding.
+        
+        ✅ This provides true streaming without buffering.
+        
+        Parameters:
+        -----------
+        async_stream: AsyncIterator
+            The async stream from the SDK (e.g., AsyncOpenAI response)
+        normalize_chunk: Optional[Callable]
+            Function to normalize each chunk to your format
+        """
+        try:
+            async for chunk in async_stream:
+                if chunk.choices and chunk.choices[0].delta:
+                    delta = chunk.choices[0].delta
+                    
+                    # Default normalization
+                    result = {
+                        "response": delta.content or "",
+                        "tool_calls": [],
+                    }
+                    
+                    # Handle tool calls
+                    if hasattr(delta, "tool_calls") and delta.tool_calls:
+                        tool_calls = []
+                        for tc in delta.tool_calls:
+                            if tc.function:
+                                tool_calls.append({
+                                    "id": tc.id,
+                                    "type": "function", 
+                                    "function": {
+                                        "name": tc.function.name,
+                                        "arguments": tc.function.arguments or ""
+                                    }
+                                })
+                        result["tool_calls"] = tool_calls
+                    
+                    # Apply custom normalization if provided
+                    if normalize_chunk:
+                        result = normalize_chunk(result, chunk)
+                    
+                    # Only yield if there's actual content
+                    if result["response"] or result["tool_calls"]:
+                        yield result
+                        
+        except Exception as e:
+            # Yield error as final chunk
+            yield {
+                "response": f"Streaming error: {str(e)}",
+                "tool_calls": [],
+                "error": True
+            }

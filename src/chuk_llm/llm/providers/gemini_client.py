@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import uuid
-from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple, Union
 
 from dotenv import load_dotenv
 from google import genai
@@ -162,8 +162,111 @@ class GeminiLLMClient(BaseLLMClient):
         log.debug("Raw Gemini response: %s", resp)
         return _parse_final_response(resp)
 
-    # ---------------------------------------------------------------- streaming helpers
-    def _stream(self, messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]]) -> AsyncIterator[Dict[str, Any]]:
+    # ---------------------------------------------------------------- FIXED: Real streaming
+    def create_completion(
+        self, 
+        messages: List[Dict[str, Any]], 
+        tools: Optional[List[Dict[str, Any]]] = None, 
+        *, 
+        stream: bool = False,
+        **kwargs: Any
+    ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
+        """
+        FIXED: Generate completion with real streaming support.
+        
+        • stream=False → returns awaitable that resolves to standardised dict
+        • stream=True  → returns async iterator that yields chunks in real-time
+        """
+        log.debug("create_completion called – stream=%s", stream)
+        
+        if stream:
+            # Return async generator directly for real streaming
+            return self._stream_completion_async(messages, tools, **kwargs)
+        else:
+            # Return coroutine for non-streaming
+            return self._regular_completion(messages, tools, **kwargs)
+
+    async def _stream_completion_async(
+        self, 
+        messages: List[Dict[str, Any]], 
+        tools: Optional[List[Dict[str, Any]]] = None,
+        **kwargs: Any
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """
+        NEW: Real streaming using async execution without buffering.
+        This provides true real-time streaming from Gemini's API.
+        """
+        try:
+            system_txt, contents = _convert_messages(messages)
+            gem_tools, tool_cfg = _convert_tools(tools)
+            cfg = gtypes.GenerateContentConfig(
+                system_instruction=system_txt or None, 
+                tools=gem_tools or None, 
+                tool_config=tool_cfg
+            )
+
+            log.debug("Starting Gemini streaming...")
+            
+            # Use asyncio.to_thread for proper async execution without buffering
+            # This runs the sync streaming call in a thread but yields immediately
+            def _sync_stream():
+                return self.client.models.generate_content_stream(
+                    model=self.model, 
+                    contents=contents, 
+                    config=cfg
+                )
+            
+            # Get the stream object
+            stream_obj = await asyncio.to_thread(_sync_stream)
+            
+            # Iterate through chunks and yield immediately
+            chunk_count = 0
+            for chunk in stream_obj:
+                chunk_count += 1
+                text_piece, t_calls = _parse_stream_chunk(chunk)
+                
+                # Only yield if we have content
+                if text_piece or t_calls:
+                    yield {"response": text_piece, "tool_calls": t_calls}
+                
+                # Add small async yield to allow other tasks to run
+                if chunk_count % 5 == 0:
+                    await asyncio.sleep(0)
+                        
+            log.debug(f"Gemini streaming completed with {chunk_count} chunks")
+        
+        except Exception as e:
+            log.error(f"Error in Gemini streaming: {e}")
+            yield {
+                "response": f"Streaming error: {str(e)}",
+                "tool_calls": [],
+                "error": True
+            }
+
+    async def _regular_completion(
+        self, 
+        messages: List[Dict[str, Any]], 
+        tools: Optional[List[Dict[str, Any]]] = None,
+        **kwargs: Any
+    ) -> Dict[str, Any]:
+        """Non-streaming completion using async execution."""
+        try:
+            return await asyncio.to_thread(self._create_sync, messages, tools)
+        except Exception as e:
+            log.error(f"Error in Gemini completion: {e}")
+            return {
+                "response": f"Error: {str(e)}",
+                "tool_calls": [],
+                "error": True
+            }
+
+    # ---------------------------------------------------------------- DEPRECATED: Old buffering method
+    def _stream_buffered(self, messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]]) -> AsyncIterator[Dict[str, Any]]:
+        """
+        ⚠️  DEPRECATED: Old buffering method using Queue.
+        This method causes streaming delays and should not be used.
+        Use _stream_completion_async for real streaming.
+        """
         system_txt, contents = _convert_messages(messages)
         gem_tools, tool_cfg = _convert_tools(tools)
         cfg = gtypes.GenerateContentConfig(system_instruction=system_txt or None, tools=gem_tools or None, tool_config=tool_cfg)
@@ -188,13 +291,6 @@ class GeminiLLMClient(BaseLLMClient):
                 yield {"response": text_piece, "tool_calls": t_calls}
 
         return _aiter()
-
-    # ---------------------------------------------------------------- async facade
-    async def create_completion(self, messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]] = None, *, stream: bool = False) -> Dict[str, Any] | AsyncIterator[Dict[str, Any]]:
-        log.debug("create_completion called – stream=%s", stream)
-        if stream:
-            return self._stream(messages, tools)
-        return await asyncio.to_thread(self._create_sync, messages, tools)
 
 
 # ───────────────────────────────────────── parse helpers ──────────

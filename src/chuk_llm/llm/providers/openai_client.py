@@ -3,8 +3,8 @@
 OpenAI chat-completion adapter.
 """
 from __future__ import annotations
-from typing import Any, AsyncIterator, Dict, List, Optional
-from openai import OpenAI
+from typing import Any, AsyncIterator, Dict, List, Optional, Union
+import openai
 
 # mixins
 from chuk_llm.llm.openai_style_mixin import OpenAIStyleMixin
@@ -25,42 +25,117 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
         api_base: Optional[str] = None,
     ) -> None:
         self.model = model
-        self.client = (
-            OpenAI(api_key=api_key, base_url=api_base)
-            if api_base else
-            OpenAI(api_key=api_key)
+        
+        # Use AsyncOpenAI for real streaming support
+        self.async_client = openai.AsyncOpenAI(
+            api_key=api_key,
+            base_url=api_base
         )
+        
+        # Keep sync client for backwards compatibility if needed
+        self.client = openai.OpenAI(
+            api_key=api_key, 
+            base_url=api_base
+        ) if api_base else openai.OpenAI(api_key=api_key)
 
     # ------------------------------------------------------------------ #
     # public API                                                          #
     # ------------------------------------------------------------------ #
-    async def create_completion(
+    def create_completion(
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
         *,
         stream: bool = False,
-    ) -> Dict[str, Any] | AsyncIterator[Dict[str, Any]]:
+        **kwargs: Any,
+    ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
-        • stream=False → returns a single normalised dict
-        • stream=True  → returns an async iterator yielding MCP-delta dicts
+        FIXED: Use native async streaming for real-time response.
+        
+        • stream=False → returns awaitable that resolves to a single normalised dict
+        • stream=True  → returns async iterator directly (no buffering!)
         """
         tools = self._sanitize_tool_names(tools)
 
-        # 1️⃣ streaming
+        # 1️⃣ streaming - use native async streaming (NO BUFFERING)
         if stream:
-            return self._stream_from_blocking(
-                self.client.chat.completions.create,
+            return self._stream_completion_async(messages, tools, **kwargs)
+
+        # 2️⃣ one-shot - use existing method
+        return self._regular_completion(messages, tools, **kwargs)
+
+    async def _stream_completion_async(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """
+        NEW: Native async streaming using AsyncOpenAI.
+        This bypasses the problematic _stream_from_blocking method.
+        """
+        try:
+            # Make direct async call for real streaming
+            response_stream = await self.async_client.chat.completions.create(
                 model=self.model,
                 messages=messages,
                 tools=tools or [],
+                stream=True,
+                **kwargs
             )
+            
+            # Use the new real-time streaming method from mixin
+            async for result in self._stream_from_async(response_stream):
+                yield result
+                
+        except Exception as e:
+            yield {
+                "response": f"Error: {str(e)}",
+                "tool_calls": [],
+                "error": True
+            }
 
-        # 2️⃣ one-shot
-        resp = await self._call_blocking(
+    async def _regular_completion(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """Non-streaming completion using async client."""
+        try:
+            resp = await self.async_client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                tools=tools or [],
+                stream=False,
+                **kwargs
+            )
+            return self._normalise_message(resp.choices[0].message)
+            
+        except Exception as e:
+            return {
+                "response": f"Error: {str(e)}",
+                "tool_calls": [],
+                "error": True
+            }
+
+    # ------------------------------------------------------------------ #
+    # DEPRECATED: Keep old method for backwards compatibility             #
+    # ------------------------------------------------------------------ #
+    def _stream_completion_blocking(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """
+        ⚠️  DEPRECATED: This uses the buffering _stream_from_blocking method.
+        Use _stream_completion_async instead for real streaming.
+        """
+        return self._stream_from_blocking(
             self.client.chat.completions.create,
             model=self.model,
             messages=messages,
             tools=tools or [],
+            **kwargs
         )
-        return self._normalise_message(resp.choices[0].message)

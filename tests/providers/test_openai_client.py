@@ -58,74 +58,38 @@ async def test_create_completion_one_shot(monkeypatch, client):
     # Make tool sanitisation a no‑op so we can assert exactly what is forwarded.
     monkeypatch.setattr(client, "_sanitize_tool_names", lambda t: t)
 
-    # Stub ``_normalise_message`` so we control the final output easily.
-    monkeypatch.setattr(client, "_normalise_message", lambda msg: {"normalised": msg})
+    # Mock the _regular_completion method instead of _call_blocking
+    async def fake_regular_completion(msgs, tls, **kwargs):
+        assert msgs == messages
+        assert tls == tools_in
+        return {"response": "Hello", "tool_calls": []}
 
-    # Patch ``_call_blocking`` so no real threads / network are used and so we
-    # can assert the parameters with which it was invoked.
-    async def fake_call_blocking(func, *args, **kwargs):
-        # The passed callable must be the SDK's ``create``.
-        assert callable(func)
-        # Key arguments propagated from the client
-        assert kwargs["model"] == "test-model"
-        assert kwargs["messages"] == messages
-        assert kwargs["tools"] == tools_in
+    monkeypatch.setattr(client, "_regular_completion", fake_regular_completion)
 
-        # Fabricate a minimal SDK‑like response object.
-        class _Choice:
-            def __init__(self, message):
-                self.message = message
-
-        class _Resp:
-            def __init__(self):
-                self.choices = [_Choice({"role": "assistant", "content": "Hello"})]
-
-        return _Resp()
-
-    monkeypatch.setattr(client, "_call_blocking", fake_call_blocking)
-
-    # Ensure the placeholder SDK callable exists to satisfy attribute access.
-    client.client.chat.completions.create = lambda *a, **k: None  # noqa: E731
-
-    result = await client.create_completion(messages, tools=tools_in, stream=False)
-    assert result == {"normalised": {"role": "assistant", "content": "Hello"}}
-
-
-# -----------------------------------------------------------------------------
-# Tests – streaming completion
-# -----------------------------------------------------------------------------
-
+    # Use new interface - get awaitable and then await it
+    result_awaitable = client.create_completion(messages, tools=tools_in, stream=False)
+    result = await result_awaitable
+    assert result == {"response": "Hello", "tool_calls": []}
 
 @pytest.mark.asyncio
 async def test_create_completion_stream(monkeypatch, client):
     messages = [{"role": "user", "content": "Hello again"}]
 
-    # Sanitise tools is a no‑op for simplicity.
-    monkeypatch.setattr(client, "_sanitize_tool_names", lambda t: t)
+    # Mock the _stream_completion_async method
+    async def fake_stream_completion_async(msgs, tls, **kwargs):
+        assert msgs == messages
+        assert tls == []  # No tools provided
+        yield {"response": "Hello", "tool_calls": []}
+        yield {"response": " World", "tool_calls": []}
 
-    # Build an async generator to return from the fake streaming helper.
-    async def _gen():
-        yield {"delta": 1}
-        yield {"delta": 2}
+    monkeypatch.setattr(client, "_stream_completion_async", fake_stream_completion_async)
 
-    # ``_stream_from_blocking`` is synchronous in the real impl – it *returns*
-    # an async iterator. We therefore stub it with a sync function that does
-    # exactly that.
-    def fake_stream_from_blocking(func, *args, **kwargs):  # noqa: D401 – simple function
-        # Confirm forwarding of critical args
-        assert kwargs["model"] == "test-model"
-        assert kwargs["messages"] == messages
-        # No tools provided ⇒ the client should pass an empty list
-        assert kwargs["tools"] == []
-        return _gen()
-
-    monkeypatch.setattr(client, "_stream_from_blocking", fake_stream_from_blocking)
-
-    # Dummy SDK callable so attribute lookup succeeds
-    client.client.chat.completions.create = lambda *a, **k: None  # noqa: E731
-
-    async_iter = await client.create_completion(messages, tools=None, stream=True)
-    assert hasattr(async_iter, "__aiter__")  # basic sanity – is async iterator
-
-    collected = [item async for item in async_iter]
-    assert collected == [{"delta": 1}, {"delta": 2}]
+    # Use new interface - get async generator directly
+    async_iter = client.create_completion(messages, tools=None, stream=True)
+    assert hasattr(async_iter, "__aiter__")
+    
+    pieces = [chunk async for chunk in async_iter]
+    assert pieces == [
+        {"response": "Hello", "tool_calls": []},
+        {"response": " World", "tool_calls": []}
+    ]

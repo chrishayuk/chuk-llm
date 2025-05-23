@@ -7,7 +7,7 @@ Features
 * Shares sanitising / normalising helpers via OpenAIStyleMixin.
 * `create_completion(..., stream=False)`  → same dict as before.
 * `create_completion(..., stream=True)`   → **async iterator** yielding
-  incremental deltas:
+  incremental deltas with REAL streaming (no buffering).
 
       async for chunk in llm.create_completion(msgs, tools, stream=True):
           # chunk = {"response": "...", "tool_calls":[...]}
@@ -19,9 +19,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
-from groq import Groq
+from groq import AsyncGroq
 
 from chuk_llm.llm.openai_style_mixin import OpenAIStyleMixin
 from chuk_llm.llm.providers.base import BaseLLMClient
@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 
 class GroqAILLMClient(OpenAIStyleMixin, BaseLLMClient):
     """
-    Adapter around `groq` SDK compatible with MCP-CLI’s BaseLLMClient.
+    Adapter around `groq` SDK compatible with MCP-CLI's BaseLLMClient.
     """
 
     def __init__(
@@ -41,6 +41,15 @@ class GroqAILLMClient(OpenAIStyleMixin, BaseLLMClient):
         api_base: Optional[str] = None,
     ) -> None:
         self.model = model
+        
+        # Use AsyncGroq for real streaming support
+        self.async_client = AsyncGroq(
+            api_key=api_key,
+            base_url=api_base
+        )
+        
+        # Keep sync client for backwards compatibility if needed
+        from groq import Groq
         self.client = (
             Groq(api_key=api_key, base_url=api_base)
             if api_base else
@@ -50,42 +59,121 @@ class GroqAILLMClient(OpenAIStyleMixin, BaseLLMClient):
     # ──────────────────────────────────────────────────────────────────
     # public API
     # ──────────────────────────────────────────────────────────────────
-    async def create_completion(
+    def create_completion(
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
         *,
         stream: bool = False,
-    ) -> Dict[str, Any] | AsyncIterator[Dict[str, Any]]:
+        **kwargs: Any,
+    ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
-        • stream=False → return single normalised dict
-        • stream=True  → return async-iterator of delta dicts
+        FIXED: Real streaming support without buffering.
+        
+        • stream=False → returns awaitable that resolves to single normalised dict
+        • stream=True  → returns async iterator that yields chunks in real-time
         """
         tools = self._sanitize_tool_names(tools)
 
         if stream:
-            return self._stream(messages, tools or [])
+            # Return async generator directly for real streaming
+            return self._stream_completion_async(messages, tools or [], **kwargs)
 
-        # non-streaming path (unchanged)
-        resp = await self._call_blocking(
-            self.client.chat.completions.create,
-            model=self.model,
-            messages=messages,
-            tools=tools or [],
-        )
-        return self._normalise_message(resp.choices[0].message)
+        # non-streaming path
+        return self._regular_completion(messages, tools or [], **kwargs)
+
+    async def _stream_completion_async(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        **kwargs: Any,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """
+        NEW: Real streaming using AsyncGroq without buffering.
+        This provides true real-time streaming from Groq's API.
+        """
+        try:
+            log.debug("Starting Groq streaming...")
+            
+            # Use async client for real streaming
+            response_stream = await self.async_client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                tools=tools,
+                stream=True,
+                **kwargs
+            )
+            
+            chunk_count = 0
+            # Yield chunks immediately as they arrive from Groq
+            async for chunk in response_stream:
+                chunk_count += 1
+                
+                if chunk.choices and chunk.choices[0].delta:
+                    delta = chunk.choices[0].delta
+                    
+                    # Extract content and tool calls
+                    content = delta.content or ""
+                    tool_calls = getattr(delta, "tool_calls", [])
+                    
+                    # Only yield if we have actual content or tool calls
+                    if content or tool_calls:
+                        yield {
+                            "response": content,
+                            "tool_calls": tool_calls,
+                        }
+                
+                # Allow other async tasks to run periodically
+                if chunk_count % 10 == 0:
+                    await asyncio.sleep(0)
+            
+            log.debug(f"Groq streaming completed with {chunk_count} chunks")
+        
+        except Exception as e:
+            log.error(f"Error in Groq streaming: {e}")
+            yield {
+                "response": f"Streaming error: {str(e)}",
+                "tool_calls": [],
+                "error": True
+            }
+
+    async def _regular_completion(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """Non-streaming completion using async client."""
+        try:
+            resp = await self.async_client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                tools=tools,
+                stream=False,
+                **kwargs
+            )
+            return self._normalise_message(resp.choices[0].message)
+            
+        except Exception as e:
+            log.error(f"Error in Groq completion: {e}")
+            return {
+                "response": f"Error: {str(e)}",
+                "tool_calls": [],
+                "error": True
+            }
 
     # ──────────────────────────────────────────────────────────────────
-    # internal: streaming wrapper
+    # DEPRECATED: Old buffering method
     # ──────────────────────────────────────────────────────────────────
-    async def _stream(
+    async def _stream_buffered(
         self,
         messages: List[Dict[str, Any]],
         tools: List[Dict[str, Any]],
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Wrap Groq’s blocking streaming generator in an async iterator and
-        emit MCP-style deltas.
+        ⚠️  DEPRECATED: Old buffering method using Queue + executor.
+        This method causes streaming delays and should not be used.
+        Use _stream_completion_async for real streaming.
         """
         queue: asyncio.Queue = asyncio.Queue()
 
