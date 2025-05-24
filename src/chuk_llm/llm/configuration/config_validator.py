@@ -1,8 +1,8 @@
-# chuk_llm/llm/config/config_validator.py
+# src/chuk_llm/llm/configuration/config_validator.py
 from typing import Dict, Any, List, Optional, Set
 import os
 import re
-from .configuration.capabilities import PROVIDER_CAPABILITIES, Feature
+from .capabilities import PROVIDER_CAPABILITIES, Feature
 
 class ConfigValidator:
     """Validates provider configurations comprehensively"""
@@ -15,6 +15,11 @@ class ConfigValidator:
     ) -> tuple[bool, List[str]]:
         """Validate provider configuration"""
         issues = []
+        
+        # Handle None config
+        if config is None:
+            issues.append(f"Configuration is None for provider {provider}")
+            return False, issues
         
         # Check if provider is supported
         if provider not in PROVIDER_CAPABILITIES:
@@ -51,7 +56,6 @@ class ConfigValidator:
             pass
         
         return len(issues) == 0, issues
-    
     @staticmethod
     def validate_request_compatibility(
         provider: str,
@@ -104,14 +108,20 @@ class ConfigValidator:
             r'localhost|'  # localhost...
             r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
             r'(?::\d+)?'  # optional port
-            r'(?:/?|[/?]\S+)
-    , re.IGNORECASE)
+            r'(?:/?|[/?]\S+)$',  # Fixed: added closing quote and $
+            re.IGNORECASE
+        )
         return url_pattern.match(url) is not None
     
     @staticmethod
     def _has_vision_content(messages: List[Dict[str, Any]]) -> bool:
         """Check if messages contain vision/image content"""
+        if messages is None:
+            return False
+            
         for message in messages:
+            if message is None:
+                continue
             content = message.get("content", "")
             if isinstance(content, list):
                 for item in content:
@@ -122,8 +132,13 @@ class ConfigValidator:
     @staticmethod
     def _estimate_token_count(messages: List[Dict[str, Any]]) -> int:
         """Rough estimation of token count"""
+        if messages is None:
+            return 0
+            
         total_chars = 0
         for message in messages:
+            if message is None:
+                continue
             content = message.get("content", "")
             if isinstance(content, str):
                 total_chars += len(content)
@@ -136,12 +151,14 @@ class ConfigValidator:
         return total_chars // 4
 
 # Enhanced ProviderConfig with validation
-class ValidatedProviderConfig(ProviderConfig):
+class ValidatedProviderConfig:
     """ProviderConfig with automatic validation"""
     
     def __init__(self, config: Optional[Dict[str, Dict[str, Any]]] = None, strict: bool = False):
-        super().__init__(config)
+        from .provider_config import ProviderConfig
+        self.base_config = ProviderConfig(config)
         self.strict = strict
+        self.providers = self.base_config.providers
         self._validate_all_configs()
     
     def _validate_all_configs(self):
@@ -177,3 +194,39 @@ class ValidatedProviderConfig(ProviderConfig):
         return ConfigValidator.validate_request_compatibility(
             provider, messages, tools, **kwargs
         )
+    
+    def get_provider_config(self, provider: str) -> Dict[str, Any]:
+        """Get configuration for a provider"""
+        return self.base_config.get_provider_config(provider)
+    
+    def update_provider_config(self, provider: str, updates: Dict[str, Any]) -> None:
+        """Update configuration for a provider"""
+        return self.base_config.update_provider_config(provider, updates)
+    
+    def get_active_provider(self) -> str:
+        """Get the active provider name"""
+        return self.base_config.get_active_provider()
+    
+    def set_active_provider(self, provider: str) -> None:
+        """Set the active provider name"""
+        return self.base_config.set_active_provider(provider)
+    
+    def get_active_model(self) -> str:
+        """Get the active model name"""
+        return self.base_config.get_active_model()
+    
+    def set_active_model(self, model: str) -> None:
+        """Set the active model name"""
+        return self.base_config.set_active_model(model)
+    
+    def get_api_key(self, provider: str) -> Optional[str]:
+        """Get the API key for a provider"""
+        return self.base_config.get_api_key(provider)
+    
+    def get_api_base(self, provider: str) -> Optional[str]:
+        """Get the API base URL for a provider"""
+        return self.base_config.get_api_base(provider)
+    
+    def get_default_model(self, provider: str) -> str:
+        """Get the default model for a provider"""
+        return self.base_config.get_default_model(provider)
