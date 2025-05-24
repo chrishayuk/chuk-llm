@@ -373,7 +373,7 @@ class TestLLMResponse:
             tool_calls=[tool_call]
         )
         
-        data = response.dict()
+        data = response.model_dump()
         assert data["response"] == "Test response"
         assert len(data["tool_calls"]) == 1
         assert data["tool_calls"][0]["id"] == "call_123"

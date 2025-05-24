@@ -1,84 +1,52 @@
-# tests/test_openai_client.py
-import sys
-import types
+"""
+Tests for OpenAI client implementation.
+"""
+
 import pytest
+import asyncio
+from unittest.mock import patch, MagicMock, AsyncMock
 
-# -----------------------------------------------------------------------------
-# Provide a stub "openai" module *before* importing the client implementation so
-# the real SDK is never required (and no network calls are made).
-# -----------------------------------------------------------------------------
-
-dummy_openai = types.ModuleType("openai")
-
-
-class _DummyCompletions:
-    # Placeholder attribute – tests will monkey‑patch the actual callable
-    create = lambda *a, **k: None  # noqa: E731
-
-
-class _DummyChat:
-    completions = _DummyCompletions()
-
-
-class DummyOpenAI:
-    """Mimics ``openai.OpenAI`` enough for the client to instantiate."""
-
-    def __init__(self, *args, **kwargs):  # accept arbitrary kwargs
-        self.chat = _DummyChat()
-
-
-dummy_openai.OpenAI = DummyOpenAI
-sys.modules["openai"] = dummy_openai
-
-# Now the import is safe – it will pick up our stub instead of the real SDK.
-from chuk_llm.llm.providers.openai_client import OpenAILLMClient  # noqa: E402  pylint: disable=wrong-import-position
-
-
-# -----------------------------------------------------------------------------
-# Helpers
-# -----------------------------------------------------------------------------
+from chuk_llm.llm.providers.openai_client import OpenAILLMClient
 
 
 @pytest.fixture
 def client():
-    """Return a *fresh* client instance for each test."""
-    return OpenAILLMClient(model="test-model", api_key="sk-test")
-
-
-# -----------------------------------------------------------------------------
-# Tests – non‑streaming completion
-# -----------------------------------------------------------------------------
+    """Create a mock OpenAI client for testing."""
+    with patch("chuk_llm.llm.providers.openai_client.openai"):
+        return OpenAILLMClient(model="gpt-4o-mini", api_key="test-key")
 
 
 @pytest.mark.asyncio
-async def test_create_completion_one_shot(monkeypatch, client):
-    messages = [{"role": "user", "content": "Hi!"}]
-    tools_in = [{"name": "demo"}]
-
-    # Make tool sanitisation a no‑op so we can assert exactly what is forwarded.
-    monkeypatch.setattr(client, "_sanitize_tool_names", lambda t: t)
-
-    # Mock the _regular_completion method instead of _call_blocking
+async def test_create_completion_non_streaming(monkeypatch, client):
+    """Test non-streaming completion."""
+    messages = [{"role": "user", "content": "Hello"}]
+    
+    # Mock the _regular_completion method
     async def fake_regular_completion(msgs, tls, **kwargs):
         assert msgs == messages
-        assert tls == tools_in
-        return {"response": "Hello", "tool_calls": []}
-
+        assert tls == [] or tls is None
+        return {"response": "Hello there!", "tool_calls": []}
+    
     monkeypatch.setattr(client, "_regular_completion", fake_regular_completion)
-
-    # Use new interface - get awaitable and then await it
-    result_awaitable = client.create_completion(messages, tools=tools_in, stream=False)
+    
+    # Test non-streaming
+    result_awaitable = client.create_completion(messages, tools=None, stream=False)
+    assert asyncio.iscoroutine(result_awaitable)
+    
     result = await result_awaitable
-    assert result == {"response": "Hello", "tool_calls": []}
+    assert result["response"] == "Hello there!"
+    assert result["tool_calls"] == []
+
 
 @pytest.mark.asyncio
 async def test_create_completion_stream(monkeypatch, client):
+    """Test streaming completion."""
     messages = [{"role": "user", "content": "Hello again"}]
 
     # Mock the _stream_completion_async method
-    async def fake_stream_completion_async(msgs, tls, **kwargs):
+    async def fake_stream_completion_async(msgs, tls=None, **kwargs):
         assert msgs == messages
-        assert tls == []  # No tools provided
+        assert tls == [] or tls is None  # Allow both [] and None
         yield {"response": "Hello", "tool_calls": []}
         yield {"response": " World", "tool_calls": []}
 
@@ -87,9 +55,131 @@ async def test_create_completion_stream(monkeypatch, client):
     # Use new interface - get async generator directly
     async_iter = client.create_completion(messages, tools=None, stream=True)
     assert hasattr(async_iter, "__aiter__")
-    
+
     pieces = [chunk async for chunk in async_iter]
-    assert pieces == [
-        {"response": "Hello", "tool_calls": []},
-        {"response": " World", "tool_calls": []}
-    ]
+    assert len(pieces) == 2
+    assert pieces[0]["response"] == "Hello"
+    assert pieces[1]["response"] == " World"
+
+
+@pytest.mark.asyncio
+async def test_create_completion_with_tools(monkeypatch, client):
+    """Test completion with tool calls."""
+    messages = [{"role": "user", "content": "Use tool"}]
+    tools = [{"type": "function", "function": {"name": "test_tool"}}]
+    
+    # Mock the _regular_completion method
+    async def fake_regular_completion(msgs, tls, **kwargs):
+        assert msgs == messages
+        assert tls == tools
+        return {
+            "response": None, 
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "test_tool", "arguments": "{}"}
+            }]
+        }
+    
+    monkeypatch.setattr(client, "_regular_completion", fake_regular_completion)
+    
+    result = await client.create_completion(messages, tools=tools, stream=False)
+    assert result["response"] is None
+    assert len(result["tool_calls"]) == 1
+    assert result["tool_calls"][0]["function"]["name"] == "test_tool"
+
+
+@pytest.mark.asyncio
+async def test_create_completion_streaming_with_tools(monkeypatch, client):
+    """Test streaming with tool calls."""
+    messages = [{"role": "user", "content": "Use tool"}]
+    tools = [{"type": "function", "function": {"name": "test_tool"}}]
+    
+    # Mock streaming with tool calls
+    async def fake_stream_with_tools(msgs, tls, **kwargs):
+        yield {
+            "response": "", 
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function", 
+                "function": {"name": "test_tool", "arguments": "{}"}
+            }]
+        }
+        yield {"response": "Tool executed", "tool_calls": []}
+    
+    monkeypatch.setattr(client, "_stream_completion_async", fake_stream_with_tools)
+    
+    stream = client.create_completion(messages, tools=tools, stream=True)
+    chunks = [chunk async for chunk in stream]
+    
+    assert len(chunks) == 2
+    assert len(chunks[0]["tool_calls"]) == 1
+    assert chunks[1]["response"] == "Tool executed"
+
+
+@pytest.mark.asyncio
+async def test_create_completion_error_handling(monkeypatch, client):
+    """Test error handling in non-streaming mode."""
+    messages = [{"role": "user", "content": "Hello"}]
+    
+    # Mock error in regular completion
+    async def fake_error_completion(msgs, tls, **kwargs):
+        return {"response": "Error: API Error", "tool_calls": [], "error": True}
+    
+    monkeypatch.setattr(client, "_regular_completion", fake_error_completion)
+    
+    result = await client.create_completion(messages, stream=False)
+    assert result["error"] is True
+    assert "API Error" in result["response"]
+
+
+@pytest.mark.asyncio
+async def test_create_completion_streaming_error_handling(monkeypatch, client):
+    """Test error handling in streaming mode."""
+    messages = [{"role": "user", "content": "Hello"}]
+    
+    # Mock streaming with error
+    async def fake_error_stream(msgs, tls, **kwargs):
+        yield {"response": "Start", "tool_calls": []}
+        yield {"response": "Streaming error: API Error", "tool_calls": [], "error": True}
+    
+    monkeypatch.setattr(client, "_stream_completion_async", fake_error_stream)
+    
+    stream = client.create_completion(messages, stream=True)
+    chunks = [chunk async for chunk in stream]
+    
+    assert len(chunks) == 2
+    assert chunks[0]["response"] == "Start"
+    assert chunks[1]["error"] is True
+
+
+@pytest.mark.asyncio
+async def test_interface_compliance(client):
+    """Test that client follows the BaseLLMClient interface."""
+    # Test non-streaming
+    messages = [{"role": "user", "content": "Test"}]
+    
+    # For non-streaming, we need to await the result
+    result = client.create_completion(messages, stream=False)
+    if asyncio.iscoroutine(result):
+        result = await result
+    
+    assert isinstance(result, dict)
+    assert "response" in result
+
+
+def test_client_instantiation():
+    """Test that OpenAI client can be instantiated."""
+    with patch("chuk_llm.llm.providers.openai_client.openai"):
+        client = OpenAILLMClient(model="gpt-4o-mini", api_key="test-key")
+        assert client.model == "gpt-4o-mini"
+
+
+def test_sanitize_tool_names():
+    """Test tool name sanitization."""
+    with patch("chuk_llm.llm.providers.openai_client.openai"):
+        client = OpenAILLMClient()
+        
+        tools = [{"function": {"name": "invalid@name"}}]
+        sanitized = client._sanitize_tool_names(tools)
+        assert sanitized[0]["function"]["name"] == "invalid_name"

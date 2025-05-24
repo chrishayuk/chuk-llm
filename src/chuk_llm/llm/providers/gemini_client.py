@@ -209,7 +209,6 @@ class GeminiLLMClient(BaseLLMClient):
             log.debug("Starting Gemini streaming...")
             
             # Use asyncio.to_thread for proper async execution without buffering
-            # This runs the sync streaming call in a thread but yields immediately
             def _sync_stream():
                 return self.client.models.generate_content_stream(
                     model=self.model, 
@@ -238,12 +237,13 @@ class GeminiLLMClient(BaseLLMClient):
         
         except Exception as e:
             log.error(f"Error in Gemini streaming: {e}")
+            # Always yield an error chunk instead of raising
             yield {
                 "response": f"Streaming error: {str(e)}",
                 "tool_calls": [],
                 "error": True
             }
-
+            
     async def _regular_completion(
         self, 
         messages: List[Dict[str, Any]], 

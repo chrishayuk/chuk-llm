@@ -1,14 +1,15 @@
 # chuk_llm/llm/core/types.py
 import logging
 from typing import TypedDict, List, Optional, Union, Any, Dict
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 import json
 
 class ToolCallFunction(BaseModel):
     name: str
     arguments: str  # JSON string
     
-    @validator('arguments')
+    @field_validator('arguments')
+    @classmethod
     def validate_arguments(cls, v):
         if isinstance(v, dict):
             return json.dumps(v)
@@ -19,31 +20,31 @@ class ToolCallFunction(BaseModel):
             return "{}"  # Fallback to empty object
 
 class ToolCall(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    
     id: str
     type: str = "function"
     function: ToolCallFunction
-    
-    class Config:
-        extra = "forbid"
 
 class LLMResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    
     response: Optional[str] = None
     tool_calls: List[ToolCall] = Field(default_factory=list)
     error: bool = False
     error_message: Optional[str] = None
     
-    @validator('response', 'tool_calls', pre=True, always=True)
-    def validate_response_xor_tools(cls, v, values):
+    @field_validator('response', 'tool_calls', mode='before')
+    @classmethod
+    def validate_response_xor_tools(cls, v, info):
         # At least one of response or tool_calls should have content
+        values = info.data if hasattr(info, 'data') else {}
         response = values.get('response')
         tool_calls = values.get('tool_calls', [])
         
         if not response and not tool_calls and not values.get('error', False):
             raise ValueError("Response must have either text content or tool calls")
         return v
-    
-    class Config:
-        extra = "forbid"
         
 class StreamChunk(LLMResponse):
     """Streaming chunk with metadata"""
@@ -51,7 +52,8 @@ class StreamChunk(LLMResponse):
     is_final: bool = False
     timestamp: Optional[float] = None
     
-    @validator('response', pre=True, always=True)
+    @field_validator('response', mode='before')
+    @classmethod
     def allow_empty_chunks(cls, v):
         # Streaming chunks can be empty
         return v

@@ -13,6 +13,7 @@ authors = [
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.51.0",
+    "asyncio>=3.4.3",
     "google-genai>=1.15.0",
     "groq>=0.25.0",
     "ollama>=0.4.8",
