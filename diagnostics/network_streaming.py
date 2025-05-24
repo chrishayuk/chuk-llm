@@ -1,6 +1,6 @@
-# diagnostics/network_streaming_test.py
+# diagnostics/network_streaming.py
 """
-Test streaming at the network level to isolate the issue.
+Test streaming at the network level
 """
 import asyncio
 import time

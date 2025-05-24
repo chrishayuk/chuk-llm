@@ -8,9 +8,11 @@ import logging
 import uuid
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
+# provider
 import ollama
 
-from chuk_llm.llm.providers.base import BaseLLMClient
+# providers
+from chuk_llm.llm.core.base import BaseLLMClient
 
 log = logging.getLogger(__name__)
 
@@ -156,7 +158,7 @@ class OllamaLLMClient(BaseLLMClient):
         **kwargs,
     ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
-        FIXED: Generate a chat completion with real streaming support.
+        Generate a chat completion with real streaming support.
         
         Args:
             messages: List of message dictionaries
@@ -182,7 +184,7 @@ class OllamaLLMClient(BaseLLMClient):
         **kwargs,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        NEW: Real streaming using Ollama's AsyncClient without buffering.
+        Real streaming using Ollama's AsyncClient without buffering.
         This provides true real-time streaming from Ollama's API.
         """
         try:
@@ -313,115 +315,3 @@ class OllamaLLMClient(BaseLLMClient):
                 "tool_calls": [],
                 "error": True
             }
-
-    # ---------------------------------------------------------------- DEPRECATED: Old implementation
-    async def _stream_deprecated(
-        self,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
-    ) -> AsyncIterator[Dict[str, Any]]:
-        """
-        ⚠️  DEPRECATED: Old streaming implementation.
-        This method may have issues with proper async handling.
-        Use _stream_completion_async for real streaming.
-        """
-        # Prepare messages for Ollama
-        ollama_messages = []
-        for m in messages:
-            message = {"role": m.get("role"), "content": m.get("content")}
-            
-            # Handle images if present
-            if isinstance(m.get("content"), list):
-                for item in m.get("content", []):
-                    if item.get("type") == "image" or item.get("type") == "image_url":
-                        image_url = item.get("image_url", {}).get("url", "")
-                        if image_url.startswith("data:image"):
-                            # Extract base64 data
-                            import base64
-                            _, encoded = image_url.split(",", 1)
-                            message["images"] = [base64.b64decode(encoded)]
-                        else:
-                            message["images"] = [image_url]
-            
-            ollama_messages.append(message)
-        
-        # Convert tools to Ollama format
-        ollama_tools = []
-        if tools:
-            for tool in tools:
-                if "function" in tool:
-                    fn = tool["function"]
-                    ollama_tools.append({
-                        "type": "function",
-                        "function": {
-                            "name": fn.get("name"),
-                            "description": fn.get("description", ""),
-                            "parameters": fn.get("parameters", {})
-                        }
-                    })
-                else:
-                    ollama_tools.append(tool)
-        
-        try:
-            # Make the streaming call
-            # The async client's chat method returns a coroutine, we need to await it
-            stream_coro = self.async_client.chat(
-                model=self.model,
-                messages=ollama_messages,
-                tools=ollama_tools or [],
-                stream=True,
-            )
-            
-            # Await the coroutine to get the actual async generator
-            stream = await stream_coro
-            
-            # Process each chunk in the stream
-            aggregated_tool_calls = []
-            async for chunk in stream:
-                # Get content from chunk
-                content = getattr(chunk.message, "content", "")
-                
-                # Check for tool calls
-                new_tool_calls = []
-                chunk_tool_calls = getattr(chunk.message, "tool_calls", None)
-                if chunk_tool_calls:
-                    for tc in chunk_tool_calls:
-                        tc_id = getattr(tc, "id", None) or f"call_{uuid.uuid4().hex[:8]}"
-                        
-                        fn_name = getattr(tc.function, "name", "")
-                        fn_args = getattr(tc.function, "arguments", {})
-                        
-                        # Process arguments
-                        if isinstance(fn_args, dict):
-                            fn_args_str = json.dumps(fn_args)
-                        elif isinstance(fn_args, str):
-                            fn_args_str = fn_args
-                        else:
-                            fn_args_str = str(fn_args)
-                        
-                        tool_call = {
-                            "id": tc_id,
-                            "type": "function",
-                            "function": {
-                                "name": fn_name,
-                                "arguments": fn_args_str
-                            }
-                        }
-                        new_tool_calls.append(tool_call)
-                        aggregated_tool_calls.append(tool_call)
-                
-                # Yield the chunk with content and any tool calls
-                yield {
-                    "response": content,
-                    "tool_calls": new_tool_calls
-                }
-            
-            # If we had tool calls, yield a final chunk with all tool calls and empty content
-            if aggregated_tool_calls and not any(t["function"].get("name") == "" for t in aggregated_tool_calls):
-                yield {
-                    "response": "",
-                    "tool_calls": aggregated_tool_calls
-                }
-        except Exception as e:
-            # Re-raise any exceptions
-            raise e

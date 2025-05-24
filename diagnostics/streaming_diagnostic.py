@@ -5,7 +5,7 @@ Simple Streaming Diagnostic
 import asyncio
 import time
 from chuk_llm.llm.llm_client import get_llm_client
-from chuk_llm.llm.provider_config import ProviderConfig
+from chuk_llm.llm.configuration.provider_config import ProviderConfig
 
 async def test_fixed_chuk_llm():
     """Test the fixed chuk_llm client directly."""

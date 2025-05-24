@@ -48,7 +48,7 @@ def test_streaming_interface_compliance(provider_class, provider_name):
 # Test that the base interface is correctly defined
 def test_base_interface():
     """Test that BaseLLMClient has the correct interface."""
-    from chuk_llm.llm.providers.base import BaseLLMClient
+    from chuk_llm.llm.core.base import BaseLLMClient
     
     # Check that create_completion is not async
     import inspect

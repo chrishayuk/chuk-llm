@@ -16,7 +16,8 @@ from dotenv import load_dotenv
 from google import genai
 from google.genai import types as gtypes
 
-from chuk_llm.llm.providers.base import BaseLLMClient
+# providers
+from chuk_llm.llm.core.base import BaseLLMClient
 
 log = logging.getLogger(__name__)
 
@@ -172,7 +173,7 @@ class GeminiLLMClient(BaseLLMClient):
         **kwargs: Any
     ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
-        FIXED: Generate completion with real streaming support.
+        Generate completion with real streaming support.
         
         • stream=False → returns awaitable that resolves to standardised dict
         • stream=True  → returns async iterator that yields chunks in real-time
@@ -193,7 +194,7 @@ class GeminiLLMClient(BaseLLMClient):
         **kwargs: Any
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        NEW: Real streaming using async execution without buffering.
+        Real streaming using async execution without buffering.
         This provides true real-time streaming from Gemini's API.
         """
         try:
@@ -260,39 +261,6 @@ class GeminiLLMClient(BaseLLMClient):
                 "error": True
             }
 
-    # ---------------------------------------------------------------- DEPRECATED: Old buffering method
-    def _stream_buffered(self, messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]]) -> AsyncIterator[Dict[str, Any]]:
-        """
-        ⚠️  DEPRECATED: Old buffering method using Queue.
-        This method causes streaming delays and should not be used.
-        Use _stream_completion_async for real streaming.
-        """
-        system_txt, contents = _convert_messages(messages)
-        gem_tools, tool_cfg = _convert_tools(tools)
-        cfg = gtypes.GenerateContentConfig(system_instruction=system_txt or None, tools=gem_tools or None, tool_config=tool_cfg)
-
-        queue: asyncio.Queue = asyncio.Queue()
-
-        def _producer():
-            try:
-                for chunk in self.client.models.generate_content_stream(model=self.model, contents=contents, config=cfg):
-                    queue.put_nowait(chunk)
-            finally:
-                queue.put_nowait(None)
-
-        asyncio.get_running_loop().run_in_executor(None, _producer)
-
-        async def _aiter():
-            while True:
-                chunk = await queue.get()
-                if chunk is None:
-                    break
-                text_piece, t_calls = _parse_stream_chunk(chunk)
-                yield {"response": text_piece, "tool_calls": t_calls}
-
-        return _aiter()
-
-
 # ───────────────────────────────────────── parse helpers ──────────
 
 def _parse_stream_chunk(chunk) -> Tuple[str, List[Dict[str, Any]]]:
@@ -308,7 +276,7 @@ def _parse_stream_chunk(chunk) -> Tuple[str, List[Dict[str, Any]]]:
                 fc = part.function_call
                 calls.append({"id": f"call_{uuid.uuid4().hex[:8]}", "type": "function", "function": {"name": fc.name, "arguments": json.dumps(dict(fc.args))}})
 
-    log.debug("Stream chunk parsed – text='%s…', tool_calls=%d", delta_text[:40], len(calls))
+    log.debug("Stream chunk parsed - text='%s…', tool_calls=%d", delta_text[:40], len(calls))
     return delta_text, calls
 
 

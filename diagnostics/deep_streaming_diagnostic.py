@@ -6,7 +6,7 @@ import asyncio
 import time
 import logging
 from chuk_llm.llm.llm_client import get_llm_client
-from chuk_llm.llm.provider_config import ProviderConfig
+from chuk_llm.llm.configuration.provider_config import ProviderConfig
 
 # Enable debug logging
 logging.basicConfig(level=logging.DEBUG)

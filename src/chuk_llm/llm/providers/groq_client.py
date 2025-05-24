@@ -23,8 +23,9 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 from groq import AsyncGroq
 
-from chuk_llm.llm.openai_style_mixin import OpenAIStyleMixin
-from chuk_llm.llm.providers.base import BaseLLMClient
+# providers
+from chuk_llm.llm.core.base import BaseLLMClient
+from ._mixins import OpenAIStyleMixin
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +69,7 @@ class GroqAILLMClient(OpenAIStyleMixin, BaseLLMClient):
         **kwargs: Any,
     ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
-        FIXED: Real streaming support without buffering.
+        Real streaming support without buffering.
         
         • stream=False → returns awaitable that resolves to single normalised dict
         • stream=True  → returns async iterator that yields chunks in real-time
@@ -160,46 +161,4 @@ class GroqAILLMClient(OpenAIStyleMixin, BaseLLMClient):
                 "response": f"Error: {str(e)}",
                 "tool_calls": [],
                 "error": True
-            }
-
-    # ──────────────────────────────────────────────────────────────────
-    # DEPRECATED: Old buffering method
-    # ──────────────────────────────────────────────────────────────────
-    async def _stream_buffered(
-        self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
-    ) -> AsyncIterator[Dict[str, Any]]:
-        """
-        ⚠️  DEPRECATED: Old buffering method using Queue + executor.
-        This method causes streaming delays and should not be used.
-        Use _stream_completion_async for real streaming.
-        """
-        queue: asyncio.Queue = asyncio.Queue()
-
-        def _producer() -> None:
-            try:
-                for chunk in self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    tools=tools,
-                    stream=True,
-                ):
-                    queue.put_nowait(chunk)
-            finally:
-                queue.put_nowait(None)  # sentinel
-
-        loop = asyncio.get_running_loop()
-        loop.run_in_executor(None, _producer)
-
-        while True:
-            chunk = await queue.get()
-            if chunk is None:  # sentinel received
-                break
-
-            delta = chunk.choices[0].delta
-            yield {
-                "response": delta.content or "",
-                # Groq includes tool_calls only in the *final* chunk
-                "tool_calls": getattr(delta, "tool_calls", []),
             }

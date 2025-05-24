@@ -1,4 +1,4 @@
-# chuk_llm/llm/openai_style_mixin.py
+# chuk_llm/llm/config/provider_config.py
 """
 Provider configuration management.
 """

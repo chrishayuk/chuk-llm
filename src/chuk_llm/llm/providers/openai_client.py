@@ -7,11 +7,10 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Union
 import openai
 
 # mixins
-from chuk_llm.llm.openai_style_mixin import OpenAIStyleMixin
+from chuk_llm.llm.providers._mixins import OpenAIStyleMixin
 
 # base
-from .base import BaseLLMClient
-
+from ..core.base import BaseLLMClient
 
 class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
     """
@@ -50,7 +49,7 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
         **kwargs: Any,
     ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
-        FIXED: Use native async streaming for real-time response.
+        Use native async streaming for real-time response.
         
         • stream=False → returns awaitable that resolves to a single normalised dict
         • stream=True  → returns async iterator directly (no buffering!)
@@ -71,8 +70,7 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
         **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        NEW: Native async streaming using AsyncOpenAI.
-        This bypasses the problematic _stream_from_blocking method.
+        Native async streaming using AsyncOpenAI.
         """
         try:
             # Make direct async call for real streaming
@@ -118,24 +116,3 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
                 "tool_calls": [],
                 "error": True
             }
-
-    # ------------------------------------------------------------------ #
-    # DEPRECATED: Keep old method for backwards compatibility             #
-    # ------------------------------------------------------------------ #
-    def _stream_completion_blocking(
-        self,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
-        **kwargs: Any,
-    ) -> AsyncIterator[Dict[str, Any]]:
-        """
-        ⚠️  DEPRECATED: This uses the buffering _stream_from_blocking method.
-        Use _stream_completion_async instead for real streaming.
-        """
-        return self._stream_from_blocking(
-            self.client.chat.completions.create,
-            model=self.model,
-            messages=messages,
-            tools=tools or [],
-            **kwargs
-        )

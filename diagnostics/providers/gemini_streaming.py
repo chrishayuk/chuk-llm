@@ -1,34 +1,33 @@
-# diagnostics/ollama_streaming.py
+# diagnostics/gemini_streaming.py
 """
-Test Ollama provider streaming behavior.
+Test Gemini provider streaming behavior.
 """
 import asyncio
 import time
 from chuk_llm.llm.llm_client import get_llm_client
-from chuk_llm.llm.provider_config import ProviderConfig
+from chuk_llm.llm.configuration.provider_config import ProviderConfig
 
-async def test_ollama_streaming():
-    """Test Ollama streaming behavior."""
-    print("=== Testing Ollama Provider Streaming ===")
+async def test_gemini_streaming():
+    """Test Gemini streaming behavior."""
+    print("=== Testing Gemini Provider Streaming ===")
     
     try:
-        # Get Ollama client
+        # Get Gemini client
         client = get_llm_client(
-            provider="ollama",
-            model="qwen3",  # or whatever model you have available
+            provider="gemini",
+            model="gemini-2.0-flash",
             config=ProviderConfig()
         )
         
         print(f"Client type: {type(client)}")
         print(f"Client class: {client.__class__.__name__}")
-        print(f"Model: {client.model}")
         
         messages = [
             {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": "Write a short creative story about a robot learning to cook. Make it at least 100 words with good details."}
+            {"role": "user", "content": "Write a creative story about a time traveler who discovers something unexpected. Make it at least 150 words with vivid details."}
         ]
         
-        print("\n🔍 Testing Ollama streaming=True...")
+        print("\n🔍 Testing Gemini streaming=True...")
         start_time = time.time()
         
         # Test streaming - don't await since it should return async generator
@@ -64,15 +63,15 @@ async def test_ollama_streaming():
                     print(chunk_text, end="", flush=True)
                     full_response += chunk_text
                 
-                # Show timing for first few chunks and every 20th chunk
-                if chunk_count <= 5 or chunk_count % 20 == 0:
+                # Show timing for first few chunks and every 25th chunk
+                if chunk_count <= 5 or chunk_count % 25 == 0:
                     interval = relative_time - (chunk_times[-2] if len(chunk_times) > 1 else first_chunk_time)
                     print(f"\n   Chunk {chunk_count}: {relative_time:.3f}s (gap: {interval:.3f}s)")
                     print("   Continuing: ", end="", flush=True)
             
             end_time = time.time() - start_time
             
-            print(f"\n\n📊 OLLAMA STREAMING ANALYSIS:")
+            print(f"\n\n📊 GEMINI STREAMING ANALYSIS:")
             print(f"   Total chunks: {chunk_count}")
             print(f"   First chunk delay: {first_chunk_time:.3f}s")
             print(f"   Total time: {end_time:.3f}s")
@@ -98,16 +97,14 @@ async def test_ollama_streaming():
                     print("   ⚠️  MICRO-BUFFERED: Very fast chunks")
                 elif avg_interval < 0.1:
                     print("   ✅ GOOD STREAMING: Reasonable timing")
-                elif avg_interval < 0.5:
-                    print("   ✅ NATURAL: LLM-paced generation")
                 else:
-                    print("   🐌 SLOW: Very large gaps (might be local processing)")
+                    print("   🐌 SLOW: Large gaps between chunks")
         
         else:
             print("❌ Expected async generator, got something else")
             print(f"Response: {response}")
         
-        print("\n🔍 Testing Ollama streaming=False...")
+        print("\n🔍 Testing Gemini streaming=False...")
         response = await client.create_completion(messages, stream=False)
         print(f"Non-streaming response type: {type(response)}")
         if isinstance(response, dict):
@@ -116,9 +113,9 @@ async def test_ollama_streaming():
             print("✅ Non-streaming works correctly")
         
     except Exception as e:
-        print(f"❌ Error testing Ollama: {e}")
+        print(f"❌ Error testing Gemini: {e}")
         import traceback
         traceback.print_exc()
 
 if __name__ == "__main__":
-    asyncio.run(test_ollama_streaming())
+    asyncio.run(test_gemini_streaming())

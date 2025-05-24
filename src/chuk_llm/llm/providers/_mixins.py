@@ -1,4 +1,4 @@
-# chuk_llm/llm/openai_style_mixin.py
+# chuk_llm/llm/providers/_mixins.py
 from __future__ import annotations
 
 import asyncio

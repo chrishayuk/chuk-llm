@@ -23,7 +23,7 @@ from google.genai import types as gtypes
 from PIL import Image
 
 # base
-from chuk_llm.llm.providers.base import BaseLLMClient
+from chuk_llm.llm.core.base import BaseLLMClient
 
 # mixin
 from .mixin import ImageGeneratorMixin
