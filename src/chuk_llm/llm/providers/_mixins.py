@@ -29,7 +29,7 @@ class OpenAIStyleMixin:
       • _call_blocking          - run blocking SDK in thread
       • _normalise_message      - convert full message → MCP dict
       • _stream_from_blocking   - wrap *stream=True* SDK generators
-      • _stream_from_async      - NEW: for native async streaming
+      • _stream_from_async      - FIXED: for native async streaming
     """
 
     # ------------------------------------------------------------------ sanitise
@@ -64,7 +64,24 @@ class OpenAIStyleMixin:
     def _normalise_message(msg) -> LLMResult:
         """
         Convert `response.choices[0].message` (full) → MCP dict.
+        FIXED: More robust content extraction for all models.
         """
+        # Extract content with multiple fallback methods
+        content = None
+        
+        # Method 1: Direct content attribute
+        if hasattr(msg, "content"):
+            content = msg.content
+        
+        # Method 2: Dict-style access
+        elif isinstance(msg, dict) and "content" in msg:
+            content = msg["content"]
+        
+        # Method 3: Message wrapper
+        elif hasattr(msg, "message") and hasattr(msg.message, "content"):
+            content = msg.message.content
+        
+        # Handle tool calls
         raw = getattr(msg, "tool_calls", None)
         calls: List[Dict[str, Any]] = []
 
@@ -92,7 +109,7 @@ class OpenAIStyleMixin:
                     }
                 )
 
-        return {"response": msg.content if not calls else None, "tool_calls": calls}
+        return {"response": content if not calls else None, "tool_calls": calls}
 
     # ------------------------------------------------------------------ streaming
     @classmethod
@@ -133,59 +150,91 @@ class OpenAIStyleMixin:
         asyncio.get_running_loop().run_in_executor(None, _worker)
         return _aiter()
 
-    # ------------------------------------------------------------------ NEW: async streaming
+    # ------------------------------------------------------------------ FIXED: async streaming
     @staticmethod
     async def _stream_from_async(
         async_stream,
         normalize_chunk: Optional[Callable] = None
     ) -> AsyncIterator[LLMResult]:
         """
-        Stream from an async iterator with real-time yielding.
+        FIXED: Stream from an async iterator with robust chunk handling for all models.
         
-        ✅ This provides true streaming without buffering.
-        
-        Parameters:
-        -----------
-        async_stream: AsyncIterator
-            The async stream from the SDK (e.g., AsyncOpenAI response)
-        normalize_chunk: Optional[Callable]
-            Function to normalize each chunk to your format
+        ✅ This provides true streaming without buffering and handles model differences.
         """
         try:
+            chunk_count = 0
             async for chunk in async_stream:
-                if chunk.choices and chunk.choices[0].delta:
-                    delta = chunk.choices[0].delta
+                chunk_count += 1
+                
+                # Initialize result
+                result = {
+                    "response": "",
+                    "tool_calls": [],
+                }
+                
+                # Handle different chunk structures
+                if hasattr(chunk, 'choices') and chunk.choices:
+                    choice = chunk.choices[0]
                     
-                    # Default normalization
-                    result = {
-                        "response": delta.content or "",
-                        "tool_calls": [],
-                    }
+                    # Method 1: Delta format (most common for streaming)
+                    if hasattr(choice, 'delta'):
+                        delta = choice.delta
+                        
+                        # Extract content from delta - ROBUST extraction
+                        content = ""
+                        if hasattr(delta, 'content') and delta.content is not None:
+                            content = delta.content
+                        
+                        result["response"] = content
+                        
+                        # Handle tool calls in delta
+                        if hasattr(delta, "tool_calls") and delta.tool_calls:
+                            tool_calls = []
+                            for tc in delta.tool_calls:
+                                if hasattr(tc, 'function') and tc.function:
+                                    tool_calls.append({
+                                        "id": getattr(tc, 'id', f"call_{uuid.uuid4().hex[:8]}"),
+                                        "type": "function", 
+                                        "function": {
+                                            "name": getattr(tc.function, 'name', ''),
+                                            "arguments": getattr(tc.function, 'arguments', '') or ""
+                                        }
+                                    })
+                            result["tool_calls"] = tool_calls
                     
-                    # Handle tool calls
-                    if hasattr(delta, "tool_calls") and delta.tool_calls:
-                        tool_calls = []
-                        for tc in delta.tool_calls:
-                            if tc.function:
-                                tool_calls.append({
-                                    "id": tc.id,
-                                    "type": "function", 
-                                    "function": {
-                                        "name": tc.function.name,
-                                        "arguments": tc.function.arguments or ""
-                                    }
-                                })
-                        result["tool_calls"] = tool_calls
-                    
-                    # Apply custom normalization if provided
-                    if normalize_chunk:
-                        result = normalize_chunk(result, chunk)
-                    
-                    # Only yield if there's actual content
-                    if result["response"] or result["tool_calls"]:
-                        yield result
+                    # Method 2: Message format (backup for some models)
+                    elif hasattr(choice, 'message'):
+                        message = choice.message
+                        if hasattr(message, 'content') and message.content:
+                            result["response"] = message.content
+                        
+                        if hasattr(message, 'tool_calls') and message.tool_calls:
+                            # Use existing normalization
+                            normalized = OpenAIStyleMixin._normalise_message(message)
+                            result["tool_calls"] = normalized.get('tool_calls', [])
+                
+                # Method 3: Direct chunk content (fallback)
+                elif hasattr(chunk, 'content'):
+                    result["response"] = chunk.content or ""
+                
+                # Method 4: Dict-style chunk (fallback)
+                elif isinstance(chunk, dict):
+                    result["response"] = chunk.get('content', '')
+                    result["tool_calls"] = chunk.get('tool_calls', [])
+                
+                # Apply custom normalization if provided
+                if normalize_chunk:
+                    result = normalize_chunk(result, chunk)
+                
+                # Debug logging for troubleshooting
+                if chunk_count <= 5:
+                    logging.debug(f"Stream chunk {chunk_count}: response='{result['response'][:50]}...', tool_calls={len(result['tool_calls'])}")
+                
+                # Always yield the result (even if empty for timing purposes)
+                yield result
                         
         except Exception as e:
+            logging.error(f"Error in _stream_from_async: {e}")
             # Yield error as final chunk
             yield {
                 "response": f"Streaming error: {str(e)}",

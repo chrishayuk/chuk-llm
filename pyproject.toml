@@ -16,10 +16,12 @@ dependencies = [
     "asyncio>=3.4.3",
     "google-genai>=1.15.0",
     "groq>=0.25.0",
+    "numpy>=2.2.6",
     "ollama>=0.4.8",
     "openai>=1.79.0",
     "pillow>=11.2.1",
     "python-dotenv>=1.1.0",
+    "tiktoken>=0.9.0",
 ]
 
 [tool.setuptools.packages.find]
