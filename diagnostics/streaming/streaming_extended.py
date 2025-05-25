@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# diagnostics/streaming_extended.py
+# diagnostics/streaming/streaming_extended.py
 """
 Extended Streaming Test - Tests with longer content to verify real streaming
 """

@@ -1,4 +1,4 @@
-# diagnostics/streaming_diagnostic.py
+# diagnostics/streaming/streaming_diagnostic.py
 """
 Simple Streaming Diagnostic
 """

@@ -1,4 +1,4 @@
-# diagnostics/network_streaming.py
+# diagnostics/streaming/network_streaming.py
 """
 Test streaming at the network level
 """

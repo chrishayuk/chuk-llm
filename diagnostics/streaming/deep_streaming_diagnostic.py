@@ -1,4 +1,4 @@
-# diagnostics/deep_streaming_diagnostic.py
+# diagnostics/streaming/deep_streaming_diagnostic.py
 """
 Deep diagnostic to find where streaming is getting buffered.
 """

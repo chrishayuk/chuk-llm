@@ -1,4 +1,4 @@
-# diagnostics/anthropic_streaming.py
+# diagnostics/streaming/providers/anthropic_streaming.py
 """
 Test Anthropic provider streaming behavior.
 """

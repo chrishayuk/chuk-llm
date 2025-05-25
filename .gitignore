@@ -12,3 +12,6 @@ wheels/
 
 # environment
 .env
+
+# runs
+benchmark_runs/

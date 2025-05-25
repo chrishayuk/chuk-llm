@@ -1,4 +1,4 @@
-# diagnostics/gemini_streaming.py
+# diagnostics/streaming/providers/gemini_streaming.py
 """
 Test Gemini provider streaming behavior.
 """
