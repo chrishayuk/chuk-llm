@@ -1,4 +1,4 @@
-# diagnostics/capabilities/provider_configs.py
+# diagnostics/capabilities/utils/provider_configs.py
 """
 Provider-specific configurations and message formatting for LLM diagnostics.
 """
@@ -97,7 +97,6 @@ class GeminiConfig(ProviderConfig):
     """Google Gemini-specific configuration"""
     
     def create_vision_message(self, prompt: str) -> Dict[str, Any]:
-        # Try the standard ChatML format first
         return {
             "role": "user",
             "content": [
@@ -170,6 +169,36 @@ class OllamaConfig(ProviderConfig):
             "model_error": ["model not found", "model not loaded"]
         }
 
+class MistralConfig(ProviderConfig):
+    """Mistral-specific configuration"""
+    
+    def create_vision_message(self, prompt: str) -> Dict[str, Any]:
+        return {
+            "role": "user", 
+            "content": [
+                {
+                    "type": "text",
+                    "text": prompt
+                },
+                {
+                    "type": "image_url",
+                    "image_url": f"data:image/png;base64,{SIMPLE_RED_PIXEL}"
+                }
+            ]
+        }
+    
+    def supports_feature(self, feature: str) -> bool:
+        return feature in ["text", "streaming", "tools", "streaming_tools", "vision"]
+    
+    def get_error_categories(self) -> Dict[str, list[str]]:
+        return {
+            "vision_format": ["invalid image", "image format not supported"],
+            "tools_unsupported": ["model does not support function calling"],
+            "rate_limit": ["rate limit exceeded", "quota exceeded"],
+            "model_error": ["model not found", "invalid model"],
+            "auth_error": ["authentication failed", "invalid api key"]
+        }
+
 # Provider registry
 PROVIDER_CONFIGS = {
     "openai": OpenAIConfig(),
@@ -178,6 +207,7 @@ PROVIDER_CONFIGS = {
     "gemini": GeminiConfig(),
     "groq": GroqConfig(),
     "ollama": OllamaConfig(),
+    "mistral": MistralConfig(),  # NEW
 }
 
 def get_provider_config(provider: str) -> ProviderConfig:

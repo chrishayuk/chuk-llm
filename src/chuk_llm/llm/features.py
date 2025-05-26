@@ -1,7 +1,5 @@
-# chuk_llm/llm/features.py
+# chuk_llm/llm/features.py - Updated with Mistral support
 from typing import Dict, Any, List, Optional
-import json
-
 class ProviderAdapter:
     """Adapts provider-specific features to common interface"""
     
@@ -24,6 +22,12 @@ class ProviderAdapter:
             kwargs["generation_config"]["response_mime_type"] = "application/json"
         elif provider == "groq":
             kwargs["response_format"] = {"type": "json_object"}
+        elif provider == "mistral":
+            # Mistral doesn't have native JSON mode, use system message
+            kwargs["_json_mode_instruction"] = (
+                "You must respond with valid JSON only. "
+                "Do not include any text outside the JSON structure."
+            )
         
         return kwargs
     
@@ -33,7 +37,7 @@ class ProviderAdapter:
         kwargs = kwargs.copy()
         
         # Most providers use 'temperature' directly
-        if provider in ["openai", "anthropic", "groq"]:
+        if provider in ["openai", "anthropic", "groq", "mistral"]:
             kwargs["temperature"] = temperature
         elif provider == "gemini":
             if "generation_config" not in kwargs:
@@ -51,11 +55,7 @@ class ProviderAdapter:
         """Set max tokens across providers"""
         kwargs = kwargs.copy()
         
-        if provider == "openai":
-            kwargs["max_tokens"] = max_tokens
-        elif provider == "anthropic":
-            kwargs["max_tokens"] = max_tokens
-        elif provider == "groq":
+        if provider in ["openai", "anthropic", "groq", "mistral"]:
             kwargs["max_tokens"] = max_tokens
         elif provider == "gemini":
             if "generation_config" not in kwargs:
@@ -76,13 +76,12 @@ class ProviderAdapter:
     ) -> List[Dict[str, Any]]:
         """Add system message in provider-appropriate way"""
         
-        # For most providers, system messages work normally
-        if provider in ["openai", "groq", "gemini", "ollama"]:
+        # For providers that support system messages directly
+        if provider in ["openai", "groq", "gemini", "ollama", "mistral"]:
             return [{"role": "system", "content": system_content}] + messages
         
         # Anthropic handles system messages specially in the API call
         elif provider == "anthropic":
-            # Return messages unchanged, system will be handled in API params
             return messages
         
         return messages
@@ -91,6 +90,8 @@ class UnifiedLLMInterface:
     """High-level interface that abstracts provider differences"""
     
     def __init__(self, provider: str, model: str, **config_kwargs):
+        from chuk_llm.llm.llm_client import get_enhanced_llm_client
+        
         self.provider = provider
         self.model = model
         self.client = get_enhanced_llm_client(

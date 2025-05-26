@@ -1,6 +1,6 @@
 # chuk_llm/llm/config/provider_config.py
 """
-Provider configuration management.
+Provider configuration management - Updated with simplified Mistral config.
 """
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import os
 from typing import Any, Dict, Optional
 
 # ---------------------------------------------------------------------------
-# global defaults
+# global defaults - Simplified and scalable
 # ---------------------------------------------------------------------------
 DEFAULTS: Dict[str, Dict[str, Any]] = {
     "__global__": {
@@ -39,7 +39,7 @@ DEFAULTS: Dict[str, Dict[str, Any]] = {
     },
     "gemini": {
         "client": "chuk_llm.llm.providers.gemini_client:GeminiLLMClient",
-        "api_key_env": None,
+        "api_key_env": "GOOGLE_API_KEY",
         "api_key": None,
         "default_model": "gemini-2.0-flash",
     },
@@ -50,6 +50,13 @@ DEFAULTS: Dict[str, Dict[str, Any]] = {
         "api_key": None,
         "default_model": "claude-3-7-sonnet-20250219",
     },
+    "mistral": {
+        "client": "chuk_llm.llm.providers.mistral_client:MistralLLMClient",
+        "api_key_env": "MISTRAL_API_KEY",
+        "api_base": None,
+        "api_key": None,
+        "default_model": "mistral-large-latest",
+    }
 }
 
 
