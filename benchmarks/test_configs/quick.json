@@ -1,4 +1,3 @@
-# benchmarks/test_configs/quick.json
 {
   "name": "quick",
   "description": "Fast 3-test battle optimized for TPS measurement",
