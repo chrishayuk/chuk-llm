@@ -1,6 +1,7 @@
 # benchmarks/compare_models.py
 """
 Enhanced Live Model Comparison - TPS-based Performance Benchmarking
+Fixed to properly detect and exclude failed runs from leaderboard
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ from time import perf_counter
 
 # ── keep the console tidy ─────────────────────────────────────────────────────────
 logging.getLogger("httpx").setLevel(logging.WARNING)
+log = logging.getLogger(__name__)
 
 # ── local imports (repo-relative) ─────────────────────────────────────────────────
 sys.path.append(str(Path(__file__).parent.parent))
@@ -157,12 +159,25 @@ class EnhancedLiveBenchmarkRunner:
 
     def __init__(self) -> None:
         self.display: CompellingResultsDisplay | None = None
+        self.client_cache: Dict[Tuple[str, str], Any] = {}  # Cache clients to avoid re-creation
         self.validation_stats = {
             "total_tests": 0,
             "quality_distribution": {},
             "common_issues": {},
             "suspicious_results": []
         }
+
+    async def get_client(self, provider: str, model: str):
+        """Get or create a cached client"""
+        key = (provider, model)
+        if key not in self.client_cache:
+            from chuk_llm.llm.llm_client import get_llm_client
+            try:
+                self.client_cache[key] = get_llm_client(provider=provider, model=model)
+            except Exception as e:
+                log.error(f"Failed to create client for {provider}:{model} - {e}")
+                raise
+        return self.client_cache[key]
 
     # ───────────────────────────────────────────────────────────────────────────────
     # Enhanced TEST SUITE DEFS with validation parameters
@@ -361,9 +376,7 @@ class EnhancedLiveBenchmarkRunner:
     async def warmup_model(self, provider: str, model: str) -> None:
         """One tiny call to avoid cold-start skew."""
         try:
-            from chuk_llm.llm.llm_client import get_llm_client
-
-            client = get_llm_client(provider, model=model)
+            client = await self.get_client(provider, model)
             await client.create_completion(
                 [{"role": "user", "content": "ping"}], max_tokens=1, temperature=0
             )
@@ -599,19 +612,17 @@ class EnhancedLiveBenchmarkRunner:
         print(f"\n💾 Results saved to: {filename}")
 
     # ───────────────────────────────────────────────────────────────────────────────
-    # Enhanced SINGLE TEST EXEC with TPS focus and GPT-3.5-turbo fixes
+    # Enhanced SINGLE TEST EXEC with IMPROVED FAILURE DETECTION
     # ───────────────────────────────────────────────────────────────────────────────
     async def _execute_enhanced_test(
         self, provider: str, model: str, config: Dict[str, Any], enable_validation: bool
     ) -> Dict[str, Any]:
-        """Execute single test with ENHANCED debugging for GPT-3.5-turbo."""
+        """Execute single test with ENHANCED failure detection for better filtering."""
         
         try:
-            from chuk_llm.llm.llm_client import get_llm_client
-
-            client = get_llm_client(provider, model=model)
+            client = await self.get_client(provider, model)
             
-            # ADJUST CONFIG FOR MODEL-SPECIFIC QUIRKS
+            # Adjust config for model-specific quirks
             config = self._adjust_config_for_model(config, model)
 
             # Prepare request parameters
@@ -625,14 +636,6 @@ class EnhancedLiveBenchmarkRunner:
             if "gpt-3.5" in model.lower():
                 kwargs["tool_choice"] = "none"  # Explicitly disable function calling
 
-            # # SPECIAL DEBUGGING FOR GPT-3.5-turbo
-            # if "gpt-3.5" in model.lower():
-            #     print(f"\n🔍 DEBUG {model}: Starting execution...")
-            #     print(f"    Config: {config['name']}")
-            #     print(f"    Kwargs: {kwargs}")
-            #     print(f"    Message length: {len(config['messages'][0]['content'])}")
-            #     print(f"    Tools disabled: {kwargs.get('tool_choice') == 'none'}")
-
             # Execute with streaming and TPS-focused timing
             start = perf_counter()
             first_tok = None
@@ -641,6 +644,7 @@ class EnhancedLiveBenchmarkRunner:
             cum_tokens = 0
             chunk_count = 0
             error_encountered = False
+            meaningful_chunks = 0  # Track chunks with actual content
 
             try:
                 async for chunk in client.create_completion(
@@ -652,75 +656,84 @@ class EnhancedLiveBenchmarkRunner:
                     current_time = perf_counter()
                     chunk_count += 1
                     
-                    # # ENHANCED DEBUGGING FOR GPT-3.5-turbo
-                    # if "gpt-3.5" in model.lower() and chunk_count <= 10:
-                    #     print(f"    Chunk {chunk_count}: {chunk}")
-                    
                     # Check for errors in chunk
                     if chunk.get("error"):
                         error_encountered = True
                         error_msg = chunk.get("response", "Unknown streaming error")
-                        if "gpt-3.5" in model.lower():
-                            print(f"    ❌ Error in chunk {chunk_count}: {error_msg}")
+                        log.debug(f"Error in chunk {chunk_count} for {model}: {error_msg}")
                         break
                     
                     # Skip chunks that only contain tool calls (shouldn't happen now)
                     if not chunk.get("response") and chunk.get("tool_calls"):
-                        if "gpt-3.5" in model.lower():
-                            print(f"    🔧 Skipping tool call chunk {chunk_count}")
                         continue
                     
                     if "response" not in chunk:
-                        if "gpt-3.5" in model.lower() and chunk_count <= 5:
-                            print(f"    ⚠️ Chunk {chunk_count} missing 'response' key")
                         continue
                         
                     chunk_text = chunk["response"]
                     if chunk_text and first_tok is None:
                         first_tok = current_time - start
-                        if "gpt-3.5" in model.lower():
-                            print(f"    🚀 First token at {first_tok:.2f}s")
 
-                    full_response += chunk_text
-                    
-                    # Calculate tokens (use accurate counting if validation enabled)
-                    if enable_validation:
-                        from benchmarks.utils.benchmark_utils import get_accurate_token_count
-                        delta_tokens = get_accurate_token_count(chunk_text, model)
-                    else:
-                        from benchmarks.utils.benchmark_utils import get_token_count
-                        delta_tokens = get_token_count(chunk_text, model)
+                    if chunk_text:  # Only count meaningful chunks
+                        meaningful_chunks += 1
+                        full_response += chunk_text
                         
-                    cum_tokens += delta_tokens
-                    cumulative_timeline.append((current_time - start, cum_tokens))
+                        # Calculate tokens (use accurate counting if validation enabled)
+                        if enable_validation:
+                            delta_tokens = get_accurate_token_count(chunk_text, model)
+                        else:
+                            delta_tokens = get_token_count(chunk_text, model)
+                            
+                        cum_tokens += delta_tokens
+                        cumulative_timeline.append((current_time - start, cum_tokens))
                     
-                    # Safety timeout for debugging
-                    if current_time - start > 60:  # 60 second timeout
-                        if "gpt-3.5" in model.lower():
-                            print(f"    ⏰ Timeout after 60s")
+                    # Safety timeout
+                    if current_time - start > 120:  # 2 minute timeout
+                        log.warning(f"Timeout after 120s for {model}")
                         break
 
             except Exception as stream_error:
                 error_encountered = True
                 elapsed = perf_counter() - start
-                if "gpt-3.5" in model.lower():
-                    print(f"    ❌ Streaming exception after {elapsed:.2f}s: {stream_error}")
-                    print(f"    Exception type: {type(stream_error).__name__}")
-                    import traceback
-                    traceback.print_exc()
+                log.error(f"Streaming exception for {model} after {elapsed:.2f}s: {stream_error}")
 
             total_time = perf_counter() - start
             first_tok = first_tok or 0.0
 
-            # # Enhanced logging for GPT-3.5-turbo
-            # if "gpt-3.5" in model.lower():
-            #     print(f"    📊 Results: {total_time:.2f}s total, {chunk_count} chunks, {len(full_response)} chars")
-            #     print(f"    Error encountered: {error_encountered}")
-            #     if full_response:
-            #         print(f"    Response preview: {full_response[:100]}...")
+            # ENHANCED FAILURE DETECTION
+            # Consider it a failure if:
+            # 1. Explicit error encountered
+            # 2. No meaningful content generated (less than 10 characters)
+            # 3. Very short response time with minimal content (likely early termination)
+            # 4. No tokens counted but time elapsed (stream failure)
+            # 5. No meaningful chunks received (empty stream)
+            # 6. Response time suspiciously short for expected content
+            
+            response_length = len(full_response.strip())
+            expected_min_length = 20  # Minimum meaningful response length
+            
+            is_failed = (
+                error_encountered or 
+                response_length < expected_min_length or
+                meaningful_chunks == 0 or
+                (total_time < 1.0 and response_length < 50) or
+                (total_time > 0.5 and cum_tokens == 0) or
+                (config.get("test_type") in ["creative", "math"] and response_length < 100 and total_time < 2.0)
+            )
 
-            # Check if this is the characteristic failure pattern
-            if error_encountered or (total_time < 2 and len(full_response) < 50):
+            if is_failed:
+                failure_reason = []
+                if error_encountered:
+                    failure_reason.append("streaming error")
+                if response_length < expected_min_length:
+                    failure_reason.append(f"insufficient content ({response_length} chars)")
+                if meaningful_chunks == 0:
+                    failure_reason.append("no meaningful chunks")
+                if total_time < 1.0 and response_length < 50:
+                    failure_reason.append("early termination")
+                if total_time > 0.5 and cum_tokens == 0:
+                    failure_reason.append("no tokens generated")
+                
                 return {
                     "success": False,
                     "total_time": total_time,
@@ -728,27 +741,27 @@ class EnhancedLiveBenchmarkRunner:
                     "end_to_end_tps": None,
                     "sustained_tps": None,
                     "stream_tokens": cum_tokens,
-                    "accurate_tokens": len(full_response.split()) if full_response else 0,
+                    "accurate_tokens": 0,
                     "display_tokens": 0,
                     "response_text": full_response,
                     "model": model,
                     "test_name": config["name"],
-                    "error": "Early termination or streaming failure",
+                    "error": f"Early termination or streaming failure: {', '.join(failure_reason)}",
                     "debug_info": {
                         "chunk_count": chunk_count,
+                        "meaningful_chunks": meaningful_chunks,
                         "error_encountered": error_encountered,
-                        "response_length": len(full_response)
+                        "response_length": response_length,
+                        "response_preview": full_response[:100] if full_response else "No content"
                     }
                 }
 
             # Calculate TPS metrics with enhanced accuracy
-            from benchmarks.utils.benchmark_utils import calculate_sustained_tps
             e2e_tps = cum_tokens / total_time if total_time > 0 else 0
             sust_tps = calculate_sustained_tps(cumulative_timeline)
             
             # Get accurate token count for validation
             if enable_validation:
-                from benchmarks.utils.benchmark_utils import get_accurate_token_count
                 accurate_tokens = get_accurate_token_count(full_response, model)
             else:
                 accurate_tokens = cum_tokens
@@ -791,14 +804,7 @@ class EnhancedLiveBenchmarkRunner:
 
         except Exception as exc:
             elapsed = perf_counter() - start if 'start' in locals() else 0
-            
-            # Enhanced error logging for GPT-3.5-turbo
-            if "gpt-3.5" in model.lower():
-                print(f"🔍 DEBUG {model}: Top-level exception after {elapsed:.2f}s")
-                print(f"    Exception: {exc}")
-                print(f"    Exception type: {type(exc).__name__}")
-                import traceback
-                traceback.print_exc()
+            log.error(f"Top-level exception for {model} after {elapsed:.2f}s: {exc}")
             
             return {
                 "success": False,
@@ -873,6 +879,7 @@ async def _main() -> None:
   • Optimized test lengths for accurate throughput measurement
   • Quality validation to ensure TPS measurements are meaningful
   • Fair round-robin execution for unbiased TPS comparison
+  • Enhanced failure detection to exclude broken models from rankings
 
 ⚡ THROUGHPUT METRICS:
   • Sustained TPS: Measured from stable streaming portion (most accurate)
@@ -883,6 +890,7 @@ async def _main() -> None:
 Examples:
   python compare_models.py openai "gpt-4o-mini,gpt-4o" --suite quick --runs 3
   python compare_models.py anthropic "claude-3-5-sonnet-20241022" --suite lightning
+  python compare_models.py gemini "gemini-1.5-flash,gemini-2.0-flash" --suite quick
   python compare_models.py openai "gpt-4o,gpt-4o-mini" --no-validation  # Disable validation
         """,
     )

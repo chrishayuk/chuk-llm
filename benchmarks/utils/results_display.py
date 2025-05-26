@@ -1,6 +1,7 @@
 # benchmarks/utils/results_display.py
 """
 Results display and analysis system - Enhanced with backward compatibility
+Fixed to exclude failed runs from leaderboard rankings
 """
 from __future__ import annotations
 
@@ -159,13 +160,16 @@ class CompellingResultsDisplay:
             res["avg_throughput"] = sum(r["throughput"] for r in successful_runs) / len(successful_runs)
 
         # Update success rate
+        total_runs = len(self.test_results[model])
         succ_cnt = sum(1 for r in self.test_results[model] if r["success"])
-        res["success_rate"] = succ_cnt / tests_completed if tests_completed else 0
+        res["success_rate"] = succ_cnt / total_runs if total_runs else 0
 
         # Update status and trend
         if tests_completed == total_tests:
             if res["success_rate"] == 1:
                 res["status"] = "✅ Complete"
+            elif res["success_rate"] == 0:
+                res["status"] = "❌ All Failed"
             else:
                 res["status"] = f"⚠️ {res['success_rate']:.0%} Success"
             res["performance_trend"] = self._get_performance_emoji(res["best_time"], res["best_throughput"])
@@ -237,60 +241,72 @@ class CompellingResultsDisplay:
             print("─" * width)
 
     def _collect_model_results(self) -> List[ModelResult]:
-        """Collect and structure model results for display"""
+        """Collect and structure model results for display - EXCLUDE FAILED MODELS"""
         throughput_best: Dict[str, Dict[str, Any]] = {}
         
         for model, runs in self.test_results.items():
-            successful_runs = [r for r in runs if r["success"] and r.get("throughput")]
+            # FILTER: Only consider successful runs with actual throughput data
+            successful_runs = [r for r in runs if r["success"] and r.get("throughput") and r["throughput"] > 0]
+            
             if successful_runs:
                 best = max(successful_runs, key=lambda r: r["throughput"])
                 avg_tps = sum(r["throughput"] for r in successful_runs) / len(successful_runs)
                 throughput_best[model] = {
                     **best,
-                    "avg_tps": avg_tps
+                    "avg_tps": avg_tps,
+                    "successful_runs_count": len(successful_runs)
                 }
-            else:
-                throughput_best[model] = {
-                    "throughput": 0,
-                    "avg_tps": 0,
-                    "response_time": float("inf"),
-                    "first_token": None,
-                    "test_name": "none"
-                }
+            # EXCLUDE: Don't add models with no successful runs to the leaderboard
 
-        # Sort by throughput (descending)
+        # Sort by throughput (descending) - only models with actual data
         sorted_models = sorted(
             throughput_best.items(),
             key=lambda x: x[1]["throughput"],
             reverse=True
         )
 
-        # Create structured results
+        # Create structured results - only for models with successful runs
         results = []
         for rank, (model, data) in enumerate(sorted_models, 1):
             model_state = self.results[model]
             
-            # Estimate total tests more accurately
-            unique_tests = len(set(r["test_name"] for r in self.test_results[model]))
-            runs_per_test = 3  # From the benchmark configuration
-            estimated_total = unique_tests * runs_per_test if unique_tests > 0 else runs_per_test
+            # Calculate total tests based on all runs for this model
+            all_runs = self.test_results[model]
+            total_runs = len(all_runs)
+            successful_runs = len([r for r in all_runs if r["success"]])
             
             results.append(ModelResult(
                 model=model,
                 rank=rank,
-                best_tps=data["throughput"] if data["throughput"] > 0 else None,
-                best_time=data["response_time"] if data["response_time"] != float("inf") else None,
+                best_tps=data["throughput"],
+                best_time=data["response_time"],
                 first_token=data.get("first_token"),
-                avg_tps=data.get("avg_tps") if data.get("avg_tps", 0) > 0 else None,
-                success_rate=model_state["success_rate"],
-                tests_completed=model_state["tests_completed"],
-                total_tests=estimated_total,
-                status=model_state["status"],
+                avg_tps=data.get("avg_tps"),
+                success_rate=successful_runs / total_runs if total_runs > 0 else 0,
+                tests_completed=successful_runs,  # Use successful runs count
+                total_tests=total_runs,
+                status=self._get_status_for_model(model, successful_runs, total_runs),
                 trend_emoji=model_state["performance_trend"],
                 recent_test=model_state["recent_test"]
             ))
         
         return results
+
+    def _get_status_for_model(self, model: str, successful_runs: int, total_runs: int) -> str:
+        """Get appropriate status for model based on success rate"""
+        if total_runs == 0:
+            return "🔄 Pending"
+        
+        success_rate = successful_runs / total_runs
+        
+        if successful_runs == 0:
+            return "❌ All Failed"
+        elif success_rate == 1.0:
+            return "✅ Complete"
+        elif success_rate >= 0.5:
+            return f"⚠️ {success_rate:.0%} Success"
+        else:
+            return f"❌ {success_rate:.0%} Success"
 
     def _print_leaderboard_table(self, results: List[ModelResult], highlight_model: str = None):
         """Print the main leaderboard table with perfect fixed-width formatting"""
@@ -465,7 +481,7 @@ class CompellingResultsDisplay:
             return f"{time_val:.0f}s"
 
     def _print_insights(self, results: List[ModelResult]):
-        """Print performance insights and leader detection"""
+        """Print performance insights and leader detection - updated for filtered results"""
         config = self.config
         
         if not results or self.theme == DisplayTheme.MINIMAL:
@@ -473,104 +489,141 @@ class CompellingResultsDisplay:
             
         print("─" * config["total_width"])
         
-        # Current leader
+        # Current leader (only among successful models)
         if results:
             leader = results[0]
-            if leader.best_tps and leader.best_tps > 0:
-                if leader.model != self.current_leader:
-                    self.current_leader = leader.model
-                    print(f"👑 CURRENT LEADER: {leader.model} • {leader.best_tps:.0f} tok/s peak throughput")
-                
-                # Performance insights
-                insights = []
-                if leader.best_tps >= 100:
-                    insights.append("🚀 BLAZING SPEED! (>100 tok/s)")
-                elif leader.best_tps >= 75:
-                    insights.append("⚡ EXCELLENT! (>75 tok/s)")
-                elif leader.best_tps >= 50:
-                    insights.append("🔥 VERY GOOD! (>50 tok/s)")
-                
-                if leader.best_time and leader.best_time < 2:
-                    insights.append(f"🏃 SUB-2S RESPONSE!")
-                elif leader.first_token and leader.first_token < 0.5:
-                    insights.append(f"⚡ INSTANT FIRST TOKEN!")
-                
-                if insights:
-                    print("💡 " + " • ".join(insights))
-                
-                # Competition status
-                if len(results) > 1:
-                    runner_up = results[1]
-                    if runner_up.best_tps and runner_up.best_tps > 0:
-                        gap = ((leader.best_tps - runner_up.best_tps) / runner_up.best_tps) * 100
-                        if gap < 5:
-                            print(f"🔥 TIGHT RACE! {leader.model} leads {runner_up.model} by only {gap:.1f}%")
-                        elif gap > 50:
-                            print(f"🎯 DOMINATING! {leader.model} is {gap:.0f}% faster than {runner_up.model}")
+            if leader.model != self.current_leader:
+                self.current_leader = leader.model
+                print(f"👑 CURRENT LEADER: {leader.model} • {leader.best_tps:.0f} tok/s peak throughput")
+            
+            # Performance insights
+            insights = []
+            if leader.best_tps >= 400:
+                insights.append("🚀 EXTREME SPEED! (>400 tok/s)")
+            elif leader.best_tps >= 200:
+                insights.append("🚀 BLAZING SPEED! (>200 tok/s)")
+            elif leader.best_tps >= 100:
+                insights.append("⚡ EXCELLENT! (>100 tok/s)")
+            elif leader.best_tps >= 50:
+                insights.append("🔥 VERY GOOD! (>50 tok/s)")
+            
+            if leader.best_time and leader.best_time < 2:
+                insights.append(f"🏃 SUB-2S RESPONSE!")
+            elif leader.first_token and leader.first_token < 0.5:
+                insights.append(f"⚡ INSTANT FIRST TOKEN!")
+            
+            if insights:
+                print("💡 " + " • ".join(insights))
+            
+            # Competition status (only among successful models)
+            if len(results) > 1:
+                runner_up = results[1]
+                gap = ((leader.best_tps - runner_up.best_tps) / runner_up.best_tps) * 100
+                if gap < 5:
+                    print(f"🔥 TIGHT RACE! {leader.model} leads {runner_up.model} by only {gap:.1f}%")
+                elif gap > 50:
+                    print(f"🎯 DOMINATING! {leader.model} is {gap:.0f}% faster than {runner_up.model}")
+        
+        # Show excluded models summary
+        all_models = set(self.test_results.keys())
+        successful_models = set(r.model for r in results)
+        failed_models = all_models - successful_models
+        
+        if failed_models:
+            print(f"⚠️ EXCLUDED FROM RANKINGS: {', '.join(sorted(failed_models))} (no successful runs)")
 
         print("═" * config["total_width"])
 
     def show_final_battle_results(self):
-        """Show final results with enhanced formatting"""
+        """Show final results - updated to handle excluded models"""
         print("\n🎉 BENCHMARK BATTLE COMPLETE!")
         print("═" * self.config["total_width"])
 
-        # Get final results
+        # Get final results (only successful models)
         model_results = self._collect_model_results()
         
         if not model_results:
-            print("No results to display.")
+            print("❌ No models completed successfully!")
+            
+            # Show all failed models
+            all_models = set(self.test_results.keys())
+            if all_models:
+                print(f"\n❌ ALL MODELS FAILED:")
+                for model in sorted(all_models):
+                    runs = self.test_results[model]
+                    failed_count = len([r for r in runs if not r["success"]])
+                    total_count = len(runs)
+                    print(f"   • {model}: {failed_count}/{total_count} failed")
+            
+            print("═" * self.config["total_width"])
             return
 
         # Throughput champion
         winner = model_results[0]
-        if winner.best_tps and winner.best_tps > 0:
-            print(f"🏆 THROUGHPUT CHAMPION: {winner.model}")
-            print(f"   ⚡ Peak Throughput: {winner.best_tps:.0f} tokens/sec")
-            if winner.avg_tps:
-                print(f"   📊 Average TPS: {winner.avg_tps:.0f} tokens/sec")
-            if winner.best_time:
-                print(f"   🚀 Best Time: {winner.best_time:.2f}s")
-            if winner.first_token:
-                print(f"   ⏱️ Best First Token: {winner.first_token:.2f}s")
-            print(f"   🎯 Success Rate: {winner.success_rate:.0%}")
+        print(f"🏆 THROUGHPUT CHAMPION: {winner.model}")
+        print(f"   ⚡ Peak Throughput: {winner.best_tps:.0f} tokens/sec")
+        if winner.avg_tps:
+            print(f"   📊 Average TPS: {winner.avg_tps:.0f} tokens/sec")
+        if winner.best_time:
+            print(f"   🚀 Best Time: {winner.best_time:.2f}s")
+        if winner.first_token:
+            print(f"   ⏱️ Best First Token: {winner.first_token:.2f}s")
+        print(f"   🎯 Success Rate: {winner.success_rate:.0%}")
 
-            # Performance advantage
-            if len(model_results) > 1:
-                runner_up = model_results[1]
-                if runner_up.best_tps and runner_up.best_tps > 0:
-                    advantage = ((winner.best_tps - runner_up.best_tps) / runner_up.best_tps) * 100
-                    print(f"   🎯 {advantage:.0f}% faster than {runner_up.model}")
+        # Performance advantage
+        if len(model_results) > 1:
+            runner_up = model_results[1]
+            advantage = ((winner.best_tps - runner_up.best_tps) / runner_up.best_tps) * 100
+            print(f"   🎯 {advantage:.0f}% faster than {runner_up.model}")
 
-        # Podium
+        # Podium (only successful models)
         print(f"\n🏅 FINAL PODIUM:")
         medals = ["🥇", "🥈", "🥉"]
         for i, result in enumerate(model_results[:3]):
             medal = medals[i] if i < len(medals) else f"{i+1}."
-            tps_text = f"{result.best_tps:.0f} tok/s" if result.best_tps else "No data"
+            tps_text = f"{result.best_tps:.0f} tok/s"
             time_text = f"({result.best_time:.2f}s)" if result.best_time else ""
-            print(f"   {medal} {result.model}: {tps_text} {time_text}")
+            success_text = f"[{result.success_rate:.0%} success]"
+            print(f"   {medal} {result.model}: {tps_text} {time_text} {success_text}")
 
-        # Performance categories
+        # Performance categories (only among successful models)
         print(f"\n🎖️ PERFORMANCE CATEGORIES:")
         
         # Speed demon (best time)
-        speed_winner = min((r for r in model_results if r.best_time), 
-                          key=lambda r: r.best_time, default=None)
+        speed_winner = min(model_results, key=lambda r: r.best_time, default=None)
         if speed_winner:
             print(f"   ⚡ Speed Demon: {speed_winner.model} ({speed_winner.best_time:.2f}s)")
         
-        # Consistency king (best success rate among top performers)
-        consistent_winner = max((r for r in model_results if r.best_tps and r.best_tps > 20), 
-                               key=lambda r: r.success_rate, default=None)
+        # Consistency king (best success rate among models with good TPS)
+        consistent_winner = max(
+            (r for r in model_results if r.best_tps > 50), 
+            key=lambda r: r.success_rate, 
+            default=None
+        )
         if consistent_winner:
             print(f"   🎯 Consistency King: {consistent_winner.model} ({consistent_winner.success_rate:.0%} success)")
         
-        # First token flash (best first token time)
-        token_winner = min((r for r in model_results if r.first_token), 
-                          key=lambda r: r.first_token, default=None)
+        # First token flash
+        token_winner = min(
+            (r for r in model_results if r.first_token), 
+            key=lambda r: r.first_token, 
+            default=None
+        )
         if token_winner:
             print(f"   🚀 First Token Flash: {token_winner.model} ({token_winner.first_token:.2f}s)")
+
+        # Show failed models summary
+        all_models = set(self.test_results.keys())
+        successful_models = set(r.model for r in model_results)
+        failed_models = all_models - successful_models
+        
+        if failed_models:
+            print(f"\n❌ MODELS WITH NO SUCCESSFUL RUNS:")
+            for model in sorted(failed_models):
+                runs = self.test_results[model]
+                failed_count = len([r for r in runs if not r["success"]])
+                total_count = len(runs)
+                print(f"   • {model}: {failed_count}/{total_count} failed attempts")
 
         print("═" * self.config["total_width"])
 

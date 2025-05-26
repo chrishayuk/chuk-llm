@@ -1,0 +1,62 @@
+{
+  "name": "standard",
+  "description": "Full 4-test championship with comprehensive TPS analysis",
+  "tests": [
+    {
+      "name": "speed",
+      "description": "Short ping",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Respond with 'Pong! Response completed successfully.'"
+        }
+      ],
+      "max_tokens": 50,
+      "temperature": 0,
+      "expected_min_tokens": 5,
+      "test_type": "speed"
+    },
+    {
+      "name": "reasoning",
+      "description": "Logical reasoning (TPS measurement)",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Explain the traveling salesman problem, why it's computationally difficult, and describe three different approaches to solving it. Provide examples and be thorough in your explanation while maintaining good flow."
+        }
+      ],
+      "max_tokens": 1800,
+      "temperature": 0,
+      "expected_min_tokens": 150,
+      "test_type": "reasoning"
+    },
+    {
+      "name": "creative",
+      "description": "Creative writing (sustained TPS)",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Write an engaging technical blog post about the future of quantum computing. Make it accessible to a general audience while being technically accurate. Aim for 500-700 words with consistent quality throughout."
+        }
+      ],
+      "max_tokens": 2200,
+      "temperature": 0.3,
+      "expected_min_tokens": 300,
+      "test_type": "creative"
+    },
+    {
+      "name": "code",
+      "description": "Code generation (TPS evaluation)",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Create a Python class for a binary search tree with insert, delete, search, and in-order traversal methods. Include proper documentation and error handling. Focus on producing clean, consistent code."
+        }
+      ],
+      "max_tokens": 2000,
+      "temperature": 0,
+      "expected_min_tokens": 200,
+      "test_type": "code"
+    }
+  ]
+}

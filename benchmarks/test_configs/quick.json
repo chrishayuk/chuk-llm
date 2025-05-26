@@ -1,0 +1,49 @@
+# benchmarks/test_configs/quick.json
+{
+  "name": "quick",
+  "description": "Fast 3-test battle optimized for TPS measurement",
+  "tests": [
+    {
+      "name": "speed",
+      "description": "Speed test (short)",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Please respond with: 'Speed test completed successfully. This demonstrates a complete response without truncation.' Include this exact phrase and nothing else."
+        }
+      ],
+      "max_tokens": 100,
+      "temperature": 0,
+      "expected_min_tokens": 12,
+      "test_type": "speed"
+    },
+    {
+      "name": "math",
+      "description": "Math reasoning (optimized for TPS)",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Calculate compound interest: $10,000 invested at 5% annual rate, compounded monthly for 10 years. Show your work step by step and provide the final answer. Be thorough but efficient in your explanation."
+        }
+      ],
+      "max_tokens": 1500,
+      "temperature": 0,
+      "expected_min_tokens": 100,
+      "test_type": "math"
+    },
+    {
+      "name": "creative",
+      "description": "Creative generation (TPS-optimized)",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Write a creative short story (400-600 words) about an AI discovering emotions for the first time. Include dialogue, descriptive scenes, and a satisfying conclusion. Focus on producing consistent, flowing text that showcases your generation speed and quality."
+        }
+      ],
+      "max_tokens": 2000,
+      "temperature": 0.7,
+      "expected_min_tokens": 250,
+      "test_type": "creative"
+    }
+  ]
+}
