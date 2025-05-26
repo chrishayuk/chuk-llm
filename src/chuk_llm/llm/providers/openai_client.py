@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 
 class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
     """
-    Thin wrapper around the official `openai` SDK with FIXED response parsing.
+    Thin wrapper around the official `openai` SDK with response parsing.
     """
 
     def __init__(
@@ -40,9 +40,9 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
             base_url=api_base
         ) if api_base else openai.OpenAI(api_key=api_key)
 
-    def _normalise_message_fixed(self, msg) -> Dict[str, Any]:
+    def _normalise_message(self, msg) -> Dict[str, Any]:
         """
-        FIXED: Convert OpenAI response message to standard format.
+        Convert OpenAI response message to standard format.
         Handles different response formats from different models.
         """
         # Handle both streaming and non-streaming message formats
@@ -99,13 +99,13 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
         log.debug(f"Normalized message: content={'None' if content is None else f'{len(str(content))} chars'}, tool_calls={len(tool_calls)}")
         return result
 
-    async def _stream_from_async_fixed(
+    async def _stream_from_async(
         self,
         async_stream,
         normalize_chunk: Optional[callable] = None
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        FIXED: Stream from an async iterator with proper chunk handling for all models.
+        Stream from an async iterator with proper chunk handling for all models.
         """
         try:
             chunk_count = 0
@@ -149,7 +149,7 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
                         
                         if hasattr(message, 'tool_calls') and message.tool_calls:
                             # Use the existing normalization logic
-                            normalized = self._normalise_message_fixed(message)
+                            normalized = self._normalise_message(message)
                             tool_calls = normalized.get('tool_calls', [])
                 
                 # Create result chunk
@@ -193,25 +193,25 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
         **kwargs: Any,
     ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
-        Use native async streaming for real-time response with FIXED parsing.
+        Use native async streaming for real-time response with parsing.
         """
         tools = self._sanitize_tool_names(tools)
 
-        # 1️⃣ streaming - use FIXED async streaming
+        # 1️⃣ streaming
         if stream:
-            return self._stream_completion_async_fixed(messages, tools, **kwargs)
+            return self._stream_completion_async(messages, tools, **kwargs)
 
-        # 2️⃣ one-shot - use FIXED regular completion
-        return self._regular_completion_fixed(messages, tools, **kwargs)
+        # 2️⃣ one-shot
+        return self._regular_completion(messages, tools, **kwargs)
 
-    async def _stream_completion_async_fixed(
+    async def _stream_completion_async(
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        FIXED: Native async streaming using AsyncOpenAI.
+        Native async streaming using AsyncOpenAI.
         """
         try:
             log.debug(f"Starting streaming for model: {self.model}")
@@ -225,8 +225,8 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
                 **kwargs
             )
             
-            # Use the FIXED streaming method
-            async for result in self._stream_from_async_fixed(response_stream):
+            # Use the streaming method
+            async for result in self._stream_from_async(response_stream):
                 yield result
                 
         except Exception as e:
@@ -237,13 +237,13 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
                 "error": True
             }
 
-    async def _regular_completion_fixed(
+    async def _regular_completion(
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        """FIXED: Non-streaming completion using async client."""
+        """Non-streaming completion using async client."""
         try:
             log.debug(f"Starting non-streaming completion for model: {self.model}")
             
@@ -255,8 +255,8 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
                 **kwargs
             )
             
-            # Use the FIXED normalization method
-            result = self._normalise_message_fixed(resp.choices[0].message)
+            # Use the normalization method
+            result = self._normalise_message(resp.choices[0].message)
             log.debug(f"Non-streaming result: {result}")
             return result
             
