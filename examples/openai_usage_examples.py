@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
-# examples/mistral_usage_examples.py
 """
-Mistral Provider Example Usage Script
-====================================
+OpenAI/GPT Provider Example Usage Script
+========================================
 
-Demonstrates all the features of the Mistral provider in the chuk-llm library.
-Run this script to see Mistral in action with various capabilities.
+Demonstrates all the features of the OpenAI provider in the chuk-llm library.
+Run this script to see GPT models in action with various capabilities.
 
 Requirements:
-- pip install mistralai chuk-llm
-- Set MISTRAL_API_KEY environment variable
+- pip install openai chuk-llm
+- Set OPENAI_API_KEY environment variable
 
 Usage:
-    python mistral_example.py
-    python mistral_example.py --model mistral-small-latest
-    python mistral_example.py --skip-vision
+    python openai_example.py
+    python openai_example.py --model gpt-4.1
+    python openai_example.py --skip-vision
 """
 
 import asyncio
@@ -31,9 +30,9 @@ from dotenv import load_dotenv
 load_dotenv() 
 
 # Ensure we have the required environment
-if not os.getenv("MISTRAL_API_KEY"):
-    print("❌ Please set MISTRAL_API_KEY environment variable")
-    print("   export MISTRAL_API_KEY='your_api_key_here'")
+if not os.getenv("OPENAI_API_KEY"):
+    print("❌ Please set OPENAI_API_KEY environment variable")
+    print("   export OPENAI_API_KEY='your_api_key_here'")
     sys.exit(1)
 
 try:
@@ -48,16 +47,16 @@ except ImportError as e:
 # Example 1: Basic Text Completion
 # =============================================================================
 
-async def basic_text_example(model: str = "mistral-large-latest"):
+async def basic_text_example(model: str = "gpt-4.1"):
     """Basic text completion example"""
     print(f"\n🤖 Basic Text Completion with {model}")
     print("=" * 60)
     
-    client = get_llm_client("mistral", model=model)
+    client = get_llm_client("openai", model=model)
     
     messages = [
         {"role": "system", "content": "You are a helpful AI assistant."},
-        {"role": "user", "content": "Explain quantum computing in simple terms (2-3 sentences)."}
+        {"role": "user", "content": "Explain neural networks in simple terms (2-3 sentences)."}
     ]
     
     start_time = time.time()
@@ -73,12 +72,12 @@ async def basic_text_example(model: str = "mistral-large-latest"):
 # Example 2: Streaming Response
 # =============================================================================
 
-async def streaming_example(model: str = "mistral-large-latest"):
+async def streaming_example(model: str = "gpt-4.1"):
     """Real-time streaming example"""
     print(f"\n⚡ Streaming Example with {model}")
     print("=" * 60)
     
-    client = get_llm_client("mistral", model=model)
+    client = get_llm_client("openai", model=model)
     
     messages = [
         {"role": "user", "content": "Write a short haiku about artificial intelligence."}
@@ -105,71 +104,70 @@ async def streaming_example(model: str = "mistral-large-latest"):
 # Example 3: Function Calling
 # =============================================================================
 
-async def function_calling_example(model: str = "mistral-large-latest"):
+async def function_calling_example(model: str = "gpt-4.1"):
     """Function calling with tools"""
     print(f"\n🔧 Function Calling with {model}")
     print("=" * 60)
     
     # Check if model supports tools first
     can_handle, issues = CapabilityChecker.can_handle_request(
-        "mistral", model, has_tools=True
+        "openai", model, has_tools=True
     )
     
     if not can_handle:
         print(f"⚠️  Skipping function calling: {', '.join(issues)}")
         return None
     
-    client = get_llm_client("mistral", model=model)
+    client = get_llm_client("openai", model=model)
     
     # Define tools
     tools = [
         {
             "type": "function",
             "function": {
-                "name": "calculate_tip",
-                "description": "Calculate tip amount and total bill",
+                "name": "search_web",
+                "description": "Search the web for information",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "bill_amount": {
-                            "type": "number",
-                            "description": "The bill amount in dollars"
+                        "query": {
+                            "type": "string",
+                            "description": "The search query"
                         },
-                        "tip_percentage": {
-                            "type": "number", 
-                            "description": "Tip percentage (default: 18)"
+                        "max_results": {
+                            "type": "integer", 
+                            "description": "Maximum number of results to return"
                         }
                     },
-                    "required": ["bill_amount"]
+                    "required": ["query"]
                 }
             }
         },
         {
             "type": "function",
             "function": {
-                "name": "get_weather",
-                "description": "Get current weather for a location",
+                "name": "calculate_math",
+                "description": "Perform mathematical calculations",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "location": {
+                        "expression": {
                             "type": "string",
-                            "description": "City name"
+                            "description": "Mathematical expression to evaluate"
                         },
-                        "units": {
-                            "type": "string",
-                            "enum": ["celsius", "fahrenheit"],
-                            "description": "Temperature units"
+                        "precision": {
+                            "type": "integer",
+                            "description": "Number of decimal places"
                         }
                     },
-                    "required": ["location"]
+                    "required": ["expression"]
                 }
             }
         }
     ]
     
     messages = [
-        {"role": "user", "content": "Calculate a 20% tip on a $85 bill and tell me the weather in Paris."}
+        {"role": "user", "content": "Search for 'latest AI research' and calculate 25.5 * 14.2 with 3 decimal places."}
     ]
     
     print("🔄 Making function calling request...")
@@ -193,10 +191,10 @@ async def function_calling_example(model: str = "mistral-large-latest"):
         for tool_call in response["tool_calls"]:
             func_name = tool_call["function"]["name"]
             
-            if func_name == "calculate_tip":
-                result = '{"tip_amount": 17.0, "total_amount": 102.0}'
-            elif func_name == "get_weather":
-                result = '{"temperature": "22°C", "condition": "Sunny", "humidity": "65%"}'
+            if func_name == "search_web":
+                result = '{"results": ["Latest breakthrough in transformer models", "New multimodal AI research", "Advances in reasoning capabilities"]}'
+            elif func_name == "calculate_math":
+                result = '{"result": 361.100, "expression": "25.5 * 14.2", "precision": 3}'
             else:
                 result = '{"status": "success"}'
             
@@ -223,21 +221,21 @@ async def function_calling_example(model: str = "mistral-large-latest"):
 # Example 4: Vision Capabilities
 # =============================================================================
 
-async def vision_example(model: str = "pixtral-12b-latest"):
-    """Vision capabilities with multimodal models"""
+async def vision_example(model: str = "gpt-4o"):
+    """Vision capabilities with GPT-4 Vision models"""
     print(f"\n👁️  Vision Example with {model}")
     print("=" * 60)
     
     # Check if model supports vision
     can_handle, issues = CapabilityChecker.can_handle_request(
-        "mistral", model, has_vision=True
+        "openai", model, has_vision=True
     )
     
     if not can_handle:
         print(f"⚠️  Skipping vision: {', '.join(issues)}")
         return None
     
-    client = get_llm_client("mistral", model=model)
+    client = get_llm_client("openai", model=model)
     
     # Simple test image (1x1 red pixel)
     test_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
@@ -248,11 +246,13 @@ async def vision_example(model: str = "pixtral-12b-latest"):
             "content": [
                 {
                     "type": "text",
-                    "text": "What do you see in this image? Describe it briefly."
+                    "text": "What do you see in this image? Please describe it in detail."
                 },
                 {
                     "type": "image_url",
-                    "image_url": f"data:image/png;base64,{test_image}"
+                    "image_url": {
+                        "url": f"data:image/png;base64,{test_image}"
+                    }
                 }
             ]
         }
@@ -267,18 +267,73 @@ async def vision_example(model: str = "pixtral-12b-latest"):
     return response
 
 # =============================================================================
-# Example 5: Model Comparison
+# Example 5: JSON Mode
+# =============================================================================
+
+async def json_mode_example(model: str = "gpt-4.1"):
+    """JSON mode example with structured output"""
+    print(f"\n📋 JSON Mode Example with {model}")
+    print("=" * 60)
+    
+    client = get_llm_client("openai", model=model)
+    
+    messages = [
+        {
+            "role": "system", 
+            "content": "You are a helpful assistant designed to output JSON. Generate a JSON object with information about a programming language."
+        },
+        {
+            "role": "user", 
+            "content": "Tell me about Python programming language in JSON format with fields: name, year_created, creator, main_features (array), and popularity_score (1-10)."
+        }
+    ]
+    
+    print("📝 Requesting JSON output...")
+    
+    try:
+        response = await client.create_completion(
+            messages,
+            response_format={"type": "json_object"},
+            temperature=0.7
+        )
+        
+        print(f"✅ JSON response:")
+        print(f"   {response['response']}")
+        
+        # Try to parse as JSON to verify
+        import json
+        try:
+            parsed = json.loads(response['response'])
+            print(f"✅ Valid JSON structure with keys: {list(parsed.keys())}")
+        except json.JSONDecodeError:
+            print("⚠️  Response is not valid JSON")
+        
+    except Exception as e:
+        print(f"❌ JSON mode not supported or failed: {e}")
+        # Fallback to regular request
+        response = await client.create_completion(messages)
+        print(f"📝 Fallback response: {response['response'][:200]}...")
+    
+    return response
+
+# =============================================================================
+# Example 6: Model Comparison
 # =============================================================================
 
 async def model_comparison_example():
-    """Compare different Mistral models"""
+    """Compare different GPT models"""
     print(f"\n📊 Model Comparison")
     print("=" * 60)
     
     models = [
-        "mistral-large-latest",
-        "mistral-small-latest", 
-        "ministral-8b-latest"
+        "gpt-4.1",              # Latest GPT-4.1
+        "gpt-4.1-mini",         # GPT-4.1 Mini
+        "gpt-4.1-nano",         # GPT-4.1 Nano
+        "gpt-4o-mini",          # GPT-4o Mini
+        "gpt-4o",               # GPT-4o
+        "gpt-4-turbo",          # GPT-4 Turbo
+        "gpt-3.5-turbo",        # GPT-3.5 Turbo
+        "gpt-4"                 # GPT-4
     ]
     
     prompt = "What is machine learning? (One sentence)"
@@ -287,7 +342,7 @@ async def model_comparison_example():
     for model in models:
         try:
             print(f"🔄 Testing {model}...")
-            client = get_llm_client("mistral", model=model)
+            client = get_llm_client("openai", model=model)
             messages = [{"role": "user", "content": prompt}]
             
             start_time = time.time()
@@ -321,27 +376,29 @@ async def model_comparison_example():
     return results
 
 # =============================================================================
-# Example 6: Multiple Models Test
+# Example 7: Multiple Models Test
 # =============================================================================
 
 async def multiple_models_example():
-    """Test multiple Mistral models"""
+    """Test multiple GPT models"""
     print(f"\n🔄 Multiple Models Test")
     print("=" * 60)
     
     models_to_test = [
-        "mistral-large-latest",
-        "mistral-small-latest",
-        "codestral-latest",
-        "ministral-8b-latest"
+        "gpt-4.1",              # Latest GPT-4.1
+        "gpt-4.1-mini",         # GPT-4.1 Mini
+        "gpt-4o",               # GPT-4o
+        "gpt-4o-mini",          # GPT-4o Mini
+        "gpt-4-turbo",          # GPT-4 Turbo
+        "gpt-3.5-turbo"         # GPT-3.5 Turbo
     ]
     
-    prompt = "Write a one-line summary of machine learning."
+    prompt = "Write a one-line explanation of neural networks."
     
     for model in models_to_test:
         try:
             print(f"🔄 Testing {model}...")
-            client = get_llm_client("mistral", model=model)
+            client = get_llm_client("openai", model=model)
             messages = [{"role": "user", "content": prompt}]
             
             start_time = time.time()
@@ -357,21 +414,21 @@ async def multiple_models_example():
     return True
 
 # =============================================================================
-# Example 7: Simple Chat Interface
+# Example 8: Simple Chat Interface
 # =============================================================================
 
-async def simple_chat_example(model: str = "mistral-large-latest"):
+async def simple_chat_example(model: str = "gpt-4.1"):
     """Simple chat interface simulation"""
     print(f"\n💬 Simple Chat Interface")
     print("=" * 60)
     
-    client = get_llm_client("mistral", model=model)
+    client = get_llm_client("openai", model=model)
     
     # Simulate a simple conversation
     conversation = [
-        "Hello! How are you?",
-        "What's your favorite programming language?", 
-        "Can you write a simple Python function?"
+        "Hello! What's the weather like?",
+        "What's the most exciting development in AI recently?", 
+        "Can you help me write a JavaScript function to sort an array?"
     ]
     
     messages = []
@@ -386,7 +443,7 @@ async def simple_chat_example(model: str = "mistral-large-latest"):
         response = await client.create_completion(messages)
         assistant_response = response.get("response", "No response")
         
-        print(f"🤖 Assistant: {assistant_response}")
+        print(f"🤖 GPT: {assistant_response}")
         print()
         
         # Add assistant response to conversation
@@ -395,15 +452,15 @@ async def simple_chat_example(model: str = "mistral-large-latest"):
     return messages
 
 # =============================================================================
-# Example 8: Model Information
+# Example 9: Model Information
 # =============================================================================
 
-async def model_info_example(model: str = "mistral-large-latest"):
+async def model_info_example(model: str = "gpt-4.1"):
     """Get detailed model information"""
     print(f"\n📋 Model Information for {model}")
     print("=" * 60)
     
-    client = get_llm_client("mistral", model=model)
+    client = get_llm_client("openai", model=model)
     
     # Get model info from client
     if hasattr(client, 'get_model_info'):
@@ -413,7 +470,7 @@ async def model_info_example(model: str = "mistral-large-latest"):
             print(f"   {key}: {value}")
     
     # Get capability info
-    model_info = CapabilityChecker.get_model_info("mistral", model)
+    model_info = CapabilityChecker.get_model_info("openai", model)
     print(f"\n🎯 Capabilities:")
     for key, value in model_info.items():
         if key != "error":
@@ -422,23 +479,65 @@ async def model_info_example(model: str = "mistral-large-latest"):
     return model_info
 
 # =============================================================================
+# Example 10: Temperature and Parameters Test
+# =============================================================================
+
+async def parameters_example(model: str = "gpt-4.1"):
+    """Test different parameters and settings"""
+    print(f"\n🎛️  Parameters Test with {model}")
+    print("=" * 60)
+    
+    client = get_llm_client("openai", model=model)
+    
+    # Test different temperatures
+    temperatures = [0.1, 0.7, 1.2]
+    prompt = "Write a creative opening line for a science fiction story."
+    
+    for temp in temperatures:
+        print(f"\n🌡️  Temperature {temp}:")
+        
+        messages = [{"role": "user", "content": prompt}]
+        
+        try:
+            response = await client.create_completion(
+                messages,
+                temperature=temp,
+                max_tokens=50
+            )
+            print(f"   {response['response']}")
+        except Exception as e:
+            print(f"   ❌ Error: {e}")
+    
+    # Test with system message
+    print(f"\n🎭 With System Message:")
+    messages = [
+        {"role": "system", "content": "You are a poetic AI that speaks in rhymes."},
+        {"role": "user", "content": "Tell me about the ocean."}
+    ]
+    
+    response = await client.create_completion(messages, temperature=0.8)
+    print(f"   {response['response']}")
+    
+    return True
+
+# =============================================================================
 # Main Function
 # =============================================================================
 
 async def main():
     """Run all examples"""
-    parser = argparse.ArgumentParser(description="Mistral Provider Example Script")
-    parser.add_argument("--model", default="mistral-large-latest", help="Model to use")
+    parser = argparse.ArgumentParser(description="OpenAI/GPT Provider Example Script")
+    parser.add_argument("--model", default="gpt-4.1", help="Model to use")
     parser.add_argument("--skip-vision", action="store_true", help="Skip vision examples")
     parser.add_argument("--skip-functions", action="store_true", help="Skip function calling")
     parser.add_argument("--quick", action="store_true", help="Run only basic examples")
     
     args = parser.parse_args()
     
-    print("🚀 Mistral Provider Examples")
+    print("🚀 OpenAI/GPT Provider Examples")
     print("=" * 60)
     print(f"Using model: {args.model}")
-    print(f"API Key: {'✅ Set' if os.getenv('MISTRAL_API_KEY') else '❌ Missing'}")
+    print(f"API Key: {'✅ Set' if os.getenv('OPENAI_API_KEY') else '❌ Missing'}")
     
     examples = [
         ("Basic Text", lambda: basic_text_example(args.model)),
@@ -451,12 +550,14 @@ async def main():
             examples.append(("Function Calling", lambda: function_calling_example(args.model)))
         
         if not args.skip_vision:
-            examples.append(("Vision", lambda: vision_example("pixtral-12b-latest")))
+            examples.append(("Vision", lambda: vision_example("gpt-4o")))
         
         examples.extend([
+            ("JSON Mode", lambda: json_mode_example(args.model)),
             ("Model Comparison", model_comparison_example),
             ("Multiple Models", multiple_models_example),
             ("Simple Chat", lambda: simple_chat_example(args.model)),
+            ("Parameters Test", lambda: parameters_example(args.model)),
         ])
     
     # Run examples
@@ -492,7 +593,7 @@ async def main():
     
     if successful == total:
         print(f"\n🎉 All examples completed successfully!")
-        print(f"🔗 Mistral provider is working perfectly with chuk-llm!")
+        print(f"🔗 OpenAI/GPT provider is working perfectly with chuk-llm!")
     else:
         print(f"\n⚠️  Some examples failed. Check your API key and model access.")
 
