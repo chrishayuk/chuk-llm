@@ -56,6 +56,20 @@ DEFAULTS: Dict[str, Dict[str, Any]] = {
         "api_base": None,
         "api_key": None,
         "default_model": "mistral-large-latest",
+    },
+    "watsonx": {
+        "client": "chuk_llm.llm.providers.watsonx_client:WatsonXLLMClient",
+        "api_key_env": "WATSONX_API_KEY",
+        "api_key_fallback_env": "IBM_CLOUD_API_KEY",
+        "project_id_env": "WATSONX_PROJECT_ID",
+        "watsonx_ai_url_env": "WATSONX_AI_URL", 
+        "space_id_env": "WATSONX_SPACE_ID",
+        "api_base": None,
+        "api_key": None,
+        "project_id": None,
+        "watsonx_ai_url": "https://us-south.ml.cloud.ibm.com", 
+        "space_id": None,
+        "default_model": "ibm/granite-3-8b-instruct"
     }
 }
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# examples/openai_usage_examples.py
 """
 OpenAI/GPT Provider Example Usage Script
 ========================================

@@ -190,6 +190,130 @@ MISTRAL_MODEL_CAPABILITIES = [
     )
 ]
 
+# Watson X model capabilities with pattern-based matching
+WATSONX_MODEL_CAPABILITIES = [
+    # Llama 3.1 models (some deprecated but still available)
+    ModelCapabilities(
+        pattern=r"meta-llama/llama-3-1-8b-instruct",
+        features={
+            Feature.STREAMING, Feature.TOOLS, Feature.SYSTEM_MESSAGES
+        },
+        max_context_length=8192,
+        max_output_tokens=4096
+    ),
+    ModelCapabilities(
+        pattern=r"meta-llama/llama-3-1-70b-instruct",
+        features={
+            Feature.STREAMING, Feature.TOOLS, Feature.SYSTEM_MESSAGES,
+            Feature.PARALLEL_CALLS
+        },
+        max_context_length=8192,
+        max_output_tokens=4096
+    ),
+    
+    # Llama 3.2 models - high context
+    ModelCapabilities(
+        pattern=r"meta-llama/llama-3-2-[13]b-instruct",
+        features={
+            Feature.STREAMING, Feature.TOOLS, Feature.SYSTEM_MESSAGES
+        },
+        max_context_length=131072,
+        max_output_tokens=4096
+    ),
+    
+    # Llama 3.2 vision models - multimodal capabilities
+    ModelCapabilities(
+        pattern=r"meta-llama/llama-3-2-.*vision-instruct",
+        features={
+            Feature.STREAMING, Feature.TOOLS, Feature.VISION,
+            Feature.SYSTEM_MESSAGES, Feature.MULTIMODAL, Feature.PARALLEL_CALLS
+        },
+        max_context_length=131072,
+        max_output_tokens=4096
+    ),
+    
+    # Llama 3.3 models - latest version
+    ModelCapabilities(
+        pattern=r"meta-llama/llama-3-3-70b-instruct",
+        features={
+            Feature.STREAMING, Feature.TOOLS, Feature.SYSTEM_MESSAGES,
+            Feature.PARALLEL_CALLS
+        },
+        max_context_length=8192,
+        max_output_tokens=4096
+    ),
+    
+    # Llama 4 models - newest generation
+    ModelCapabilities(
+        pattern=r"meta-llama/llama-4-scout.*",
+        features={
+            Feature.STREAMING, Feature.TOOLS, Feature.VISION,
+            Feature.SYSTEM_MESSAGES, Feature.MULTIMODAL, Feature.PARALLEL_CALLS
+        },
+        max_context_length=16384,  # Assuming similar to other Llama models
+        max_output_tokens=4096
+    ),
+    ModelCapabilities(
+        pattern=r"meta-llama/llama-4-maverick.*",
+        features={
+            Feature.STREAMING, Feature.TOOLS, Feature.VISION,
+            Feature.SYSTEM_MESSAGES, Feature.MULTIMODAL, Feature.PARALLEL_CALLS
+        },
+        max_context_length=16384,
+        max_output_tokens=4096
+    ),
+    ModelCapabilities(
+        pattern=r"meta-llama/llama-guard.*",
+        features={
+            Feature.STREAMING, Feature.TOOLS, Feature.VISION,
+            Feature.SYSTEM_MESSAGES
+        },
+        max_context_length=8192,
+        max_output_tokens=4096
+    ),
+    
+    # IBM Granite models - enterprise focus
+    ModelCapabilities(
+        pattern=r"ibm/granite-.*",
+        features={
+            Feature.STREAMING, Feature.TOOLS, Feature.SYSTEM_MESSAGES
+        },
+        max_context_length=8192,
+        max_output_tokens=4096
+    ),
+    
+    # Mistral models on Watson X
+    ModelCapabilities(
+        pattern=r"mistralai/mistral-large",
+        features={
+            Feature.STREAMING, Feature.TOOLS, Feature.SYSTEM_MESSAGES,
+            Feature.PARALLEL_CALLS
+        },
+        max_context_length=128000,
+        max_output_tokens=8192
+    ),
+    
+    # Mistral other models
+    ModelCapabilities(
+        pattern=r"mistralai/.*",
+        features={
+            Feature.STREAMING, Feature.TOOLS, Feature.SYSTEM_MESSAGES
+        },
+        max_context_length=128000,
+        max_output_tokens=8192
+    ),
+    
+    # Google models
+    ModelCapabilities(
+        pattern=r"google/.*",
+        features={
+            Feature.STREAMING, Feature.SYSTEM_MESSAGES
+        },
+        max_context_length=32000,
+        max_output_tokens=4096
+    )
+]
+
 # Registry of provider capabilities - now with pattern-based model support
 PROVIDER_CAPABILITIES = {
     "openai": ProviderCapabilities(
@@ -236,17 +360,27 @@ PROVIDER_CAPABILITIES = {
         max_output_tokens=None,
         rate_limits=None
     ),
-    # NEW: Mistral Le Plateforme capabilities - pattern-based and scalable
     "mistral": ProviderCapabilities(
         name="Mistral Le Plateforme",
         features={
             Feature.STREAMING, Feature.TOOLS, Feature.VISION,
             Feature.SYSTEM_MESSAGES, Feature.PARALLEL_CALLS
         },
-        max_context_length=128000,  # Default for most models
+        max_context_length=128000,
         max_output_tokens=8192,
         rate_limits={"default": 1000, "premium": 5000},
-        model_capabilities=MISTRAL_MODEL_CAPABILITIES  # Use pattern-based matching
+        model_capabilities=MISTRAL_MODEL_CAPABILITIES
+    ),
+    "watsonx": ProviderCapabilities(
+        name="IBM Watson X",
+        features={
+            Feature.STREAMING, Feature.TOOLS, Feature.VISION,
+            Feature.SYSTEM_MESSAGES, Feature.PARALLEL_CALLS
+        },
+        max_context_length=131072,  # Default for most models (Llama 3.2)
+        max_output_tokens=4096,
+        rate_limits={"default": 500, "enterprise": 2000},
+        model_capabilities=WATSONX_MODEL_CAPABILITIES  # Use pattern-based matching
     )
 }
 
