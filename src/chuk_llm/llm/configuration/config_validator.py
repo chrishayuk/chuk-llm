@@ -1,4 +1,4 @@
-# src/chuk_llm/llm/configuration/config_validator.py
+# chuk_llm/llm/configuration/config_validator.py
 from typing import Dict, Any, List, Optional, Set
 import os
 import re
@@ -39,23 +39,33 @@ class ConfigValidator:
         if api_key_env and not api_key and not os.getenv(api_key_env):
             issues.append(f"Missing API key: {api_key_env} environment variable not set")
         
-        # Validate model
+        # Validate model - check if model capabilities exist for this provider
         model = config.get("default_model")
-        if model and capabilities.supported_models:
-            if model not in capabilities.supported_models:
-                issues.append(f"Model '{model}' not supported by {provider}")
+        if model and capabilities.model_capabilities:
+            # Check if any model pattern matches
+            model_found = False
+            for model_cap in capabilities.model_capabilities:
+                if model_cap.matches(model):
+                    model_found = True
+                    break
+            
+            # For providers with model_capabilities, we don't strictly enforce model validation
+            # since patterns are flexible and new models may be added
+            if not model_found and strict:
+                issues.append(f"Model '{model}' may not be optimally supported by {provider}")
         
         # Validate API base URL format
         api_base = config.get("api_base")
         if api_base and not ConfigValidator._is_valid_url(api_base):
             issues.append(f"Invalid API base URL: {api_base}")
         
-        # Check rate limits configuration
+        # Check rate limits configuration in strict mode
         if strict and capabilities.rate_limits:
-            # Could add rate limit validation here
+            # Could add rate limit validation here if needed
             pass
         
         return len(issues) == 0, issues
+    
     @staticmethod
     def validate_request_compatibility(
         provider: str,
@@ -102,13 +112,16 @@ class ConfigValidator:
     @staticmethod
     def _is_valid_url(url: str) -> bool:
         """Basic URL validation"""
+        if not url:
+            return False
+            
         url_pattern = re.compile(
             r'^https?://'  # http:// or https://
             r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'  # domain...
             r'localhost|'  # localhost...
             r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # ...or ip
             r'(?::\d+)?'  # optional port
-            r'(?:/?|[/?]\S+)$',  # Fixed: added closing quote and $
+            r'(?:/?|[/?]\S+)$',  # path
             re.IGNORECASE
         )
         return url_pattern.match(url) is not None

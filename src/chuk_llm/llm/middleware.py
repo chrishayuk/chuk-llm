@@ -172,3 +172,32 @@ class MiddlewareStack:
         for middleware in reversed(self.middlewares):
             error = await middleware.process_error(error, duration)
         return error
+    
+class PaymentGuardMiddleware(Middleware):
+    """
+    Marks a response as `error=True` when the provider reports
+    an out-of-credit / payment-required situation.
+
+    That lets the demo harness (or any caller) treat it as a failure
+    without crashing the whole run.
+    """
+
+    _BILLING_MESSAGES = {
+        "insufficient balance",
+        "payment required",
+        "quota exceeded",
+        "credit depleted",
+    }
+
+    async def process_response(
+        self,
+        response: Dict[str, Any],
+        duration: float,
+        is_streaming: bool = False,
+    ) -> Dict[str, Any]:
+        if isinstance(response, dict) and not response.get("error"):
+            msg = (response.get("response") or "").lower()
+            if any(phrase in msg for phrase in self._BILLING_MESSAGES):
+                response["error"] = True
+                response["error_message"] = "Billing / quota error detected"
+        return response

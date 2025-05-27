@@ -220,7 +220,7 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
             response_stream = await self.async_client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                tools=tools or [],
+                **({"tools": tools} if tools else {}),
                 stream=True,
                 **kwargs
             )
@@ -250,7 +250,7 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
             resp = await self.async_client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                tools=tools or [],
+                **({"tools": tools} if tools else {}),
                 stream=False,
                 **kwargs
             )

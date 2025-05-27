@@ -1,0 +1,84 @@
+##############################################################################
+# chuk-llm  –  External provider configuration
+#
+# • Any key here overrides or extends the built-in defaults in chuk_llm.
+# • The special field `inherits:` copies every value from the named provider
+#   before applying the overrides that follow it.               ──────────────
+# • Environment variables listed in *_env fields are read at runtime; you
+#   don’t store secrets inside this file.                                       
+##############################################################################
+
+# ─────────────────────── Global defaults ────────────────────────
+__global__:
+  # Which provider + model should be used when the caller does not specify?
+  active_provider: openai
+  active_model: gpt-4o-mini
+
+
+# ───────────────────────── Providers ────────────────────────────
+# OpenAI – leave mostly at library defaults, only expose key name here
+openai:
+  api_key_env: OPENAI_API_KEY
+
+
+# DeepSeek – OpenAI-compatible endpoint (inherits everything, just override)
+deepseek:
+  inherits: openai
+  api_key_env: DEEPSEEK_API_KEY
+  api_base: https://api.deepseek.com
+  default_model: deepseek-chat          # or deepseek-reasoner
+
+
+# Anthropic – Claude models
+anthropic:
+  api_key_env: ANTHROPIC_API_KEY
+  default_model: claude-3-7-sonnet-20250219
+
+
+# Groq – OpenAI style, ultra-fast inference
+groq:
+  inherits: openai                      # same client class
+  api_key_env: GROQ_API_KEY
+  api_base: https://api.groq.com
+  default_model: llama-3.3-70b-versatile
+
+
+# Google Gemini
+gemini:
+  api_key_env: GOOGLE_API_KEY
+  default_model: gemini-2.0-flash
+
+
+# Mistral AI – official cloud
+mistral:
+  api_key_env: MISTRAL_API_KEY
+  default_model: mistral-large-latest
+
+
+# Local Ollama daemon (no key needed)
+ollama:
+  api_base: http://localhost:11434
+  default_model: qwen3
+
+
+# IBM watsonx.ai
+watsonx:
+  api_key_env: WATSONX_API_KEY
+  api_key_fallback_env: IBM_CLOUD_API_KEY
+  watsonx_ai_url: https://us-south.ml.cloud.ibm.com
+  project_id_env: WATSONX_PROJECT_ID
+  space_id_env:   WATSONX_SPACE_ID
+  default_model: ibm/granite-3-8b-instruct
+
+
+# (Example) Together AI – another OpenAI-compatible host
+togetherai:
+  inherits: openai
+  api_key_env: TOGETHERAI_API_KEY
+  api_base: https://api.together.xyz
+  default_model: llama-3-70b-chat
+
+##############################################################################
+# You can add more providers at any time; chuk-llm will pick them up on the
+# next import without code changes.
+##############################################################################

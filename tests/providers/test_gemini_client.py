@@ -39,58 +39,76 @@ class _Simple:
         return f"<_Simple {self.__dict__}>"
 
 
-class Part(_Simple):
-    @staticmethod
-    def from_text(text: str):
-        return Part(text=text)
+# Updated to match actual implementation usage
+class Tool(_Simple):
+    def __init__(self, function_declarations=None, **kwargs):
+        super().__init__(**kwargs)
+        self.function_declarations = function_declarations or []
 
-    @staticmethod
-    def from_function_response(name: str, response):
-        return Part(func_resp={"name": name, "response": response})
+class GenerateContentConfig(_Simple):
+    def __init__(self, tools=None, automatic_function_calling=None, **kwargs):
+        super().__init__(**kwargs)
+        self.tools = tools
+        self.automatic_function_calling = automatic_function_calling
 
-    @staticmethod
-    def from_function_call(name: str, args):
-        return Part(func_call={"name": name, "args": args})
+class AutomaticFunctionCallingConfig(_Simple):
+    def __init__(self, disable=False, **kwargs):
+        super().__init__(**kwargs)
+        self.disable = disable
 
-
-types_mod.Part = Part
-types_mod.Content = _Simple
-types_mod.Schema = _Simple
-types_mod.FunctionDeclaration = _Simple
-types_mod.Tool = _Simple
-
-class _FCCMode:
-    AUTO = "AUTO"
-
-types_mod.FunctionCallingConfigMode = _FCCMode
-types_mod.FunctionCallingConfig = _Simple
-types_mod.ToolConfig = _Simple
-types_mod.GenerateContentConfig = _Simple
+types_mod.Tool = Tool
+types_mod.GenerateContentConfig = GenerateContentConfig
+types_mod.AutomaticFunctionCallingConfig = AutomaticFunctionCallingConfig
 
 # ---------------------------------------------------------------------------
-# Fake client that the adapter will instantiate
+# Fake client that matches the actual implementation
 # ---------------------------------------------------------------------------
+
+class _MockAIOModels:
+    async def generate_content(self, **kwargs):
+        # Return a mock response
+        return MagicMock()
+
+    async def generate_content_stream(self, **kwargs):
+        # Return an async iterator
+        async def mock_stream():
+            yield MagicMock(text="chunk1")
+            yield MagicMock(text="chunk2")
+        return mock_stream()
+
+class _MockAIO:
+    def __init__(self):
+        self.models = _MockAIOModels()
 
 class _DummyModels:
     def generate_content(self, *a, **k):
-        # Never used in our patched tests – but must exist
         return None
 
     def generate_content_stream(self, *a, **k):
-        # Never used because we patch _stream – but must exist
         return []
 
 class DummyGenAIClient:
     def __init__(self, *args, **kwargs):
         self.models = _DummyModels()
+        self.aio = _MockAIO()
 
 genai_mod.Client = DummyGenAIClient
+
+# ---------------------------------------------------------------------------
+# Mock dotenv
+# ---------------------------------------------------------------------------
+sys.modules["dotenv"] = types.ModuleType("dotenv")
+sys.modules["dotenv"].load_dotenv = lambda: None
 
 # ---------------------------------------------------------------------------
 # Now import the adapter under test (it will pick up the stubs).
 # ---------------------------------------------------------------------------
 
-from chuk_llm.llm.providers.gemini_client import GeminiLLMClient, _convert_messages, _convert_tools, _parse_final_response, _parse_stream_chunk  # noqa: E402  pylint: disable=wrong-import-position
+from chuk_llm.llm.providers.gemini_client import (
+    GeminiLLMClient, 
+    _convert_messages_for_chat, 
+    _convert_tools_to_gemini_format
+)  # noqa: E402  pylint: disable=wrong-import-position
 
 # ---------------------------------------------------------------------------
 # Fixture producing a fresh client for each test.
@@ -101,7 +119,7 @@ def client():
     return GeminiLLMClient(model="gemini-test", api_key="fake-key")
 
 # ---------------------------------------------------------------------------
-# Helper conversion functions (keeping existing tests)
+# Helper conversion functions (updated for actual implementation)
 # ---------------------------------------------------------------------------
 
 def test_convert_messages_basic():
@@ -112,23 +130,44 @@ def test_convert_messages_basic():
         {"role": "assistant", "content": "Hello! How can I help you today?"}
     ]
     
-    system_txt, gem_contents = _convert_messages(messages)
+    system_txt, user_message = _convert_messages_for_chat(messages)
     
     # Check system text was extracted
     assert system_txt == "You are a helpful assistant."
     
-    # Check converted messages
-    assert len(gem_contents) == 2  # System message is extracted, not in contents
+    # Check that the last user message was extracted
+    assert user_message == "Hello Gemini"
+
+def test_convert_messages_multimodal():
+    """Test conversion with multimodal content."""
+    messages = [
+        {"role": "user", "content": [
+            {"type": "text", "text": "What's in this image?"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
+        ]}
+    ]
     
-    # Check user message
-    assert gem_contents[0].role == "user"
-    assert len(gem_contents[0].parts) == 1
-    assert getattr(gem_contents[0].parts[0], "text", None) == "Hello Gemini"
+    system_txt, user_message = _convert_messages_for_chat(messages)
     
-    # Check assistant message
-    assert gem_contents[1].role == "model"
-    assert len(gem_contents[1].parts) == 1
-    assert getattr(gem_contents[1].parts[0], "text", None) == "Hello! How can I help you today?"
+    assert system_txt is None
+    assert "What's in this image?" in user_message
+
+def test_convert_messages_tool_response():
+    """Test conversion with tool responses."""
+    messages = [
+        {"role": "user", "content": "Get weather"},
+        {"role": "assistant", "tool_calls": [
+            {"function": {"name": "get_weather", "arguments": '{"city": "NYC"}'}}
+        ]},
+        {"role": "tool", "name": "get_weather", "content": "Sunny, 75°F"}
+    ]
+    
+    system_txt, user_message = _convert_messages_for_chat(messages)
+    
+    assert system_txt is None
+    # Tool result should be converted to user message
+    assert "get_weather" in user_message
+    assert "Sunny, 75°F" in user_message
 
 def test_convert_tools_basic():
     """Test basic tool conversion."""
@@ -149,46 +188,21 @@ def test_convert_tools_basic():
         }
     ]
     
-    gem_tools, tool_cfg = _convert_tools(tools)
+    gem_tools = _convert_tools_to_gemini_format(tools)
     
     # Check tools list
     assert len(gem_tools) == 1
     assert len(gem_tools[0].function_declarations) == 1
-    assert gem_tools[0].function_declarations[0].name == "get_weather"
-    assert gem_tools[0].function_declarations[0].description == "Get the current weather"
-    
-    # Check tool config
-    assert tool_cfg is not None
-    assert hasattr(tool_cfg, "function_calling_config")
-    assert tool_cfg.function_calling_config.mode == "AUTO"
+    assert gem_tools[0].function_declarations[0]["name"] == "get_weather"
+    assert gem_tools[0].function_declarations[0]["description"] == "Get the current weather"
 
-def test_parse_stream_chunk_text():
-    """Test parsing a stream chunk with text content."""
-    # Mock a chunk with text
-    chunk = MagicMock()
-    chunk.text = "Hello, how are you?"
+def test_convert_tools_empty():
+    """Test conversion with no tools."""
+    gem_tools = _convert_tools_to_gemini_format(None)
+    assert gem_tools is None
     
-    delta_text, tool_calls = _parse_stream_chunk(chunk)
-    
-    assert delta_text == "Hello, how are you?"
-    assert tool_calls == []
-
-def test_parse_final_response_text():
-    """Test parsing a final response with text content."""
-    # Mock a response with text
-    resp = MagicMock()
-    candidate = MagicMock()
-    content = MagicMock()
-    part = MagicMock()
-    part.text = "Final response text"
-    content.parts = [part]
-    candidate.content = content
-    resp.candidates = [candidate]
-    
-    result = _parse_final_response(resp)
-    
-    assert result["response"] == "Final response text"
-    assert result["tool_calls"] == []
+    gem_tools = _convert_tools_to_gemini_format([])
+    assert gem_tools is None
 
 # ---------------------------------------------------------------------------
 # Non-streaming path – UPDATED for new interface
@@ -197,7 +211,7 @@ def test_parse_final_response_text():
 @pytest.mark.asyncio
 async def test_create_completion_non_stream(monkeypatch, client):
     messages = [{"role": "user", "content": "Hello Gemini"}]
-    tools = [{"type": "function", "function": {"name": "demo.fn", "parameters": {}}}]
+    tools = [{"type": "function", "function": {"name": "demo_fn", "parameters": {}}}]
 
     # Mock the _regular_completion method
     expected_result = {"response": "Hi!", "tool_calls": []}
@@ -235,7 +249,7 @@ async def test_create_completion_stream(monkeypatch, client):
         
         # Yield test chunks
         yield {"response": "chunk1", "tool_calls": []}
-        yield {"response": "chunk2", "tool_calls": [{"name": "fn"}]}
+        yield {"response": "chunk2", "tool_calls": []}
 
     monkeypatch.setattr(client, "_stream_completion_async", fake_stream_completion_async)
 
@@ -250,11 +264,11 @@ async def test_create_completion_stream(monkeypatch, client):
     pieces = [c async for c in stream_result]
     assert pieces == [
         {"response": "chunk1", "tool_calls": []},
-        {"response": "chunk2", "tool_calls": [{"name": "fn"}]},
+        {"response": "chunk2", "tool_calls": []},
     ]
 
 # ---------------------------------------------------------------------------
-# Interface compliance test (NEW) - FIXED to be async
+# Interface compliance test
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -263,6 +277,15 @@ async def test_interface_compliance(client):
     # Test non-streaming
     messages = [{"role": "user", "content": "Test"}]
     
+    # Mock the underlying methods
+    expected_result = {"response": "Test response", "tool_calls": []}
+    
+    async def mock_regular_completion(msgs, tls, **kwargs):
+        return expected_result
+    
+    # Use setattr to replace the method
+    setattr(client, "_regular_completion", mock_regular_completion)
+    
     # For non-streaming, we need to await the result
     result = client.create_completion(messages, stream=False)
     if asyncio.iscoroutine(result):
@@ -270,57 +293,45 @@ async def test_interface_compliance(client):
     
     assert isinstance(result, dict)
     assert "response" in result
+    assert result == expected_result
 
 # ---------------------------------------------------------------------------
-# Test new streaming implementation (NEW)
+# Test streaming implementation
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_stream_completion_async(monkeypatch, client):
-    """Test the new _stream_completion_async method."""
+    """Test the _stream_completion_async method."""
     messages = [{"role": "user", "content": "Stream please"}]
     tools = [{"type": "function", "function": {"name": "helper", "parameters": {}}}]
     
-    # Mock _convert_messages
-    system_txt = None
-    gem_contents = [MagicMock()]
+    # Mock the conversion functions
     monkeypatch.setattr(
-        "chuk_llm.llm.providers.gemini_client._convert_messages", 
-        lambda m: (system_txt, gem_contents)
+        "chuk_llm.llm.providers.gemini_client._convert_messages_for_chat", 
+        lambda m: (None, "Stream please")
     )
     
-    # Mock _convert_tools
-    gem_tools = [MagicMock()]
-    tool_cfg = MagicMock()
+    gem_tools = [types_mod.Tool(function_declarations=[{"name": "helper"}])]
     monkeypatch.setattr(
-        "chuk_llm.llm.providers.gemini_client._convert_tools", 
-        lambda t: (gem_tools, tool_cfg)
+        "chuk_llm.llm.providers.gemini_client._convert_tools_to_gemini_format", 
+        lambda t: gem_tools
     )
     
-    # Mock stream response objects
-    class MockStreamItem:
+    # Mock the client's async generate_content_stream method
+    class MockChunk:
         def __init__(self, text):
             self.text = text
     
-    mock_stream_items = [
-        MockStreamItem("Hello"),
-        MockStreamItem(" world")
-    ]
+    # Create an async generator that returns the chunks
+    async def mock_async_generator():
+        yield MockChunk("Hello")
+        yield MockChunk(" world")
     
-    # Mock asyncio.to_thread to return the stream directly
-    async def fake_to_thread(func):
-        return mock_stream_items
+    # Mock the actual call to return the async generator (not await it)
+    async def mock_stream_call(**kwargs):
+        return mock_async_generator()
     
-    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
-    
-    # Mock _parse_stream_chunk
-    parse_results = [
-        ("Hello", []),
-        (" world", [])
-    ]
-    
-    parse_mock = MagicMock(side_effect=parse_results)
-    monkeypatch.setattr("chuk_llm.llm.providers.gemini_client._parse_stream_chunk", parse_mock)
+    monkeypatch.setattr(client.client.aio.models, "generate_content_stream", mock_stream_call)
     
     # Call _stream_completion_async and collect results
     stream = client._stream_completion_async(messages, tools)
@@ -330,11 +341,11 @@ async def test_stream_completion_async(monkeypatch, client):
     
     # Verify results
     assert len(chunks) == 2
-    assert chunks[0] == {"response": "Hello", "tool_calls": []}
-    assert chunks[1] == {"response": " world", "tool_calls": []}
+    assert chunks[0]["response"] == "Hello"
+    assert chunks[1]["response"] == " world"
 
 # ---------------------------------------------------------------------------
-# Test regular completion (NEW)
+# Test regular completion
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -343,24 +354,43 @@ async def test_regular_completion(monkeypatch, client):
     messages = [{"role": "user", "content": "Hello"}]
     tools = [{"type": "function", "function": {"name": "get_info", "parameters": {}}}]
     
-    # Mock asyncio.to_thread to call _create_sync
-    expected_result = {"response": "Test response", "tool_calls": []}
+    # Mock the conversion functions
+    monkeypatch.setattr(
+        "chuk_llm.llm.providers.gemini_client._convert_messages_for_chat", 
+        lambda m: (None, "Hello")
+    )
     
-    async def fake_to_thread(func, *args):
-        # Should call _create_sync with messages and tools
-        assert args == (messages, tools)
-        return expected_result
+    gem_tools = [types_mod.Tool(function_declarations=[{"name": "get_info"}])]
+    monkeypatch.setattr(
+        "chuk_llm.llm.providers.gemini_client._convert_tools_to_gemini_format", 
+        lambda t: gem_tools
+    )
     
-    monkeypatch.setattr(asyncio, "to_thread", fake_to_thread)
+    # Mock the response
+    mock_response = MagicMock()
+    mock_response.text = "Test response"
+    
+    # Mock the async client call
+    async def mock_generate_content(**kwargs):
+        return mock_response
+    
+    monkeypatch.setattr(client.client.aio.models, "generate_content", mock_generate_content)
+    
+    # Mock the response parser
+    monkeypatch.setattr(
+        client, "_parse_gemini_response", 
+        lambda resp: ("Test response", [])
+    )
     
     # Call _regular_completion
     result = await client._regular_completion(messages, tools)
     
     # Verify result
-    assert result == expected_result
+    assert result["response"] == "Test response"
+    assert result["tool_calls"] == []
 
 # ---------------------------------------------------------------------------
-# Error handling tests (NEW) - FIXED to yield error chunks instead of raising
+# Error handling tests
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -368,14 +398,14 @@ async def test_streaming_error_handling(monkeypatch, client):
     """Test error handling in streaming."""
     messages = [{"role": "user", "content": "test"}]
 
-    # Mock the actual _stream_completion_async method using monkeypatch
-    async def error_stream(msgs, tls=None, **kwargs):
+    # Create a streaming method that yields first, then raises an error
+    # The actual implementation should catch this and yield an error chunk
+    async def mock_stream_with_error(msgs, tls=None, **kwargs):
         yield {"response": "Starting...", "tool_calls": []}
-        # Instead of raising, yield an error chunk
-        yield {"response": "Stream error", "tool_calls": [], "error": True}
+        yield {"response": "Streaming error: Test error", "tool_calls": [], "error": True}
 
-    # Use monkeypatch for cleaner method replacement
-    monkeypatch.setattr(client, "_stream_completion_async", error_stream)
+    # Replace the _stream_completion_async method entirely
+    monkeypatch.setattr(client, "_stream_completion_async", mock_stream_with_error)
 
     stream_result = client.create_completion(messages, stream=True)
 
@@ -384,6 +414,7 @@ async def test_streaming_error_handling(monkeypatch, client):
     async for chunk in stream_result:
         chunks.append(chunk)
 
+    # Should get both chunks
     assert len(chunks) == 2
     assert chunks[0]["response"] == "Starting..."
     assert chunks[1]["error"] is True
@@ -393,29 +424,29 @@ async def test_non_streaming_error_handling(monkeypatch, client):
     """Test error handling in non-streaming."""
     messages = [{"role": "user", "content": "test"}]
     
-    # Mock the actual _regular_completion method
+    # Mock the completion method to return an error response instead of raising
     async def error_completion(msgs, tls, **kwargs):
         return {"response": "Error: Completion error", "tool_calls": [], "error": True}
     
-    # Use monkeypatch for cleaner method replacement
     monkeypatch.setattr(client, "_regular_completion", error_completion)
     
     result_awaitable = client.create_completion(messages, stream=False)
     result = await result_awaitable
     
     # Should return error response
+    assert "error" in result
     assert result["error"] is True
     assert "Completion error" in result["response"]
 
 # ---------------------------------------------------------------------------
-# Test with tools (NEW)
+# Test with tools
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_streaming_with_tools(monkeypatch, client):
     """Test streaming with tool calls."""
     messages = [{"role": "user", "content": "What's the weather?"}]
-    tools = [{"function": {"name": "get_weather", "parameters": {}}}]
+    tools = [{"type": "function", "function": {"name": "get_weather", "parameters": {}}}]
 
     # Mock streaming with tool calls
     async def fake_stream_with_tools(msgs, tls, **kwargs):
@@ -424,7 +455,7 @@ async def test_streaming_with_tools(monkeypatch, client):
         
         yield {"response": "Let me check", "tool_calls": []}
         yield {"response": "", "tool_calls": [
-            {"id": "call_123", "function": {"name": "get_weather", "arguments": "{}"}}
+            {"id": "call_123", "type": "function", "function": {"name": "get_weather", "arguments": "{}"}}
         ]}
         yield {"response": " the weather", "tool_calls": []}
 
@@ -449,7 +480,7 @@ async def test_streaming_with_tools(monkeypatch, client):
 async def test_non_streaming_with_tools(monkeypatch, client):
     """Test non-streaming with tool calls."""
     messages = [{"role": "user", "content": "What's the weather?"}]
-    tools = [{"function": {"name": "get_weather"}}]
+    tools = [{"type": "function", "function": {"name": "get_weather", "parameters": {}}}]
 
     # Mock regular completion with tool calls
     async def fake_regular_with_tools(msgs, tls, **kwargs):
@@ -459,7 +490,7 @@ async def test_non_streaming_with_tools(monkeypatch, client):
         return {
             "response": "Weather check complete",
             "tool_calls": [
-                {"id": "call_123", "function": {"name": "get_weather", "arguments": "{}"}}
+                {"id": "call_123", "type": "function", "function": {"name": "get_weather", "arguments": "{}"}}
             ]
         }
 
@@ -473,33 +504,118 @@ async def test_non_streaming_with_tools(monkeypatch, client):
     assert result["tool_calls"][0]["function"]["name"] == "get_weather"
 
 # ---------------------------------------------------------------------------
-# Edge cases and error handling (keeping existing tests)
+# Test response parsing methods
+# ---------------------------------------------------------------------------
+
+def test_parse_gemini_response_text_only(client):
+    """Test parsing response with text only."""
+    mock_response = MagicMock()
+    mock_response.text = "Hello world"
+    mock_response.function_calls = None
+    mock_response.candidates = None
+    
+    result_text, tool_calls = client._parse_gemini_response(mock_response)
+    
+    assert result_text == "Hello world"
+    assert tool_calls == []
+
+def test_parse_gemini_chunk_text_only(client):
+    """Test parsing streaming chunk with text only."""
+    mock_chunk = MagicMock()
+    mock_chunk.text = "chunk text"
+    mock_chunk.function_calls = None
+    mock_chunk.candidates = None
+    
+    result_text, tool_calls = client._parse_gemini_chunk(mock_chunk)
+    
+    assert result_text == "chunk text"
+    assert tool_calls == []
+
+def test_extract_tool_calls_from_chunk(client):
+    """Test extracting tool calls from chunk."""
+    # Create a more realistic mock that matches the actual attribute access patterns
+    class MockFunctionCall:
+        def __init__(self, name, args):
+            self.name = name
+            self.args = args
+    
+    mock_chunk = MagicMock()
+    mock_chunk.text = None
+    mock_chunk.function_calls = [
+        MockFunctionCall("get_weather", {"city": "NYC"})
+    ]
+    mock_chunk.candidates = None
+    
+    tool_calls = client._extract_tool_calls_from_chunk(mock_chunk)
+    
+    assert len(tool_calls) == 1
+    assert tool_calls[0]["function"]["name"] == "get_weather"
+    assert '"city": "NYC"' in tool_calls[0]["function"]["arguments"]
+
+# ---------------------------------------------------------------------------
+# Edge cases and initialization tests
 # ---------------------------------------------------------------------------
 
 def test_initialization_options():
     """Test client initialization with different options."""
     # Test with just model
-    client1 = GeminiLLMClient(model="gemini-model")
+    client1 = GeminiLLMClient(model="gemini-model", api_key="test-key")
     assert client1.model == "gemini-model"
     
-    # Test with API key
-    client2 = GeminiLLMClient(model="gemini-model", api_key="test-key")
-    assert client2.model == "gemini-model"
-    
     # Test with default model
-    client3 = GeminiLLMClient()
-    assert client3.model == "gemini-2.0-flash"
+    client2 = GeminiLLMClient(api_key="test-key")
+    assert client2.model == "gemini-2.0-flash"
 
 def test_convert_messages_empty():
     """Test message conversion with empty input."""
-    system_txt, gem_contents = _convert_messages([])
+    system_txt, user_message = _convert_messages_for_chat([])
     
     assert system_txt is None
-    assert gem_contents == []
+    assert user_message == "Hello"  # Default fallback
 
-def test_convert_tools_empty():
-    """Test conversion with no tools."""
-    gem_tools, tool_cfg = _convert_tools(None)
+def test_convert_messages_with_tool_calls():
+    """Test conversion with assistant tool calls."""
+    messages = [
+        {"role": "assistant", "tool_calls": [
+            {"function": {"name": "get_data", "arguments": '{"param": "value"}'}}
+        ]}
+    ]
     
-    assert gem_tools == []
-    assert tool_cfg is None
+    system_txt, user_message = _convert_messages_for_chat(messages)
+    
+    assert system_txt is None
+    # Should still return fallback since no user message
+    assert user_message == "Hello"
+
+# ---------------------------------------------------------------------------
+# Integration test
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_full_integration(monkeypatch, client):
+    """Test full integration with mocked Gemini API."""
+    messages = [
+        {"role": "system", "content": "You are helpful"},
+        {"role": "user", "content": "Hello"}
+    ]
+    tools = [{"type": "function", "function": {"name": "test_tool", "parameters": {}}}]
+    
+    # Mock the entire client.aio.models.generate_content call
+    expected_response = MagicMock()
+    expected_response.text = "Hello! How can I help?"
+    expected_response.function_calls = None
+    expected_response.candidates = None
+    
+    async def mock_generate_content(**kwargs):
+        # Verify the request structure
+        assert "model" in kwargs
+        assert "contents" in kwargs or "content" in kwargs
+        return expected_response
+    
+    monkeypatch.setattr(client.client.aio.models, "generate_content", mock_generate_content)
+    
+    # Test non-streaming
+    result = await client.create_completion(messages, tools=tools, stream=False)
+    
+    assert result["response"] == "Hello! How can I help?"
+    assert result["tool_calls"] == []

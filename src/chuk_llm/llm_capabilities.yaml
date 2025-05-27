@@ -1,0 +1,155 @@
+################################################################################
+# LLM provider & model capability registry
+#
+# • Any key here *overrides or extends* the library defaults at import time.
+# • Feature strings map 1-to-1 to the `Feature` enum in code.
+# • Regex in `pattern:` is matched case-insensitively against the *model name*
+#   you pass to the client.  Put ".*" to catch everything.
+################################################################################
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  OpenAI
+# ──────────────────────────────────────────────────────────────────────────────
+openai:
+  features: [streaming, tools, vision, json_mode, parallel_calls, system_messages]
+  max_context_length: 128000
+  max_output_tokens: 4096
+  rate_limits: {default: 3500, tier_1: 500}
+  models:
+    # GPT-4o (Omni family)
+    - pattern: "gpt-4o.*"
+      features: [streaming, tools, vision, json_mode, parallel_calls, system_messages]
+      max_context_length: 128000
+      max_output_tokens: 8192
+
+    # GPT-4.0 / 4.1 / 4-Turbo
+    - pattern: "gpt-4\\.[01].*|gpt-4-(turbo|preview).*"
+      features: [streaming, tools, vision, json_mode, parallel_calls, system_messages]
+      max_context_length: 128000
+      max_output_tokens: 8192
+
+    # GPT-3.5-Turbo (+ variants)
+    - pattern: "gpt-3\\.5-turbo.*"
+      features: [streaming, tools, json_mode, system_messages]
+      max_context_length: 16384
+      max_output_tokens: 4096
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  Anthropic
+# ──────────────────────────────────────────────────────────────────────────────
+anthropic:
+  features: [streaming, tools, vision, parallel_calls, system_messages]
+  max_context_length: 200000
+  max_output_tokens: 4096
+  rate_limits: {default: 4000}
+  # (all claude-3 models share the same feature set – override later if needed)
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  Groq
+# ──────────────────────────────────────────────────────────────────────────────
+groq:
+  features: [streaming, tools, parallel_calls]
+  max_context_length: 32768
+  max_output_tokens: 8192
+  rate_limits: {default: 30}
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  Google Gemini
+# ──────────────────────────────────────────────────────────────────────────────
+gemini:
+  features: [streaming, tools, vision, json_mode, system_messages]
+  max_context_length: 1000000
+  max_output_tokens: 8192
+  rate_limits: {default: 1500}
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  Ollama (local)
+# ──────────────────────────────────────────────────────────────────────────────
+ollama:
+  features: [streaming, tools, system_messages]
+  # local inference – no global limits; leave context blank so each model
+  # reports its own.
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  Mistral AI
+# ──────────────────────────────────────────────────────────────────────────────
+mistral:
+  features: [streaming, tools, vision, system_messages, parallel_calls]
+  max_context_length: 128000
+  max_output_tokens: 8192
+  rate_limits: {default: 1000, premium: 5000}
+  models:
+    # Code-specialised models (no vision)
+    - pattern: ".*codestral.*|.*devstral.*"
+      features: [streaming, tools, system_messages]
+      max_context_length: 256000
+      max_output_tokens: 8192
+
+    # Vision-capable Pixtral
+    - pattern: ".*pixtral.*"
+      features: [streaming, tools, vision, multimodal, system_messages]
+      max_context_length: 128000
+      max_output_tokens: 8192
+
+    # Small / Medium (have V-vision)
+    - pattern: "mistral-(small|medium).*"
+      features: [streaming, tools, vision, multimodal, system_messages]
+      max_context_length: 128000
+      max_output_tokens: 8192
+
+    # Embedding models – no chat capabilities
+    - pattern: ".*embed.*"
+      features: []               # disable everything
+      max_context_length: 8000
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  IBM watsonx.ai   (Meta-Llama, Granite, Mistral hosted)
+# ──────────────────────────────────────────────────────────────────────────────
+watsonx:
+  features: [streaming, tools, vision, system_messages, parallel_calls]
+  max_context_length: 131072
+  max_output_tokens: 4096
+  rate_limits: {default: 500, enterprise: 2000}
+  models:
+    # Meta-Llama 3.2 (Instruct)
+    - pattern: "meta-llama/llama-3-2-[18]b-instruct"
+      features: [streaming, tools, system_messages]
+      max_context_length: 131072
+      max_output_tokens: 4096
+
+    # Meta-Llama 3.2 Vision
+    - pattern: "meta-llama/llama-3-2-.*vision-instruct"
+      features: [streaming, tools, vision, multimodal, parallel_calls, system_messages]
+      max_context_length: 131072
+      max_output_tokens: 4096
+
+    # IBM Granite family
+    - pattern: "ibm/granite-.*"
+      features: [streaming, tools, system_messages]
+      max_context_length: 8192
+      max_output_tokens: 4096
+
+    # Mistral-Large hosted on watsonx (parallel-call capable)
+    - pattern: "mistralai/mistral-large"
+      features: [streaming, tools, system_messages, parallel_calls]
+      max_context_length: 128000
+      max_output_tokens: 8192
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  DeepSeek (OpenAI-wire-compatible)
+# ──────────────────────────────────────────────────────────────────────────────
+deepseek:
+  features: [streaming, tools, json_mode, system_messages]
+  max_context_length: 65536
+  max_output_tokens: 8192
+  rate_limits: {default: 3000}
+  models:
+    - pattern: "deepseek-chat"
+      features: [streaming, tools, json_mode, system_messages]
+      max_context_length: 65536
+      max_output_tokens: 8192
+
+    - pattern: "deepseek-reasoner"
+      features: [streaming, tools, json_mode, system_messages]
+      max_context_length: 65536
+      max_output_tokens: 8192

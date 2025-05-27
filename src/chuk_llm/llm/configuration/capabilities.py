@@ -1,10 +1,37 @@
 # chuk_llm/llm/configuration/capabilities.py
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Set
-from enum import Enum
-import re
+"""
+Model-/Provider-capability registry with YAML overlay
+=====================================================
 
-class Feature(Enum):
+* Built-in defaults stay in code (minimal stub – OpenAI only).
+* A `llm_capabilities.yaml` can extend/override everything.
+  Search order (first match wins):
+
+  1.  $CHUK_LLM_CAPABILITIES_FILE  env-var
+  2.  llm_capabilities.yaml  in the CWD
+  3.  llm_capabilities.yml   in the CWD
+  4.  llm_capabilities.{yaml,yml} **in the package root**
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import re
+from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set
+
+try:
+    import yaml  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover – graceful degradation
+    yaml = None  # noqa: N816
+
+logger = logging.getLogger(__name__)
+
+# ──────────────────────────────── feature flags ───────────────────────────────
+class Feature(str, Enum):
     STREAMING = "streaming"
     TOOLS = "tools"
     VISION = "vision"
@@ -13,459 +40,208 @@ class Feature(Enum):
     SYSTEM_MESSAGES = "system_messages"
     MULTIMODAL = "multimodal"
 
-@dataclass 
+    @classmethod
+    def from_raw(cls, raw: str) -> "Feature":
+        try:
+            return cls(raw)
+        except ValueError as exc:  # pragma: no cover – dev error
+            raise ValueError(f"Unknown feature string: {raw}") from exc
+
+
+# ─────────────────────────── data-classes (unchanged) ─────────────────────────
+@dataclass
 class ModelCapabilities:
-    """Capabilities for a specific model or model pattern"""
-    pattern: str  # Regex pattern to match model names
+    pattern: str
     features: Set[Feature]
     max_context_length: Optional[int] = None
     max_output_tokens: Optional[int] = None
-    
-    def matches(self, model_name: str) -> bool:
-        return bool(re.match(self.pattern, model_name, re.IGNORECASE))
+
+    def matches(self, model_name: str) -> bool:  # noqa: D401
+        return bool(re.match(self.pattern, model_name, flags=re.I))
+
 
 @dataclass
 class ProviderCapabilities:
     name: str
-    features: Set[Feature]  # Default features for all models
+    features: Set[Feature]
     max_context_length: Optional[int] = None
     max_output_tokens: Optional[int] = None
     rate_limits: Optional[Dict[str, int]] = None
-    model_capabilities: Optional[List[ModelCapabilities]] = None  # Model-specific overrides
-    
-    def supports(self, feature: Feature) -> bool:
-        return feature in self.features
-    
-    def get_model_capabilities(self, model_name: str) -> ModelCapabilities:
-        """Get capabilities for a specific model"""
-        if self.model_capabilities:
-            for model_cap in self.model_capabilities:
-                if model_cap.matches(model_name):
-                    return model_cap
-        
-        # Return default capabilities
+    model_capabilities: Optional[List[ModelCapabilities]] = None
+
+    # helpers
+    def supports(self, feat: Feature) -> bool:
+        return feat in self.features
+
+    def get_rate_limit(self, tier: str = "default") -> Optional[int]:
+        return (self.rate_limits or {}).get(tier)
+
+    def get_model_capabilities(self, model: str | None) -> ModelCapabilities:
+        if model and self.model_capabilities:
+            for mc in self.model_capabilities:
+                if mc.matches(model):
+                    return mc
+        # fallback
         return ModelCapabilities(
             pattern=".*",
             features=self.features,
             max_context_length=self.max_context_length,
-            max_output_tokens=self.max_output_tokens
+            max_output_tokens=self.max_output_tokens,
         )
-    
-    def get_rate_limit(self, tier: str = "default") -> Optional[int]:
-        if self.rate_limits:
-            return self.rate_limits.get(tier)
-        return None
 
-# Pattern-based model capabilities for Mistral
-MISTRAL_MODEL_CAPABILITIES = [
-    # Codestral models - high context, coding focus
-    ModelCapabilities(
-        pattern=r".*codestral.*",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.SYSTEM_MESSAGES
-        },
-        max_context_length=256000,
-        max_output_tokens=8192
-    ),
-    
-    # Pixtral models - vision capabilities
-    ModelCapabilities(
-        pattern=r".*pixtral.*",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.VISION, 
-            Feature.SYSTEM_MESSAGES, Feature.MULTIMODAL
-        },
-        max_context_length=128000,
-        max_output_tokens=8192
-    ),
-    
-    # Ministral models - edge/efficient models
-    ModelCapabilities(
-        pattern=r".*ministral.*",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.SYSTEM_MESSAGES
-        },
-        max_context_length=128000,
-        max_output_tokens=4096
-    ),
-    
-    # Mistral Small with vision
-    ModelCapabilities(
-        pattern=r"mistral-small.*",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.VISION,
-            Feature.SYSTEM_MESSAGES, Feature.MULTIMODAL
-        },
-        max_context_length=128000,
-        max_output_tokens=8192
-    ),
-    
-    # Mistral Medium with vision
-    ModelCapabilities(
-        pattern=r"mistral-medium.*",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.VISION,
-            Feature.SYSTEM_MESSAGES, Feature.MULTIMODAL
-        },
-        max_context_length=128000,
-        max_output_tokens=8192
-    ),
-    
-    # Saba models - multilingual
-    ModelCapabilities(
-        pattern=r".*saba.*",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.SYSTEM_MESSAGES
-        },
-        max_context_length=32000,
-        max_output_tokens=4096
-    ),
-    
-    # OCR models - document processing
-    ModelCapabilities(
-        pattern=r".*ocr.*",
-        features={
-            Feature.STREAMING, Feature.VISION, Feature.SYSTEM_MESSAGES
-        },
-        max_context_length=32000,
-        max_output_tokens=8192
-    ),
-    
-    # Moderation models
-    ModelCapabilities(
-        pattern=r".*moderation.*",
-        features={
-            Feature.STREAMING, Feature.SYSTEM_MESSAGES
-        },
-        max_context_length=8000,
-        max_output_tokens=1000
-    ),
-    
-    # Embed models
-    ModelCapabilities(
-        pattern=r".*embed.*",
-        features=set(),  # Embedding models don't use chat features
-        max_context_length=8000,
-        max_output_tokens=None
-    ),
-    
-    # Devstral models - development focused
-    ModelCapabilities(
-        pattern=r".*devstral.*",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.SYSTEM_MESSAGES
-        },
-        max_context_length=128000,
-        max_output_tokens=8192
-    ),
-    
-    # Nemo models - multilingual
-    ModelCapabilities(
-        pattern=r".*nemo.*",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.SYSTEM_MESSAGES
-        },
-        max_context_length=128000,
-        max_output_tokens=8192
-    ),
-    
-    # Mamba models - architecture variant
-    ModelCapabilities(
-        pattern=r".*mamba.*",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.SYSTEM_MESSAGES
-        },
-        max_context_length=256000,
-        max_output_tokens=8192
-    ),
-    
-    # Math models - specialized
-    ModelCapabilities(
-        pattern=r".*math.*",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.SYSTEM_MESSAGES
-        },
-        max_context_length=32000,
-        max_output_tokens=4096
-    )
-]
 
-# Watson X model capabilities with pattern-based matching
-WATSONX_MODEL_CAPABILITIES = [
-    # Llama 3.1 models (some deprecated but still available)
-    ModelCapabilities(
-        pattern=r"meta-llama/llama-3-1-8b-instruct",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.SYSTEM_MESSAGES
-        },
-        max_context_length=8192,
-        max_output_tokens=4096
-    ),
-    ModelCapabilities(
-        pattern=r"meta-llama/llama-3-1-70b-instruct",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.SYSTEM_MESSAGES,
-            Feature.PARALLEL_CALLS
-        },
-        max_context_length=8192,
-        max_output_tokens=4096
-    ),
-    
-    # Llama 3.2 models - high context
-    ModelCapabilities(
-        pattern=r"meta-llama/llama-3-2-[13]b-instruct",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.SYSTEM_MESSAGES
-        },
-        max_context_length=131072,
-        max_output_tokens=4096
-    ),
-    
-    # Llama 3.2 vision models - multimodal capabilities
-    ModelCapabilities(
-        pattern=r"meta-llama/llama-3-2-.*vision-instruct",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.VISION,
-            Feature.SYSTEM_MESSAGES, Feature.MULTIMODAL, Feature.PARALLEL_CALLS
-        },
-        max_context_length=131072,
-        max_output_tokens=4096
-    ),
-    
-    # Llama 3.3 models - latest version
-    ModelCapabilities(
-        pattern=r"meta-llama/llama-3-3-70b-instruct",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.SYSTEM_MESSAGES,
-            Feature.PARALLEL_CALLS
-        },
-        max_context_length=8192,
-        max_output_tokens=4096
-    ),
-    
-    # Llama 4 models - newest generation
-    ModelCapabilities(
-        pattern=r"meta-llama/llama-4-scout.*",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.VISION,
-            Feature.SYSTEM_MESSAGES, Feature.MULTIMODAL, Feature.PARALLEL_CALLS
-        },
-        max_context_length=16384,  # Assuming similar to other Llama models
-        max_output_tokens=4096
-    ),
-    ModelCapabilities(
-        pattern=r"meta-llama/llama-4-maverick.*",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.VISION,
-            Feature.SYSTEM_MESSAGES, Feature.MULTIMODAL, Feature.PARALLEL_CALLS
-        },
-        max_context_length=16384,
-        max_output_tokens=4096
-    ),
-    ModelCapabilities(
-        pattern=r"meta-llama/llama-guard.*",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.VISION,
-            Feature.SYSTEM_MESSAGES
-        },
-        max_context_length=8192,
-        max_output_tokens=4096
-    ),
-    
-    # IBM Granite models - enterprise focus
-    ModelCapabilities(
-        pattern=r"ibm/granite-.*",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.SYSTEM_MESSAGES
-        },
-        max_context_length=8192,
-        max_output_tokens=4096
-    ),
-    
-    # Mistral models on Watson X
-    ModelCapabilities(
-        pattern=r"mistralai/mistral-large",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.SYSTEM_MESSAGES,
-            Feature.PARALLEL_CALLS
-        },
-        max_context_length=128000,
-        max_output_tokens=8192
-    ),
-    
-    # Mistral other models
-    ModelCapabilities(
-        pattern=r"mistralai/.*",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.SYSTEM_MESSAGES
-        },
-        max_context_length=128000,
-        max_output_tokens=8192
-    ),
-    
-    # Google models
-    ModelCapabilities(
-        pattern=r"google/.*",
-        features={
-            Feature.STREAMING, Feature.SYSTEM_MESSAGES
-        },
-        max_context_length=32000,
-        max_output_tokens=4096
-    )
-]
-
-# Registry of provider capabilities - now with pattern-based model support
-PROVIDER_CAPABILITIES = {
+# ──────────────────────────── built-in minimal stub ───────────────────────────
+_DEFAULT_REGISTRY: Dict[str, ProviderCapabilities] = {
     "openai": ProviderCapabilities(
         name="OpenAI",
         features={
-            Feature.STREAMING, Feature.TOOLS, Feature.VISION, 
-            Feature.JSON_MODE, Feature.PARALLEL_CALLS, Feature.SYSTEM_MESSAGES
+            Feature.STREAMING,
+            Feature.TOOLS,
+            Feature.VISION,
+            Feature.JSON_MODE,
+            Feature.PARALLEL_CALLS,
+            Feature.SYSTEM_MESSAGES,
         },
-        max_context_length=128000,
-        max_output_tokens=4096,
-        rate_limits={"default": 3500, "tier_1": 500}
+        max_context_length=128_000,
+        max_output_tokens=4_096,
+        rate_limits={"default": 3_500},
     ),
-    "anthropic": ProviderCapabilities(
-        name="Anthropic",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.VISION, 
-            Feature.PARALLEL_CALLS, Feature.SYSTEM_MESSAGES
-        },
-        max_context_length=200000,
-        max_output_tokens=4096,
-        rate_limits={"default": 4000}
-    ),
-    "groq": ProviderCapabilities(
-        name="Groq",
-        features={Feature.STREAMING, Feature.TOOLS, Feature.PARALLEL_CALLS},
-        max_context_length=32768,
-        max_output_tokens=8192,
-        rate_limits={"default": 30}
-    ),
-    "gemini": ProviderCapabilities(
-        name="Google Gemini",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.VISION,
-            Feature.JSON_MODE, Feature.SYSTEM_MESSAGES
-        },
-        max_context_length=1000000,
-        max_output_tokens=8192,
-        rate_limits={"default": 1500}
-    ),
-    "ollama": ProviderCapabilities(
-        name="Ollama",
-        features={Feature.STREAMING, Feature.TOOLS, Feature.SYSTEM_MESSAGES},
-        max_context_length=None,
-        max_output_tokens=None,
-        rate_limits=None
-    ),
-    "mistral": ProviderCapabilities(
-        name="Mistral Le Plateforme",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.VISION,
-            Feature.SYSTEM_MESSAGES, Feature.PARALLEL_CALLS
-        },
-        max_context_length=128000,
-        max_output_tokens=8192,
-        rate_limits={"default": 1000, "premium": 5000},
-        model_capabilities=MISTRAL_MODEL_CAPABILITIES
-    ),
-    "watsonx": ProviderCapabilities(
-        name="IBM Watson X",
-        features={
-            Feature.STREAMING, Feature.TOOLS, Feature.VISION,
-            Feature.SYSTEM_MESSAGES, Feature.PARALLEL_CALLS
-        },
-        max_context_length=131072,  # Default for most models (Llama 3.2)
-        max_output_tokens=4096,
-        rate_limits={"default": 500, "enterprise": 2000},
-        model_capabilities=WATSONX_MODEL_CAPABILITIES  # Use pattern-based matching
-    )
 }
 
+# ─────────────────────────── YAML overlay helper ──────────────────────────────
+# Added ➊ & ➋  ➜ package-root look-ups
+_PKG_ROOT = Path(__file__).resolve().parent.parent.parent
+_YAML_CANDIDATES = (
+    os.getenv("CHUK_LLM_CAPABILITIES_FILE"),          # 0
+    "llm_capabilities.yaml",                          # 1
+    "llm_capabilities.yml",                           # 2
+    _PKG_ROOT / "llm_capabilities.yaml",              # ➊
+    _PKG_ROOT / "llm_capabilities.yml",               # ➋
+)
+
+
+def _find_yaml() -> Optional[Path]:
+    for candidate in _YAML_CANDIDATES:
+        if not candidate:
+            continue
+        p = Path(candidate).expanduser()
+        if p.is_file():
+            return p
+    return None
+
+
+def _parse_feature_set(raw: List[str | Feature]) -> Set[Feature]:
+    return {f if isinstance(f, Feature) else Feature.from_raw(str(f)) for f in raw}
+
+
+def _overlay_from_yaml(reg: Dict[str, ProviderCapabilities]) -> None:
+    cfg_path = _find_yaml()
+    if not cfg_path:
+        logger.debug("capabilities: no YAML file found – using built-ins only")
+        return
+    if yaml is None:
+        logger.warning("pyyaml missing – cannot read %s; using built-ins", cfg_path)
+        return
+
+    logger.info("capabilities: loading overrides from %s", cfg_path)
+    try:
+        with cfg_path.open("r", encoding="utf-8") as fh:
+            doc: Dict[str, Any] = yaml.safe_load(fh) or {}
+    except Exception as exc:  # pragma: no cover
+        logger.error("capabilities: failed to parse %s: %s", cfg_path, exc)
+        return
+
+    for pname, pdata in doc.items():
+        base = reg.get(pname) or ProviderCapabilities(pname, set())
+        reg[pname] = base
+
+        # scalar fields
+        for key in ("max_context_length", "max_output_tokens", "rate_limits"):
+            if key in pdata:
+                setattr(base, key, pdata[key])
+
+        if "features" in pdata:
+            base.features = _parse_feature_set(pdata["features"])
+
+        # model-specific entries
+        models: list[ModelCapabilities] = []
+        for m in pdata.get("models", []):
+            models.append(
+                ModelCapabilities(
+                    pattern=m.get("pattern", ".*"),
+                    features=_parse_feature_set(m.get("features", list(base.features))),
+                    max_context_length=m.get("max_context_length", base.max_context_length),
+                    max_output_tokens=m.get("max_output_tokens", base.max_output_tokens),
+                )
+            )
+        if models:
+            base.model_capabilities = models
+
+
+# build public registry
+PROVIDER_CAPABILITIES: Dict[str, ProviderCapabilities] = {
+    k: v for k, v in _DEFAULT_REGISTRY.items()
+}
+_overlay_from_yaml(PROVIDER_CAPABILITIES)
+
+# ────────────────────────────── public helper API ─────────────────────────────
 class CapabilityChecker:
-    """Utility for checking provider capabilities"""
-    
+    """Query helpers for *PROVIDER_CAPABILITIES*."""
+
     @staticmethod
     def can_handle_request(
-        provider: str, 
-        model: str = None,
+        provider: str,
+        model: str | None = None,
+        *,
         has_tools: bool = False,
         has_vision: bool = False,
         needs_streaming: bool = False,
-        needs_json: bool = False
+        needs_json: bool = False,
     ) -> tuple[bool, List[str]]:
-        """Check if provider can handle the request"""
         if provider not in PROVIDER_CAPABILITIES:
             return False, [f"Unknown provider: {provider}"]
-        
-        caps = PROVIDER_CAPABILITIES[provider]
-        
-        # Get model-specific capabilities if model is provided
-        if model:
-            model_caps = caps.get_model_capabilities(model)
-            features = model_caps.features
-        else:
-            features = caps.features
-        
-        issues = []
-        
-        if has_tools and Feature.TOOLS not in features:
-            issues.append(f"{provider} model {model or 'default'} doesn't support tools")
-        
-        if has_vision and Feature.VISION not in features:
-            issues.append(f"{provider} model {model or 'default'} doesn't support vision")
-        
-        if needs_streaming and Feature.STREAMING not in features:
-            issues.append(f"{provider} model {model or 'default'} doesn't support streaming")
-        
-        if needs_json and Feature.JSON_MODE not in features:
-            issues.append(f"{provider} model {model or 'default'} doesn't support JSON mode")
-        
-        return len(issues) == 0, issues
-    
+
+        caps = PROVIDER_CAPABILITIES[provider].get_model_capabilities(model)
+        feats = caps.features
+
+        problems: list[str] = []
+        if has_tools and Feature.TOOLS not in feats:
+            problems.append("tools not supported")
+        if has_vision and Feature.VISION not in feats:
+            problems.append("vision not supported")
+        if needs_streaming and Feature.STREAMING not in feats:
+            problems.append("streaming not supported")
+        if needs_json and Feature.JSON_MODE not in feats:
+            problems.append("JSON mode not supported")
+        return (not problems), problems
+
     @staticmethod
     def get_best_provider(
         requirements: Set[Feature],
-        exclude: Optional[Set[str]] = None
+        exclude: Optional[Set[str]] = None,
     ) -> Optional[str]:
-        """Find the best provider for given requirements"""
         exclude = exclude or set()
-        
-        candidates = []
-        for provider, caps in PROVIDER_CAPABILITIES.items():
-            if provider in exclude:
+        choices: list[tuple[str, int]] = []
+        for name, caps in PROVIDER_CAPABILITIES.items():
+            if name in exclude:
                 continue
-            
             if requirements.issubset(caps.features):
-                # Score based on rate limits (higher is better)
-                rate_limit = caps.get_rate_limit() or 0
-                candidates.append((provider, rate_limit))
-        
-        if candidates:
-            # Return provider with highest rate limit
-            return max(candidates, key=lambda x: x[1])[0]
-        
-        return None
-    
+                choices.append((name, caps.get_rate_limit() or 0))
+        return max(choices, key=lambda t: t[1])[0] if choices else None
+
     @staticmethod
-    def get_model_info(provider: str, model: str) -> Dict[str, any]:
-        """Get detailed information about a specific model"""
+    def get_model_info(provider: str, model: str) -> Dict[str, Any]:
         if provider not in PROVIDER_CAPABILITIES:
             return {"error": f"Unknown provider: {provider}"}
-        
-        caps = PROVIDER_CAPABILITIES[provider]
-        model_caps = caps.get_model_capabilities(model)
-        
+        caps = PROVIDER_CAPABILITIES[provider].get_model_capabilities(model)
         return {
             "provider": provider,
             "model": model,
-            "features": [f.value for f in model_caps.features],
-            "max_context_length": model_caps.max_context_length,
-            "max_output_tokens": model_caps.max_output_tokens,
-            "supports_streaming": Feature.STREAMING in model_caps.features,
-            "supports_tools": Feature.TOOLS in model_caps.features,
-            "supports_vision": Feature.VISION in model_caps.features,
-            "supports_json_mode": Feature.JSON_MODE in model_caps.features,
+            "features": [f.value for f in caps.features],
+            "max_context_length": caps.max_context_length,
+            "max_output_tokens": caps.max_output_tokens,
+            "supports_streaming": Feature.STREAMING in caps.features,
+            "supports_tools": Feature.TOOLS in caps.features,
+            "supports_vision": Feature.VISION in caps.features,
+            "supports_json_mode": Feature.JSON_MODE in caps.features,
         }
