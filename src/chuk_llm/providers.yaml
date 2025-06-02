@@ -24,6 +24,7 @@ openai:
 # DeepSeek – OpenAI-compatible endpoint (inherits everything, just override)
 deepseek:
   inherits: openai
+  client: chuk_llm.llm.clients.openai.OpenAILLMClient
   api_key_env: DEEPSEEK_API_KEY
   api_base: https://api.deepseek.com
   default_model: deepseek-chat          # or deepseek-reasoner
@@ -37,7 +38,8 @@ anthropic:
 
 # Groq – OpenAI style, ultra-fast inference
 groq:
-  inherits: openai                      # same client class
+  inherits: openai
+  client: chuk_llm.llm.clients.openai.OpenAILLMClients
   api_key_env: GROQ_API_KEY
   api_base: https://api.groq.com
   default_model: llama-3.3-70b-versatile
@@ -72,7 +74,8 @@ watsonx:
 
 # Perplexity – OpenAI-style endpoint
 perplexity:                # ← new
-  inherits: openai         # same client class
+  inherits: openai
+  client: chuk_llm.llm.clients.openai.OpenAILLMClient
   api_key_env: PERPLEXITY_API_KEY
   api_base: https://api.perplexity.ai
   default_model: sonar-pro
