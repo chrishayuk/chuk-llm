@@ -153,3 +153,39 @@ deepseek:
       features: [streaming, tools, json_mode, system_messages]
       max_context_length: 65536
       max_output_tokens: 8192
+
+# ──────────────────────────────────────────────────────────────────────────────
+#  Perplexity (OpenAI-wire-compatible)
+# ──────────────────────────────────────────────────────────────────────────────
+perplexity:
+  # Sonar models: text-only, support tools + structured outputs via JSON-Schema
+  features: [streaming, tools, system_messages]   # ← json_mode removed
+  max_context_length: 128000
+  max_output_tokens: 8192
+  rate_limits: {default: 3000}
+
+  models:
+    # General-purpose
+    - pattern: "sonar-pro"
+      features: [streaming, tools, system_messages]
+      max_context_length: 128000
+      max_output_tokens: 8192
+
+    # Research-tuned
+    - pattern: "sonar-deep-research"
+      features: [streaming, tools, system_messages]
+      max_context_length: 128000
+      max_output_tokens: 8192
+
+    # Reasoning-tuned
+    - pattern: "sonar-reasoning-pro"
+      features: [streaming, tools, system_messages]
+      max_context_length: 128000
+      max_output_tokens: 8192
+
+    # New online “Llama 3 … Sonar …128k” variants
+    - pattern: "llama-3.*sonar.*128k.*"
+      features: [streaming, tools, system_messages]
+      max_context_length: 128000
+      max_output_tokens: 8192
+

@@ -70,6 +70,12 @@ watsonx:
   space_id_env:   WATSONX_SPACE_ID
   default_model: ibm/granite-3-8b-instruct
 
+# Perplexity – OpenAI-style endpoint
+perplexity:                # ← new
+  inherits: openai         # same client class
+  api_key_env: PERPLEXITY_API_KEY
+  api_base: https://api.perplexity.ai
+  default_model: sonar-pro
 
 # (Example) Together AI – another OpenAI-compatible host
 togetherai:
