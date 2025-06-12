@@ -39,7 +39,7 @@ anthropic:
 # Groq – OpenAI style, ultra-fast inference
 groq:
   inherits: openai
-  client: chuk_llm.llm.providers.openai_client.OpenAILLMClient
+  client: chuk_llm.llm.providers.groq_client.GroqAILLMClient 
   api_key_env: GROQ_API_KEY
   api_base: https://api.groq.com
   default_model: llama-3.3-70b-versatile
