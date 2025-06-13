@@ -25,17 +25,10 @@ class OllamaLLMClient(BaseLLMClient):
         
         Args:
             model: Name of the model to use
-            api_base: Optional API base URL (will be applied if ollama.set_host is available)
+            api_base: Optional API base URL
         """
         self.model = model
-        self.api_base = api_base
-        
-        # Configure the API base if provided and if the library supports it
-        if api_base and hasattr(ollama, 'set_host'):
-            log.info(f"Setting Ollama host to: {api_base}")
-            ollama.set_host(api_base)
-        elif api_base:
-            log.warning(f"Ollama client doesn't support set_host; api_base '{api_base}' will be ignored")
+        self.api_base = api_base or "http://localhost:11434"
         
         # Verify that the installed ollama package supports chat
         if not hasattr(ollama, 'chat'):
@@ -44,14 +37,29 @@ class OllamaLLMClient(BaseLLMClient):
                 "check your ollama-python version."
             )
         
-        # Create sync and async clients
-        self.async_client = ollama.AsyncClient()
-        self.sync_client = ollama.Client()
+        # Create clients with proper host configuration
+        # Modern ollama-python uses host parameter in Client constructor
+        try:
+            self.async_client = ollama.AsyncClient(host=self.api_base)
+            self.sync_client = ollama.Client(host=self.api_base)
+            log.debug(f"Ollama clients initialized with host: {self.api_base}")
+        except TypeError:
+            # Fallback for older versions that don't support host parameter
+            self.async_client = ollama.AsyncClient()
+            self.sync_client = ollama.Client()
+            
+            # Try the old set_host method as fallback
+            if hasattr(ollama, 'set_host'):
+                ollama.set_host(self.api_base)
+                log.debug(f"Using ollama.set_host() with: {self.api_base}")
+            else:
+                log.debug(f"Ollama using default host (localhost:11434)")
 
     def _create_sync(
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
+        **kwargs,
     ) -> Dict[str, Any]:
         """
         Synchronous internal completion call.
@@ -95,17 +103,62 @@ class OllamaLLMClient(BaseLLMClient):
                     # Pass through other tool formats
                     ollama_tools.append(tool)
         
+        # Build Ollama options from kwargs
+        ollama_options = self._build_ollama_options(kwargs)
+        
+        # Build request parameters
+        request_params = {
+            "model": self.model,
+            "messages": ollama_messages,
+            "stream": False,
+        }
+        
+        # Add tools if provided
+        if ollama_tools:
+            request_params["tools"] = ollama_tools
+        
+        # Add options if provided
+        if ollama_options:
+            request_params["options"] = ollama_options
+        
         # Make the non-streaming sync call
-        response = self.sync_client.chat(
-            model=self.model,
-            messages=ollama_messages,
-            tools=ollama_tools or [],
-            stream=False,
-        )
+        response = self.sync_client.chat(**request_params)
         
         # Process response
         return self._parse_response(response)
     
+    def _build_ollama_options(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Build Ollama options dict from OpenAI-style parameters.
+        
+        Ollama parameters go in an 'options' dict, not directly in chat().
+        """
+        ollama_options = {}
+        
+        # Map OpenAI-style parameters to Ollama options
+        parameter_mapping = {
+            "temperature": "temperature",
+            "top_p": "top_p",
+            "max_tokens": "num_predict",  # Ollama uses num_predict instead of max_tokens
+            "stop": "stop",
+            "frequency_penalty": "frequency_penalty",
+            "presence_penalty": "presence_penalty",
+            "top_k": "top_k",
+            "seed": "seed",
+        }
+        
+        for openai_param, ollama_param in parameter_mapping.items():
+            if openai_param in kwargs:
+                value = kwargs[openai_param]
+                ollama_options[ollama_param] = value
+                log.debug(f"Mapped {openai_param}={value} to Ollama option {ollama_param}")
+        
+        # Handle any Ollama-specific options passed directly
+        if "options" in kwargs and isinstance(kwargs["options"], dict):
+            ollama_options.update(kwargs["options"])
+        
+        return ollama_options
+
     def _parse_response(self, response: Any) -> Dict[str, Any]:
         """Parse Ollama response to standardized format."""
         main_text = ""
@@ -227,14 +280,26 @@ class OllamaLLMClient(BaseLLMClient):
             
             log.debug("Starting Ollama streaming...")
             
+            # Build Ollama options from kwargs
+            ollama_options = self._build_ollama_options(kwargs)
+            
+            # Build request parameters
+            request_params = {
+                "model": self.model,
+                "messages": ollama_messages,
+                "stream": True,
+            }
+            
+            # Add tools if provided
+            if ollama_tools:
+                request_params["tools"] = ollama_tools
+            
+            # Add options if provided
+            if ollama_options:
+                request_params["options"] = ollama_options
+            
             # Use async client for real streaming
-            stream = await self.async_client.chat(
-                model=self.model,
-                messages=ollama_messages,
-                tools=ollama_tools or [],
-                stream=True,
-                **kwargs
-            )
+            stream = await self.async_client.chat(**request_params)
             
             chunk_count = 0
             aggregated_tool_calls = []
@@ -307,7 +372,7 @@ class OllamaLLMClient(BaseLLMClient):
     ) -> Dict[str, Any]:
         """Non-streaming completion using async execution."""
         try:
-            return await asyncio.to_thread(self._create_sync, messages, tools)
+            return await asyncio.to_thread(self._create_sync, messages, tools, **kwargs)
         except Exception as e:
             log.error(f"Error in Ollama completion: {e}")
             return {
@@ -315,3 +380,14 @@ class OllamaLLMClient(BaseLLMClient):
                 "tool_calls": [],
                 "error": True
             }
+
+    def get_model_info(self) -> Dict[str, Any]:
+        """Get information about the current model."""
+        return {
+            "provider": "ollama",
+            "model": self.model,
+            "host": self.api_base,
+            "supports_streaming": True,
+            "supports_tools": True,
+            "supports_vision": True,  # Many Ollama models support vision
+        }

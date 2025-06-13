@@ -1,7 +1,7 @@
 # chuk_llm/llm/providers/gemini_client.py
 
 """
-Google Gemini chat-completion adapter with complete warning suppression.
+Google Gemini chat-completion adapter with complete warning suppression and proper parameter handling.
 """
 
 from __future__ import annotations
@@ -244,7 +244,7 @@ def suppress_warnings():
 # ─────────────────────────────────────────────────── main adapter ───────────
 
 class GeminiLLMClient(BaseLLMClient):
-    """`google-genai` wrapper with complete warning suppression."""
+    """`google-genai` wrapper with complete warning suppression and proper parameter handling."""
 
     def __init__(self, model: str = "gemini-2.0-flash", *, api_key: Optional[str] = None) -> None:
         # Apply nuclear warning suppression during initialization
@@ -267,6 +267,73 @@ class GeminiLLMClient(BaseLLMClient):
 
         log.info("GeminiLLMClient initialised with model '%s'", model)
 
+    def _prepare_gemini_config(self, tools: Optional[List[Dict[str, Any]]] = None, **kwargs) -> Tuple[Optional[gtypes.GenerateContentConfig], Dict[str, Any]]:
+        """
+        Prepare proper GenerateContentConfig for Gemini with parameter mapping.
+        
+        Returns:
+            Tuple of (config_object, remaining_direct_params)
+        """
+        config_params = {}
+        direct_params = {}
+        
+        # Handle parameter mapping from OpenAI-style to Gemini-style
+        parameter_mapping = {
+            "max_tokens": "max_output_tokens",
+            "stop": "stop_sequences",
+            # Direct mappings (no change needed)
+            "temperature": "temperature",
+            "top_p": "top_p", 
+            "frequency_penalty": "frequency_penalty",
+            "presence_penalty": "presence_penalty",
+            "top_k": "top_k",
+            "candidate_count": "candidate_count"
+        }
+        
+        # Handle system instruction separately (direct parameter)
+        if "system" in kwargs:
+            direct_params["system_instruction"] = kwargs.pop("system")
+        
+        # Process parameters
+        for param, value in kwargs.items():
+            if param in parameter_mapping:
+                # Map to Gemini parameter name
+                gemini_param = parameter_mapping[param]
+                config_params[gemini_param] = value
+                log.debug(f"Mapped parameter {param} -> {gemini_param} = {value}")
+            elif param in ["temperature", "top_p", "frequency_penalty", "presence_penalty", 
+                          "top_k", "candidate_count", "max_output_tokens", "stop_sequences"]:
+                # Already in Gemini format
+                config_params[param] = value
+            else:
+                # Unknown parameter - log and skip
+                log.warning(f"Unknown parameter for Gemini: {param} = {value}")
+        
+        # Add tools if provided
+        gemini_tools = _convert_tools_to_gemini_format(tools) if tools else None
+        if gemini_tools:
+            config_params["tools"] = gemini_tools
+            # Disable automatic function calling to maintain control
+            config_params["automatic_function_calling"] = gtypes.AutomaticFunctionCallingConfig(disable=True)
+        
+        # Create config object if we have parameters
+        config = None
+        if config_params:
+            try:
+                config = gtypes.GenerateContentConfig(**config_params)
+                log.debug(f"Created GenerateContentConfig with: {list(config_params.keys())}")
+            except Exception as e:
+                log.error(f"Error creating GenerateContentConfig: {e}")
+                log.debug(f"Failed config_params: {config_params}")
+                # Fallback to basic config with just tools if provided
+                if gemini_tools:
+                    config = gtypes.GenerateContentConfig(
+                        tools=gemini_tools,
+                        automatic_function_calling=gtypes.AutomaticFunctionCallingConfig(disable=True)
+                    )
+        
+        return config, direct_params
+
     def create_completion(
         self, 
         messages: List[Dict[str, Any]], 
@@ -276,12 +343,12 @@ class GeminiLLMClient(BaseLLMClient):
         **kwargs: Any
     ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
-        Generate completion with complete warning suppression.
+        Generate completion with complete warning suppression and proper parameter handling.
         
         • stream=False → returns awaitable that resolves to standardised dict
         • stream=True  → returns async iterator that yields chunks in real-time
         """
-        log.debug("create_completion called – stream=%s", stream)
+        log.debug("create_completion called – stream=%s, kwargs=%s", stream, kwargs)
         
         if stream:
             return self._stream_completion_async(messages, tools, **kwargs)
@@ -295,34 +362,32 @@ class GeminiLLMClient(BaseLLMClient):
         **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Real async streaming with complete warning suppression.
+        Real async streaming with complete warning suppression and proper parameter handling.
         """
         try:
             log.debug(f"Starting Gemini streaming for model: {self.model}")
             
-            # Extract content - simplified for streaming
+            # Extract content and prepare config
             system_instruction, user_message = _convert_messages_for_chat(messages)
+            config, direct_params = self._prepare_gemini_config(tools, **kwargs)
             
-            # Build minimal request
+            # Build request parameters
             request_params = {
                 "model": self.model,
                 "contents": user_message
             }
             
-            # Only add system instruction if present
+            # Add system instruction if present (direct or from kwargs)
             if system_instruction:
                 request_params["system_instruction"] = system_instruction
+            elif "system_instruction" in direct_params:
+                request_params["system_instruction"] = direct_params["system_instruction"]
             
-            # Add basic config for tools if needed
-            if tools:
-                gemini_tools = _convert_tools_to_gemini_format(tools)
-                if gemini_tools:
-                    request_params["config"] = gtypes.GenerateContentConfig(
-                        tools=gemini_tools,
-                        automatic_function_calling=gtypes.AutomaticFunctionCallingConfig(disable=True)
-                    )
+            # Add config if present
+            if config:
+                request_params["config"] = config
             
-            log.debug("Starting Gemini stream with complete suppression...")
+            log.debug(f"Streaming request params keys: {list(request_params.keys())}")
             
             chunk_count = 0
             # Use nuclear suppression for the entire streaming operation
@@ -369,10 +434,11 @@ class GeminiLLMClient(BaseLLMClient):
         tools: Optional[List[Dict[str, Any]]] = None,
         **kwargs: Any
     ) -> Dict[str, Any]:
-        """Non-streaming completion with complete warning suppression."""
+        """Non-streaming completion with complete warning suppression and proper parameter handling."""
         try:
+            # Extract content and prepare config
             system_instruction, user_message = _convert_messages_for_chat(messages)
-            gemini_tools = _convert_tools_to_gemini_format(tools)
+            config, direct_params = self._prepare_gemini_config(tools, **kwargs)
             
             # Build request parameters
             request_params = {
@@ -380,25 +446,17 @@ class GeminiLLMClient(BaseLLMClient):
                 "contents": [user_message]
             }
             
-            # Add system instruction if present
+            # Add system instruction if present (direct or from kwargs)
             if system_instruction:
                 request_params["system_instruction"] = system_instruction
+            elif "system_instruction" in direct_params:
+                request_params["system_instruction"] = direct_params["system_instruction"]
             
-            # Add tools configuration if present
-            if gemini_tools:
-                request_params["config"] = gtypes.GenerateContentConfig(
-                    tools=gemini_tools,
-                    automatic_function_calling=gtypes.AutomaticFunctionCallingConfig(disable=True)
-                )
+            # Add config if present
+            if config:
+                request_params["config"] = config
             
-            # Add any additional kwargs
-            if kwargs:
-                if "config" in request_params:
-                    # Merge with existing config
-                    for k, v in kwargs.items():
-                        setattr(request_params["config"], k, v)
-                else:
-                    request_params["config"] = gtypes.GenerateContentConfig(**kwargs)
+            log.debug(f"Regular completion request params keys: {list(request_params.keys())}")
             
             # Make the async request with complete suppression
             with SuppressAllOutput():

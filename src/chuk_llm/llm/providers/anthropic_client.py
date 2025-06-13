@@ -10,6 +10,7 @@ Key points
 *   Converts ChatML → Claude Messages format (tools / multimodal, …)
 *   Maps Claude replies back to the common `{response, tool_calls}` schema
 *   **Real Streaming** - uses Anthropic's native async streaming API
+*   **Proper Parameter Filtering** - removes unsupported parameters
 """
 from __future__ import annotations
 import json
@@ -66,7 +67,29 @@ def _parse_claude_response(resp) -> Dict[str, Any]:  # noqa: D401 – small help
 
 
 class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
-    """Adapter around the *anthropic* SDK with OpenAI-style semantics."""
+    """Adapter around the *anthropic* SDK with OpenAI-style semantics and proper parameter filtering."""
+
+    # Parameters that Anthropic does NOT support
+    UNSUPPORTED_PARAMS = {
+        "frequency_penalty",
+        "presence_penalty", 
+        "stop",
+        "logit_bias",
+        "user",
+        "n",
+        "best_of",
+        "top_k",  # Anthropic has top_k but it's not in the standard create API
+        "seed",
+        "response_format"
+    }
+    
+    # Parameters that Anthropic DOES support
+    SUPPORTED_PARAMS = {
+        "temperature",
+        "max_tokens", 
+        "top_p",
+        "stream"
+    }
 
     def __init__(
         self,
@@ -86,6 +109,30 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
         # Keep sync client for backwards compatibility if needed
         from anthropic import Anthropic
         self.client = Anthropic(**kwargs)
+
+    def _filter_anthropic_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Filter parameters to only include those supported by Anthropic"""
+        filtered = {}
+        
+        for key, value in params.items():
+            if key in self.SUPPORTED_PARAMS:
+                # Anthropic has specific constraints
+                if key == "temperature" and value > 1.0:
+                    filtered[key] = 1.0  # Cap at 1.0 for Anthropic
+                    log.debug(f"Capped temperature from {value} to 1.0 for Anthropic")
+                else:
+                    filtered[key] = value
+            elif key in self.UNSUPPORTED_PARAMS:
+                log.debug(f"Filtered out unsupported parameter for Anthropic: {key}={value}")
+            else:
+                log.warning(f"Unknown parameter for Anthropic: {key}={value}")
+        
+        # Anthropic requires max_tokens
+        if "max_tokens" not in filtered:
+            filtered["max_tokens"] = 1024
+            log.debug("Added required max_tokens=1024 for Anthropic")
+        
+        return filtered
 
     # ── tool schema helpers ─────────────────────────────────
 
@@ -186,7 +233,7 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
         **extra,
     ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
-        Generate a completion with real streaming support.
+        Generate a completion with real streaming support and proper parameter filtering.
         
         • stream=False → returns awaitable that resolves to standardised dict
         • stream=True  → returns async iterator that yields chunks in real-time
@@ -196,12 +243,16 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
         anth_tools = self._convert_tools(tools)
         system_txt, msg_no_system = self._split_for_anthropic(messages)
 
+        # Filter parameters for Anthropic compatibility
+        if max_tokens:
+            extra["max_tokens"] = max_tokens
+        filtered_params = self._filter_anthropic_params(extra)
+
         base_payload: Dict[str, Any] = {
             "model": self.model,
             "messages": msg_no_system,
             "tools": anth_tools,
-            "max_tokens": max_tokens or 1024,
-            **extra,
+            **filtered_params,  # Use filtered parameters
         }
         if system_txt:
             base_payload["system"] = system_txt
@@ -269,7 +320,7 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
         self, 
         payload: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Non-streaming completion using async client."""
+        """Non-streaming completion using async client with proper error handling."""
         try:
             resp = await self.async_client.messages.create(**payload)
             return _parse_claude_response(resp)
@@ -281,3 +332,15 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
                 "tool_calls": [],
                 "error": True
             }
+
+    def get_model_info(self) -> Dict[str, Any]:
+        """Get information about the current model."""
+        return {
+            "provider": "anthropic",
+            "model": self.model,
+            "supports_streaming": True,
+            "supports_tools": True,
+            "supports_vision": True,
+            "supported_parameters": list(self.SUPPORTED_PARAMS),
+            "unsupported_parameters": list(self.UNSUPPORTED_PARAMS),
+        }
