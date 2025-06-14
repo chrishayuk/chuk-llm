@@ -1,4 +1,4 @@
-# chuk_llm/llm/core/enhanced_base.py
+# chuk_llm/llm/core/base.py
 from typing import List, Dict, Any, Optional, AsyncIterator, Union
 import time
 import asyncio

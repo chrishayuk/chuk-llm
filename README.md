@@ -2,6 +2,171 @@
 
 A unified, production-ready Python library for Large Language Model (LLM) providers with real-time streaming, function calling, middleware support, and comprehensive provider management.
 
+## 🚀 QuickStart
+
+### Installation
+
+```bash
+pip install chuk_llm
+```
+
+### API Keys Setup
+
+```bash
+export OPENAI_API_KEY="your-openai-key"
+export ANTHROPIC_API_KEY="your-anthropic-key"
+export GROQ_API_KEY="your-groq-key"
+# Add other provider keys as needed
+```
+
+### Simple API - Perfect for Scripts & Prototypes
+
+```python
+from chuk_llm import ask_sync, quick_question, configure
+
+# Ultra-simple one-liner
+answer = quick_question("What is 2+2?")
+print(answer)  # "2 + 2 equals 4."
+
+# Provider-specific functions (103 auto-generated!)
+from chuk_llm import ask_openai_sync, ask_claude_sync, ask_groq_sync
+
+openai_response = ask_openai_sync("Tell me a joke")
+claude_response = ask_claude_sync("Explain quantum computing") 
+groq_response = ask_groq_sync("What's the weather like?")
+
+# Configure once, use everywhere
+configure(provider="anthropic", temperature=0.7)
+response = ask_sync("Write a creative story opening")
+
+# Compare multiple providers
+from chuk_llm import compare_providers
+results = compare_providers("What is AI?", ["openai", "anthropic"])
+for provider, response in results.items():
+    print(f"{provider}: {response}")
+```
+
+### Async API - Production Performance (3-7x faster!)
+
+```python
+import asyncio
+from chuk_llm import ask, stream, conversation
+
+async def main():
+    # Basic async call
+    response = await ask("Hello!")
+    
+    # Provider-specific async functions
+    from chuk_llm import ask_openai, ask_claude, ask_groq
+    
+    openai_response = await ask_openai("Tell me a joke")
+    claude_response = await ask_claude("Explain quantum computing")
+    groq_response = await ask_groq("What's the weather like?")
+    
+    # Real-time streaming (token by token)
+    print("Streaming: ", end="", flush=True)
+    async for chunk in stream("Write a haiku about coding"):
+        print(chunk, end="", flush=True)
+    
+    # Conversations with memory
+    async with conversation(provider="anthropic") as chat:
+        await chat.say("My name is Alice")
+        response = await chat.say("What's my name?")
+        # Remembers: "Your name is Alice"
+    
+    # Concurrent requests (massive speedup!)
+    tasks = [
+        ask("Capital of France?"),
+        ask("What is 2+2?"), 
+        ask("Name a color")
+    ]
+    responses = await asyncio.gather(*tasks)
+    # 3-7x faster than sequential!
+
+asyncio.run(main())
+```
+
+### 103 Auto-Generated Functions
+
+ChukLLM automatically creates functions for every provider and model:
+
+```python
+# Base provider functions
+from chuk_llm import ask_openai, ask_anthropic, ask_groq
+
+# Model-specific functions  
+from chuk_llm import ask_openai_gpt4o, ask_claude_sonnet
+
+# Convenient aliases
+from chuk_llm import ask_gpt4o, ask_claude
+
+# All with sync, async, and streaming variants!
+from chuk_llm import (
+    ask_openai_sync,      # Synchronous
+    stream_anthropic,     # Async streaming  
+    ask_groq_sync         # Sync version
+)
+```
+
+### Discovery & Utilities
+
+```python
+import chuk_llm
+
+# See all available providers and models
+chuk_llm.show_providers()
+
+# See all 103 auto-generated functions
+chuk_llm.show_functions()
+
+# Comprehensive diagnostics
+chuk_llm.print_diagnostics()
+
+# Test connections
+from chuk_llm import test_connection_sync
+result = test_connection_sync("anthropic")
+print(f"✅ {result['provider']}: {result['duration']:.2f}s")
+```
+
+### Performance Demo
+
+```python
+# Sequential vs Concurrent Performance Test
+import time
+import asyncio
+from chuk_llm import ask
+
+async def performance_demo():
+    questions = ["What is AI?", "Capital of Japan?", "2+2=?"]
+    
+    # Sequential (slow)
+    start = time.time()
+    for q in questions:
+        await ask(q)
+    sequential_time = time.time() - start
+    
+    # Concurrent (fast!)
+    start = time.time()
+    await asyncio.gather(*[ask(q) for q in questions])
+    concurrent_time = time.time() - start
+    
+    print(f"🐌 Sequential: {sequential_time:.2f}s")
+    print(f"🚀 Concurrent: {concurrent_time:.2f}s") 
+    print(f"⚡ Speedup: {sequential_time/concurrent_time:.1f}x faster!")
+    # Typical result: 3-7x speedup!
+
+asyncio.run(performance_demo())
+```
+
+## 🌟 Why ChukLLM?
+
+✅ **103 Auto-Generated Functions** - Every provider & model gets functions  
+✅ **3-7x Performance Boost** - Concurrent requests vs sequential  
+✅ **Real-time Streaming** - Token-by-token output as it's generated  
+✅ **Memory Management** - Stateful conversations with context  
+✅ **Production Ready** - Error handling, retries, connection pooling  
+✅ **Developer Friendly** - Simple sync for scripts, powerful async for apps  
+
 ## 🚀 Features
 
 ### Multi-Provider Support
@@ -55,53 +220,77 @@ pip install chuk_llm[ollama]       # Ollama support
 ### Basic Usage
 
 ```python
+from chuk_llm import ask_sync, quick_question
+
+# Ultra-simple one-liner
+answer = quick_question("What is 2+2?")
+print(answer)  # "2 + 2 equals 4."
+
+# Basic sync usage
+response = ask_sync("Tell me a joke")
+print(response)
+
+# Provider-specific functions
+from chuk_llm import ask_openai_sync, ask_claude_sync
+openai_joke = ask_openai_sync("Tell me a dad joke")
+claude_explanation = ask_claude_sync("Explain quantum computing")
+```
+
+### Async Usage
+
+```python
 import asyncio
-from chuk_llm.llm.llm_client import get_llm_client
+from chuk_llm import ask, stream, conversation
 
 async def main():
-    # Get a client for any provider
-    client = get_llm_client("openai", model="gpt-4o-mini")
+    # Basic async call
+    response = await ask("Hello!")
     
-    # Simple completion
-    response = await client.create_completion([
-        {"role": "user", "content": "Hello! How are you?"}
-    ])
+    # Real-time streaming
+    print("Streaming: ", end="", flush=True)
+    async for chunk in stream("Write a haiku about coding"):
+        print(chunk, end="", flush=True)
     
-    print(response["response"])
+    # Conversations with memory
+    async with conversation(provider="anthropic") as chat:
+        await chat.say("My name is Alice")
+        response = await chat.say("What's my name?")
+        # Remembers: "Your name is Alice"
 
 asyncio.run(main())
 ```
 
-### Perplexity Web Search Example
+### Real-time Web Search with Perplexity
 
 ```python
-async def perplexity_search_example():
-    # Use Perplexity for real-time web information
-    client = get_llm_client("perplexity", model="sonar-pro")
-    
-    messages = [
-        {"role": "user", "content": "What are the latest developments in AI today?"}
-    ]
-    
-    response = await client.create_completion(messages)
-    print(response["response"])  # Includes real-time web search results with citations
+# Sync version
+from chuk_llm import ask_perplexity_sync
 
-asyncio.run(perplexity_search_example())
+response = ask_perplexity_sync("What are the latest AI developments this week?")
+print(response)  # Includes real-time web search results with citations
+
+# Async version  
+import asyncio
+from chuk_llm import ask_perplexity
+
+async def search_example():
+    response = await ask_perplexity("What are the latest AI developments this week?")
+    print(response)
+    
+asyncio.run(search_example())
 ```
 
 ### Streaming Responses
 
 ```python
+import asyncio
+from chuk_llm import stream
+
 async def streaming_example():
-    client = get_llm_client("openai", model="gpt-4o-mini")
-    
-    messages = [
-        {"role": "user", "content": "Write a short story about AI"}
-    ]
-    
-    async for chunk in client.create_completion(messages, stream=True):
-        if chunk.get("response"):
-            print(chunk["response"], end="", flush=True)
+    print("Assistant: ", end="", flush=True)
+    async for chunk in stream("Write a short story about AI"):
+        print(chunk, end="", flush=True)
+    print()  # New line when done
 
 asyncio.run(streaming_example())
 ```
@@ -109,37 +298,37 @@ asyncio.run(streaming_example())
 ### Function Calling
 
 ```python
-async def function_calling_example():
-    client = get_llm_client("openai", model="gpt-4o-mini")
-    
-    # Define tools
-    tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "get_weather",
-                "description": "Get weather information",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "location": {"type": "string", "description": "City name"},
-                        "units": {"type": "string", "enum": ["celsius", "fahrenheit"]}
-                    },
-                    "required": ["location"]
-                }
+# Sync version
+from chuk_llm import ask_sync
+
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get weather information",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string", "description": "City name"},
+                    "units": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+                },
+                "required": ["location"]
             }
         }
-    ]
-    
-    response = await client.create_completion(
-        messages=[{"role": "user", "content": "What's the weather in Paris?"}],
-        tools=tools
-    )
-    
-    if response.get("tool_calls"):
-        for tool_call in response["tool_calls"]:
-            print(f"Function: {tool_call['function']['name']}")
-            print(f"Arguments: {tool_call['function']['arguments']}")
+    }
+]
+
+response = ask_sync("What's the weather in Paris?", tools=tools)
+print(response)  # ChukLLM handles tool calling automatically
+
+# Async version
+import asyncio
+from chuk_llm import ask
+
+async def function_calling_example():
+    response = await ask("What's the weather in Paris?", tools=tools)
+    print(response)
 
 asyncio.run(function_calling_example())
 ```
@@ -162,201 +351,288 @@ export PERPLEXITY_API_BASE="https://api.perplexity.ai"
 export OLLAMA_API_BASE="http://localhost:11434"
 ```
 
-### Provider Configuration
+### Simple API Configuration
 
 ```python
+from chuk_llm import configure, get_config
+
+# Simple configuration
+configure(
+    provider="anthropic",
+    model="claude-3-5-sonnet-20241022", 
+    temperature=0.7
+)
+
+# All subsequent calls use these settings
+from chuk_llm import ask_sync
+response = ask_sync("Tell me about AI")
+
+# Check current configuration
+config = get_config()
+print(f"Using {config['provider']} with {config['model']}")
+```
+
+### Low-Level API Configuration
+
+```python
+import asyncio
+from chuk_llm.llm.llm_client import get_llm_client
 from chuk_llm.llm.configuration.provider_config import ProviderConfig
 
-# Custom configuration
-config = ProviderConfig({
-    "openai": {
-        "api_key": "your-key",
-        "api_base": "https://custom-endpoint.com",
-        "default_model": "gpt-4o"
-    },
-    "anthropic": {
-        "api_key": "your-anthropic-key",
-        "default_model": "claude-3-5-sonnet-20241022"
-    },
-    "perplexity": {
-        "api_key": "your-perplexity-key",
-        "default_model": "sonar-pro"
-    }
-})
+async def low_level_example():
+    # Method 1: Direct client creation
+    client = get_llm_client("openai", model="gpt-4o-mini")
+    
+    # Method 2: Custom configuration
+    config = ProviderConfig({
+        "openai": {
+            "api_key": "your-key",
+            "api_base": "https://custom-endpoint.com",
+            "default_model": "gpt-4o"
+        },
+        "anthropic": {
+            "api_key": "your-anthropic-key",
+            "default_model": "claude-3-5-sonnet-20241022"
+        }
+    })
+    
+    client = get_llm_client("openai", config=config)
+    
+    # Use the client directly
+    response = await client.create_completion([
+        {"role": "user", "content": "Hello! How are you?"}
+    ])
+    
+    print(response["response"])
 
-client = get_llm_client("openai", config=config)
+asyncio.run(low_level_example())
 ```
 
 ## 🛠️ Advanced Usage
 
+### Low-Level API
+
+For maximum control, use the low-level client API:
+
+```python
+import asyncio
+from chuk_llm.llm.llm_client import get_llm_client
+
+async def low_level_examples():
+    # Get a client for any provider
+    client = get_llm_client("openai", model="gpt-4o-mini")
+    
+    # Basic completion with full control
+    response = await client.create_completion([
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": "Hello! How are you?"}
+    ])
+    print(response["response"])
+    
+    # Streaming with low-level control
+    messages = [
+        {"role": "user", "content": "Write a short story about AI"}
+    ]
+    
+    async for chunk in client.create_completion(messages, stream=True):
+        if chunk.get("response"):
+            print(chunk["response"], end="", flush=True)
+    
+    # Function calling with full control
+    tools = [
+        {
+            "type": "function", 
+            "function": {
+                "name": "get_weather",
+                "description": "Get weather information",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string", "description": "City name"}
+                    },
+                    "required": ["location"]
+                }
+            }
+        }
+    ]
+    
+    response = await client.create_completion(
+        messages=[{"role": "user", "content": "What's the weather in Paris?"}],
+        tools=tools,
+        temperature=0.7,
+        max_tokens=150
+    )
+    
+    if response.get("tool_calls"):
+        for tool_call in response["tool_calls"]:
+            print(f"Function: {tool_call['function']['name']}")
+            print(f"Arguments: {tool_call['function']['arguments']}")
+
+asyncio.run(low_level_examples())
+```
+
+### Perplexity Web Search (Low-Level)
+
+```python
+import asyncio
+from chuk_llm.llm.llm_client import get_llm_client
+
+async def perplexity_low_level():
+    # Use Perplexity for real-time web information
+    client = get_llm_client("perplexity", model="sonar-pro")
+    
+    messages = [
+        {"role": "user", "content": "What are the latest developments in AI today?"}
+    ]
+    
+    response = await client.create_completion(messages)
+    print(response["response"])  # Includes real-time web search results with citations
+
+asyncio.run(perplexity_low_level())
+```
+
 ### Middleware Stack
 
 ```python
-from chuk_llm.llm.middleware import LoggingMiddleware, MetricsMiddleware
-from chuk_llm.llm.core.enhanced_base import get_enhanced_llm_client
-
-# Create client with middleware
-client = get_enhanced_llm_client(
-    provider="openai",
-    model="gpt-4o-mini",
-    enable_logging=True,
-    enable_metrics=True,
-    enable_caching=True
-)
+# ChukLLM automatically includes production-ready middleware
+from chuk_llm import ask_sync, get_metrics, health_check_sync
 
 # Use normally - middleware runs automatically
-response = await client.create_completion(messages)
+response = ask_sync("Hello!")
 
-# Access metrics
-if hasattr(client, 'middleware_stack'):
-    for middleware in client.middleware_stack.middlewares:
-        if hasattr(middleware, 'get_metrics'):
-            print(middleware.get_metrics())
+# Access built-in metrics
+metrics = get_metrics()
+print(f"Total requests: {metrics.get('total_requests', 0)}")
+
+# Health monitoring
+health = health_check_sync()
+print(f"Status: {health.get('status', 'unknown')}")
+
+# For advanced middleware control, use the low-level API:
+from chuk_llm.llm.core.enhanced_base import get_enhanced_llm_client
+
+async def advanced_middleware():
+    client = get_enhanced_llm_client(
+        provider="openai",
+        model="gpt-4o-mini",
+        enable_logging=True,
+        enable_metrics=True,
+        enable_caching=True
+    )
+    
+    # Use with full middleware stack
+    response = await client.create_completion([
+        {"role": "user", "content": "Hello!"}
+    ])
+    
+    # Access detailed metrics
+    if hasattr(client, 'middleware_stack'):
+        for middleware in client.middleware_stack.middlewares:
+            if hasattr(middleware, 'get_metrics'):
+                print(middleware.get_metrics())
+
+asyncio.run(advanced_middleware())
 ```
 
-### Multi-Provider Chat
+### Multi-Provider Comparison
 
 ```python
-from chuk_llm.llm.features import multi_provider_chat
+from chuk_llm import compare_providers
 
 # Compare responses across providers
-responses = await multi_provider_chat(
-    message="Explain quantum computing",
-    providers=["openai", "anthropic", "perplexity", "groq"],
-    model_map={
-        "openai": "gpt-4o-mini",
-        "anthropic": "claude-3-5-sonnet-20241022",
-        "perplexity": "sonar-pro",
-        "groq": "llama-3.3-70b-versatile"
-    }
+results = compare_providers(
+    "Explain quantum computing",
+    providers=["openai", "anthropic", "perplexity", "groq"]
 )
 
-for provider, response in responses.items():
+for provider, response in results.items():
     print(f"{provider}: {response[:100]}...")
 ```
 
 ### Real-time Information with Perplexity
 
 ```python
+import asyncio
+from chuk_llm import ask_perplexity
+
 async def current_events_example():
     # Perplexity excels at current information
-    client = get_llm_client("perplexity", model="sonar-reasoning-pro")
-    
-    messages = [
-        {"role": "user", "content": "What are the latest tech industry layoffs this week?"}
-    ]
-    
-    response = await client.create_completion(messages)
+    response = await ask_perplexity(
+        "What are the latest tech industry layoffs this week?",
+        model="sonar-reasoning-pro"
+    )
     print("Real-time information with citations:")
-    print(response["response"])
+    print(response)
 
 asyncio.run(current_events_example())
 ```
 
-### Unified Interface
+### Performance Monitoring
 
 ```python
-from chuk_llm.llm.features import UnifiedLLMInterface
+import asyncio
+from chuk_llm import test_all_providers
 
-# High-level interface
-interface = UnifiedLLMInterface("openai", "gpt-4o-mini")
+async def monitor_performance():
+    # Test all providers concurrently
+    results = await test_all_providers()
+    
+    for provider, result in results.items():
+        status = "✅" if result["success"] else "❌"
+        duration = result.get("duration", 0)
+        print(f"{status} {provider}: {duration:.2f}s")
 
-# Simple chat
-response = await interface.simple_chat("Hello!")
-
-# Chat with options
-response = await interface.chat(
-    messages=[{"role": "user", "content": "Explain AI"}],
-    temperature=0.7,
-    max_tokens=500,
-    json_mode=True
-)
-```
-
-### System Prompt Generation
-
-```python
-from chuk_llm.llm.system_prompt_generator import (
-    SystemPromptGenerator, 
-    PromptStyle, 
-    PromptContext
-)
-
-# Create generator
-generator = SystemPromptGenerator(PromptStyle.FUNCTION_FOCUSED)
-
-# Define tools
-tools = {
-    "functions": [
-        {
-            "name": "calculate",
-            "description": "Perform calculations",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "expression": {"type": "string"}
-                }
-            }
-        }
-    ]
-}
-
-# Generate optimized prompt
-prompt = generator.generate_for_provider(
-    provider="openai",
-    model="gpt-4o",
-    tools=tools,
-    user_instructions="You are a math tutor."
-)
-
-# Use in completion
-messages = [
-    {"role": "system", "content": prompt},
-    {"role": "user", "content": "What is 15 * 23?"}
-]
+asyncio.run(monitor_performance())
 ```
 
 ## 📊 Benchmarking
 
 ```python
-from benchmarks.llm_benchmark import LLMBenchmark
+import asyncio
+from chuk_llm import test_all_providers, compare_providers
 
-# Create benchmark
-benchmark = LLMBenchmark()
+async def benchmark_providers():
+    # Quick performance test
+    results = await test_all_providers()
+    
+    print("Provider Performance:")
+    for provider, result in results.items():
+        if result["success"]:
+            print(f"✅ {provider}: {result['duration']:.2f}s")
+        else:
+            print(f"❌ {provider}: {result['error']}")
+    
+    # Quality comparison
+    comparison = compare_providers(
+        "Explain machine learning in simple terms",
+        ["openai", "anthropic", "groq"]
+    )
+    
+    print("\nQuality Comparison:")
+    for provider, response in comparison.items():
+        print(f"{provider}: {response[:100]}...")
 
-# Test multiple providers
-results = await benchmark.benchmark_multiple([
-    ("openai", "gpt-4o-mini"),
-    ("anthropic", "claude-3-5-sonnet-20241022"),
-    ("perplexity", "sonar-pro"),
-    ("groq", "llama-3.3-70b-versatile")
-])
-
-# Generate report
-report = benchmark.generate_report(results)
-print(report)
+asyncio.run(benchmark_providers())
 ```
 
 ## 🔍 Provider Capabilities
 
 ```python
-from chuk_llm.llm.configuration.capabilities import PROVIDER_CAPABILITIES, Feature
+import chuk_llm
 
-# Check what a provider supports
-openai_caps = PROVIDER_CAPABILITIES["openai"]
-print(f"Supports streaming: {openai_caps.supports(Feature.STREAMING)}")
-print(f"Supports vision: {openai_caps.supports(Feature.VISION)}")
-print(f"Max context: {openai_caps.max_context_length}")
+# Discover available providers and models
+chuk_llm.show_providers()
 
-# Find best provider for requirements
-from chuk_llm.llm.configuration.capabilities import CapabilityChecker
+# See all auto-generated functions
+chuk_llm.show_functions()
 
-best = CapabilityChecker.get_best_provider({
-    Feature.STREAMING, 
-    Feature.TOOLS, 
-    Feature.VISION
-})
-print(f"Best provider: {best}")
+# Get comprehensive diagnostics
+chuk_llm.print_diagnostics()
+
+# Test specific provider capabilities
+from chuk_llm import test_connection_sync
+result = test_connection_sync("anthropic")
+print(f"✅ {result['provider']}: {result['duration']:.2f}s")
 ```
 
 ## 🌐 Provider Models
@@ -438,16 +714,22 @@ class CustomMiddleware(Middleware):
 ## 🧪 Testing & Diagnostics
 
 ```python
-# Extended streaming test
-from diagnostics.streaming_extended import test_extended_streaming
+import asyncio
+from chuk_llm import test_connection, health_check, print_diagnostics
 
-await test_extended_streaming()
+async def run_diagnostics():
+    # Test connection to specific provider
+    result = await test_connection("anthropic")
+    print(f"Connection test: {result['success']}")
+    
+    # System health check
+    health = await health_check()
+    print(f"System status: {health['status']}")
+    
+    # Comprehensive diagnostics
+    print_diagnostics()
 
-# Health check
-from chuk_llm.llm.connection_pool import get_llm_health_status
-
-health = await get_llm_health_status()
-print(health)
+asyncio.run(run_diagnostics())
 ```
 
 ## 📈 Performance
@@ -490,18 +772,20 @@ Perplexity's Sonar models deliver blazing fast search results at 1200 tokens per
 ### Adding New Providers
 
 ```python
-# Implement BaseLLMClient
-class NewProviderClient(BaseLLMClient):
-    def create_completion(self, messages, tools=None, *, stream=False, **kwargs):
-        # Implementation here
-        pass
+# ChukLLM automatically detects new providers from configuration
+# Just add to your providers.yaml:
 
-# Add to provider config
-DEFAULTS["newprovider"] = {
-    "client": "chuk_llm.llm.providers.newprovider_client:NewProviderClient",
-    "api_key_env": "NEWPROVIDER_API_KEY",
-    "default_model": "default-model"
-}
+# providers.yaml
+newprovider:
+  api_key_env: NEWPROVIDER_API_KEY
+  api_base: https://api.newprovider.com
+  default_model: new-model-name
+
+# ChukLLM will automatically generate:
+# - ask_newprovider()
+# - ask_newprovider_sync() 
+# - stream_newprovider()
+# - ask_newprovider_new_model_name()
 ```
 
 ## 📚 Documentation
