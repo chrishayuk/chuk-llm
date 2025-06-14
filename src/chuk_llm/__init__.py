@@ -13,17 +13,18 @@ Examples:
         answer = quick_question("What is 2+2?")
     
     Provider-specific functions:
-        from chuk_llm import ask_openai, ask_claude, ask_groq
+        from chuk_llm import ask_openai, ask_anthropic, ask_groq
         
         openai_response = ask_openai("Hello!")
-        claude_response = ask_claude("Hello!")
+        anthropic_response = ask_anthropic("Hello!")
         groq_response = ask_groq("Hello!")
     
-    Model-specific functions:
-        from chuk_llm import ask_gpt4o, ask_claude_sonnet
+    Global alias functions:
+        from chuk_llm import ask_gpt4, ask_claude4, ask_llama70b
         
-        gpt_response = ask_gpt4o("Explain quantum computing")
-        claude_response = ask_claude_sonnet("Explain quantum computing")
+        gpt_response = ask_gpt4("Explain quantum computing")
+        claude_response = ask_claude4("Explain quantum computing")
+        llama_response = ask_llama70b("Explain quantum computing")
     
     Conversations with memory:
         from chuk_llm import conversation
@@ -54,11 +55,8 @@ from .api import (
     # Conversation management  
     conversation,
     
-    # Utility functions (these exist but may vary based on available providers)
+    # Utility functions
     quick_question, compare_providers,
-    
-    # Common aliases (if they exist in your setup)
-    ask_claude, ask_google,
 )
 
 # Import sync functions from the sync module specifically
@@ -85,7 +83,6 @@ __all__ = [
     "configure", "get_config", "reset_config",
     "conversation",
     "quick_question", "compare_providers",
-    "ask_claude", "ask_google",
     
     # Sync functions (imported from .api.sync)
     "ask_sync", "stream_sync",
@@ -173,6 +170,7 @@ def show_functions():
     # Categorize functions
     base_functions = []
     model_functions = []
+    global_functions = []
     utility_functions = []
     
     for func in functions:
@@ -187,7 +185,8 @@ def show_functions():
             else:
                 base_functions.append(func)
         else:
-            utility_functions.append(func)
+            # Global aliases (no provider name in function)
+            global_functions.append(func)
     
     print("🎯 ChukLLM Available Functions")
     print("=" * 50)
@@ -195,11 +194,17 @@ def show_functions():
     print()
     
     print(f"🔹 Core functions ({len(utility_functions)}):")
-    for func in sorted(utility_functions)[:10]:  # Show first 10
+    for func in sorted(utility_functions):
         print(f"   {func}()")
-    if len(utility_functions) > 10:
-        print(f"   ... and {len(utility_functions) - 10} more")
     print()
+    
+    if global_functions:
+        print(f"🔹 Global alias functions ({len(global_functions)}):")
+        for func in sorted(global_functions)[:15]:  # Show first 15
+            print(f"   {func}()")
+        if len(global_functions) > 15:
+            print(f"   ... and {len(global_functions) - 15} more")
+        print()
     
     print(f"🔹 Base provider functions ({len(base_functions)}):")
     for func in sorted(base_functions)[:10]:  # Show first 10
