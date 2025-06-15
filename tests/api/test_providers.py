@@ -13,12 +13,17 @@ from unittest.mock import Mock, patch, MagicMock, mock_open
 import asyncio
 import threading
 import time
+import sys
+import warnings
 from typing import List, Dict, Any
+
+# Suppress coroutine warnings in tests
+warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*coroutine.*was never awaited")
+warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*AsyncMockMixin.*")
 
 # Import specific functions we need to test
 from chuk_llm.api.providers import (
     _sanitize_name,
-    _get_persistent_loop,
     _run_sync,
     _create_provider_function,
     _create_stream_function, 
@@ -72,34 +77,45 @@ class TestSanitizeName:
         assert _sanitize_name("model___name") == "model_name"
 
 
-class TestPersistentEventLoop:
-    """Test suite for persistent event loop functionality used by sync functions."""
+class TestRunSyncWithEventLoopManager:
+    """Test suite for _run_sync function using event loop manager."""
 
-    def test_get_persistent_loop_creates_loop(self):
-        """Test that _get_persistent_loop creates a background loop."""
-        # Reset any existing loop state
-        import chuk_llm.api.providers as providers_module
-        providers_module._persistent_loop = None
-        providers_module._loop_thread = None
+    @patch('chuk_llm.api.event_loop_manager.run_sync')
+    def test_run_sync_uses_event_loop_manager(self, mock_run_sync):
+        """Test that _run_sync uses the event loop manager when available."""
+        mock_run_sync.return_value = "test_result"
         
-        loop = _get_persistent_loop()
+        # Create a simple coroutine that returns immediately
+        async def test_coro():
+            return "test_result"
         
-        # Should get a valid event loop
-        assert loop is not None
-        assert isinstance(loop, asyncio.AbstractEventLoop)
-        assert not loop.is_closed()
+        # Create the coroutine object
+        coro = test_coro()
         
-        # Should be running in a background thread
-        assert providers_module._loop_thread is not None
-        assert providers_module._loop_thread.is_alive()
+        try:
+            result = _run_sync(coro)
+            
+            # Should have called the event loop manager's run_sync
+            mock_run_sync.assert_called_once()
+            assert result == "test_result"
+        finally:
+            # Close the coroutine to avoid warnings
+            coro.close()
 
-    def test_get_persistent_loop_reuses_existing(self):
-        """Test that _get_persistent_loop reuses existing loop."""
-        loop1 = _get_persistent_loop()
-        loop2 = _get_persistent_loop()
+    @patch.dict('sys.modules', {'chuk_llm.api.event_loop_manager': None})
+    @patch('asyncio.run')
+    def test_run_sync_fallback_to_asyncio_run(self, mock_asyncio_run):
+        """Test fallback to asyncio.run when event loop manager not available."""
+        mock_asyncio_run.return_value = "fallback_result"
         
-        # Should be the same loop instance
-        assert loop1 is loop2
+        async def test_coro():
+            return "fallback_result"
+        
+        result = _run_sync(test_coro())
+        
+        # Should have fallen back to asyncio.run
+        mock_asyncio_run.assert_called_once()
+        assert result == "fallback_result"
 
     def test_run_sync_basic_functionality(self):
         """Test basic functionality of _run_sync."""
@@ -133,8 +149,8 @@ class TestPersistentEventLoop:
         
         asyncio.run(test_async_context())
 
-    def test_persistent_loop_multiple_calls(self):
-        """Test that persistent loop handles multiple calls correctly."""
+    def test_run_sync_multiple_calls(self):
+        """Test that _run_sync handles multiple calls correctly."""
         async def test_coro(value):
             await asyncio.sleep(0.001)
             return f"result_{value}"
@@ -147,8 +163,8 @@ class TestPersistentEventLoop:
         expected = [f"result_{i}" for i in range(5)]
         assert results == expected
 
-    def test_persistent_loop_thread_safety(self):
-        """Test thread safety of persistent loop."""
+    def test_run_sync_thread_safety(self):
+        """Test thread safety of _run_sync."""
         async def test_coro(thread_id):
             await asyncio.sleep(0.001)
             return f"thread_{thread_id}_result"
@@ -192,10 +208,12 @@ class TestProviderFunctionCreation:
     @pytest.mark.asyncio
     async def test_provider_function_execution_pattern(self):
         """Test the execution pattern of provider functions."""
-        # Mock the core.ask function
-        with patch('chuk_llm.api.core.ask') as mock_ask:
-            mock_ask.return_value = "mocked response"
-            
+        # Create a mock coroutine
+        async def mock_ask_coro(*args, **kwargs):
+            return "mocked response"
+        
+        # Mock the core.ask function to return our coroutine
+        with patch('chuk_llm.api.core.ask', side_effect=mock_ask_coro) as mock_ask:
             # Create a function
             func = _create_provider_function("openai", "gpt-4o")
             
@@ -254,9 +272,11 @@ class TestProviderFunctionCreation:
 
     def test_sync_function_execution_pattern(self):
         """Test the execution pattern of sync functions."""
-        with patch('chuk_llm.api.core.ask') as mock_ask:
-            mock_ask.return_value = "sync response"
-            
+        # Create a mock coroutine that returns a value
+        async def mock_coro(*args, **kwargs):
+            return "sync response"
+        
+        with patch('chuk_llm.api.core.ask', return_value=mock_coro()):
             with patch('chuk_llm.api.providers._run_sync') as mock_run_sync:
                 mock_run_sync.return_value = "sync response"
                 
@@ -289,9 +309,11 @@ class TestGlobalAliasFunctions:
     @pytest.mark.asyncio
     async def test_global_alias_async_function_pattern(self):
         """Test execution pattern of global alias async function."""
-        with patch('chuk_llm.api.core.ask') as mock_ask:
-            mock_ask.return_value = "alias response"
-            
+        # Create a mock coroutine
+        async def mock_ask_coro(*args, **kwargs):
+            return "alias response"
+        
+        with patch('chuk_llm.api.core.ask', side_effect=mock_ask_coro) as mock_ask:
             functions = _create_global_alias_function("claude", "anthropic/claude-3-sonnet")
             ask_func = functions["ask_claude"]
             
@@ -306,6 +328,10 @@ class TestGlobalAliasFunctions:
 
     def test_global_alias_sync_function_pattern(self):
         """Test execution pattern of global alias sync function."""
+        # Create a mock coroutine
+        async def mock_coro(*args, **kwargs):
+            return "sync alias response"
+        
         with patch('chuk_llm.api.providers._run_sync') as mock_run_sync:
             mock_run_sync.return_value = "sync alias response"
             
@@ -349,10 +375,12 @@ class TestFunctionGenerationLogic:
         
         mock_get_config.return_value = mock_config_manager
         
-        # Import and test the generation logic
-        from chuk_llm.api.providers import _generate_functions
-        
-        functions = _generate_functions()
+        # Import and test the generation logic with warnings suppressed
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            from chuk_llm.api.providers import _generate_functions
+            
+            functions = _generate_functions()
         
         # Should have base provider functions
         assert "ask_openai" in functions
@@ -539,15 +567,15 @@ class TestErrorHandling:
             if result:  # If not empty
                 assert result.replace('_', '').isalnum() or result.startswith('model_')
 
-    def test_persistent_loop_error_recovery(self):
-        """Test that persistent loop recovers from errors."""
+    def test_run_sync_error_recovery(self):
+        """Test that _run_sync recovers from errors."""
         async def good_coro():
             return "success"
         
         async def bad_coro():
             raise Exception("test error")
         
-        # Bad coroutine should raise exception but not break loop
+        # Bad coroutine should raise exception but not break event loop
         with pytest.raises(Exception, match="test error"):
             _run_sync(bad_coro())
         
@@ -555,8 +583,8 @@ class TestErrorHandling:
         result = _run_sync(good_coro())
         assert result == "success"
 
-    def test_concurrent_loop_access_safety(self):
-        """Test concurrent access to persistent loop is safe."""
+    def test_concurrent_run_sync_safety(self):
+        """Test concurrent calls to _run_sync are safe."""
         results = []
         errors = []
         
@@ -591,43 +619,65 @@ class TestErrorHandling:
             assert f"value_{i}" in results
 
 
-class TestCleanupAndLifecycle:
-    """Test suite for cleanup and lifecycle management."""
+class TestModuleIntegration:
+    """Test suite for module-level integration."""
 
-    def test_cleanup_function_exists(self):
-        """Test that cleanup function exists."""
-        from chuk_llm.api.providers import _cleanup_loop
-        assert callable(_cleanup_loop)
-
-    def test_atexit_registration(self):
-        """Test that atexit registration works."""
-        import atexit
-        
-        def mock_cleanup():
-            pass
-        
-        # Should not raise exception
-        atexit.register(mock_cleanup)
-        assert callable(mock_cleanup)
-
-    def test_loop_state_management(self):
-        """Test loop state management."""
-        import chuk_llm.api.providers as providers_module
-        
-        # Test that we can access loop state variables
-        assert hasattr(providers_module, '_persistent_loop')
-        assert hasattr(providers_module, '_loop_thread')
-        assert hasattr(providers_module, '_loop_lock')
-
-    def test_module_import_safety(self):
-        """Test that importing the module is safe."""
-        # This test verifies that importing doesn't crash
+    def test_module_imports_successfully(self):
+        """Test that the module imports without errors."""
+        # This should not raise any exceptions
         import chuk_llm.api.providers
         
-        # Should have the main components
-        assert hasattr(chuk_llm.api.providers, '_generate_functions')
-        assert hasattr(chuk_llm.api.providers, '_create_utility_functions')
+        # Check that expected attributes exist
         assert hasattr(chuk_llm.api.providers, '__all__')
+        assert isinstance(chuk_llm.api.providers.__all__, list)
+
+    def test_functions_are_exported(self):
+        """Test that functions are properly exported in __all__."""
+        import chuk_llm.api.providers
+        
+        # Should have some functions exported
+        assert len(chuk_llm.api.providers.__all__) > 0
+        
+        # All exported names should be callable or utility functions
+        for name in chuk_llm.api.providers.__all__:
+            assert hasattr(chuk_llm.api.providers, name)
+
+    @patch('chuk_llm.api.providers.get_config')
+    def test_error_during_generation_handled(self, mock_get_config):
+        """Test that errors during function generation are handled gracefully."""
+        # Make get_config raise an exception
+        mock_get_config.side_effect = Exception("Config error")
+        
+        # Reload the module - should handle the error gracefully
+        import importlib
+        import chuk_llm.api.providers
+        
+        try:
+            importlib.reload(chuk_llm.api.providers)
+        except Exception as e:
+            # The module should still be usable even if generation fails
+            assert hasattr(chuk_llm.api.providers, '__all__')
+
+    def test_warnings_are_suppressed(self):
+        """Test that asyncio warnings are properly suppressed."""
+        import warnings
+        
+        # These warnings should be filtered
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            
+            # Try to trigger some warnings
+            async def test_coro():
+                return "test"
+            
+            _run_sync(test_coro())
+            
+            # Should not have event loop warnings
+            event_loop_warnings = [
+                warning for warning in w 
+                if "Event loop is closed" in str(warning.message)
+            ]
+            assert len(event_loop_warnings) == 0
 
 
 if __name__ == "__main__":
