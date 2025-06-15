@@ -1,70 +1,149 @@
 #!/usr/bin/env python3
 """
-Working sync sample script that only imports functions that actually exist.
+Working sync sample script that demonstrates ChukLLM functionality.
+Fixed version with proper error handling and import safety.
 """
 
-# Import only the guaranteed basic functions first
-from chuk_llm import (
-    # Core functions (guaranteed to exist)
-    ask_sync,
-    quick_question,
-    compare_providers,
-    
-    # Provider base functions (should exist)
-    ask_openai_sync,
-    ask_anthropic_sync, 
-    ask_groq_sync,
-    ask_gemini_sync,
-    ask_mistral_sync,
-    ask_ollama_sync,
-    ask_deepseek_sync,
-)
+import sys
+import warnings
+import os
+from typing import Dict, Any, Optional, Callable
+from dotenv import load_dotenv
 
-# Try to import additional functions with fallbacks
-additional_functions = {}
+load_dotenv()
 
-# Try to import global aliases if they exist
-def safe_import(module, func_name):
-    """Safely import a function, returning None if it doesn't exist."""
+# Suppress async warnings for cleaner demo output
+warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*Event loop is closed.*")
+warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*coroutine.*was never awaited.*")
+
+def safe_import_chuk_llm():
+    """Safely import chuk_llm with fallback handling."""
     try:
-        return getattr(module, func_name)
+        import chuk_llm
+        return chuk_llm
+    except Exception as e:
+        print(f"❌ Failed to import chuk_llm: {e}")
+        sys.exit(1)
+
+# Import ChukLLM
+chuk_llm = safe_import_chuk_llm()
+
+def safe_get_function(name: str) -> Optional[Callable]:
+    """Safely get a function from chuk_llm module."""
+    try:
+        return getattr(chuk_llm, name)
     except AttributeError:
         return None
 
-import chuk_llm
-
-# Try to get global aliases
-additional_functions['ask_gpt4_sync'] = safe_import(chuk_llm, 'ask_gpt4_sync')
-additional_functions['ask_claude4_sync'] = safe_import(chuk_llm, 'ask_claude4_sync')
-additional_functions['ask_llama70b_sync'] = safe_import(chuk_llm, 'ask_llama70b_sync')
-additional_functions['ask_fastest_sync'] = safe_import(chuk_llm, 'ask_fastest_sync')
-additional_functions['ask_smartest_sync'] = safe_import(chuk_llm, 'ask_smartest_sync')
-additional_functions['ask_creative_sync'] = safe_import(chuk_llm, 'ask_creative_sync')
-additional_functions['ask_coding_sync'] = safe_import(chuk_llm, 'ask_coding_sync')
-additional_functions['ask_cheapest_sync'] = safe_import(chuk_llm, 'ask_cheapest_sync')
-
-# Try to get some provider-specific functions
-additional_functions['ask_openai_gpt4o_sync'] = safe_import(chuk_llm, 'ask_openai_gpt4o_sync')
-additional_functions['ask_anthropic_opus_sync'] = safe_import(chuk_llm, 'ask_anthropic_opus_sync')
-additional_functions['ask_groq_instant_sync'] = safe_import(chuk_llm, 'ask_groq_instant_sync')
-
-def test_provider(name, func, question="What's 2+2? Answer briefly."):
+def test_provider(name: str, func: Optional[Callable], question: str = "What's 2+2? Answer briefly.") -> bool:
     """Helper to test a provider function with error handling."""
     if func is None:
         print(f"🤖 {name}")
         print(f"   ⚠️  Function not available")
+        print()
+    print("🔑 API KEY STATUS:")
+    
+    # Check which API keys are available
+    api_keys = {
+        'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY'),
+        'ANTHROPIC_API_KEY': os.getenv('ANTHROPIC_API_KEY'), 
+        'GROQ_API_KEY': os.getenv('GROQ_API_KEY'),
+        'GOOGLE_API_KEY': os.getenv('GOOGLE_API_KEY'),
+        'MISTRAL_API_KEY': os.getenv('MISTRAL_API_KEY'),
+    }
+    
+    for key, value in api_keys.items():
+        if value:
+            # Show first 8 and last 4 characters for security
+            masked = f"{value[:8]}...{value[-4:]}" if len(value) > 12 else "***set***"
+            print(f"   ✅ {key}: {masked}")
+        else:
+            print(f"   ❌ {key}: Not set")
+    
+    if not any(api_keys.values()):
+        print("   💡 Create a .env file with your API keys to test actual responses")
         print()
         return False
         
     print(f"🤖 {name}")
     try:
         response = func(question)
+        # Truncate very long responses for demo
+        if len(str(response)) > 100:
+            response = str(response)[:97] + "..."
         print(f"   {response}")
+        print()
         return True
     except Exception as e:
-        print(f"   ❌ Error: {e}")
+        error_msg = str(e)
+        # Clean up common error messages for readability
+        if "api_key" in error_msg.lower():
+            if "openai" in error_msg.lower():
+                error_msg = "No OpenAI API key set (OPENAI_API_KEY environment variable)"
+            elif "anthropic" in error_msg.lower():
+                error_msg = "No Anthropic API key set (ANTHROPIC_API_KEY environment variable)"
+            elif "groq" in error_msg.lower():
+                error_msg = "No Groq API key set (GROQ_API_KEY environment variable)"
+            elif "google" in error_msg.lower() or "gemini" in error_msg.lower():
+                error_msg = "No Google API key set (GOOGLE_API_KEY environment variable)"
+        elif "authentication" in error_msg.lower():
+            error_msg = "Invalid API key or authentication failed"
+        elif "401" in error_msg:
+            error_msg = "Invalid API key (401 Unauthorized)"
+        elif "404" in error_msg and "ollama" in error_msg.lower():
+            error_msg = "Ollama model not found - try: ollama pull <model-name>"
+        
+        print(f"   ❌ Error: {error_msg}")
+        print()
         return False
-    print()
+
+def get_available_functions() -> Dict[str, Callable]:
+    """Get all available functions from chuk_llm."""
+    functions = {}
+    
+    # Core functions (guaranteed to exist)
+    core_functions = [
+        'ask_sync', 'quick_question', 'compare_providers', 'show_config'
+    ]
+    
+    for func_name in core_functions:
+        func = safe_get_function(func_name)
+        if func:
+            functions[func_name] = func
+    
+    # Provider base functions
+    providers = ['openai', 'anthropic', 'groq', 'gemini', 'mistral', 'ollama', 'deepseek']
+    for provider in providers:
+        func_name = f"ask_{provider}_sync"
+        func = safe_get_function(func_name)
+        if func:
+            functions[func_name] = func
+    
+    # Global aliases (try common ones)
+    global_aliases = [
+        'ask_gpt4_sync', 'ask_gpt4_mini_sync', 'ask_claude_sync', 'ask_claude4_sync',
+        'ask_llama_sync', 'ask_fastest_sync', 'ask_smartest_sync', 'ask_creative_sync',
+        'ask_coding_sync', 'ask_cheapest_sync'
+    ]
+    
+    for alias in global_aliases:
+        func = safe_get_function(alias)
+        if func:
+            functions[alias] = func
+    
+    # Provider-specific functions (try common ones)
+    specific_functions = [
+        'ask_openai_gpt4o_sync', 'ask_openai_gpt4o_mini_sync',
+        'ask_anthropic_opus_sync', 'ask_anthropic_sonnet_sync',
+        'ask_groq_instant_sync', 'ask_groq_llama_sync'
+    ]
+    
+    for func_name in specific_functions:
+        func = safe_get_function(func_name)
+        if func:
+            functions[func_name] = func
+    
+    return functions
 
 def main():
     question = "What's the capital of France? Answer in one word."
@@ -74,136 +153,193 @@ def main():
     print("=" * 70)
     print()
     
-    # Show available functions
+    # Get available functions
+    functions = get_available_functions()
+    
+    # Show configuration info if available
+    show_config = safe_get_function('show_config')
+    if show_config:
+        try:
+            print("📊 Configuration Status:")
+            show_config()
+            print()
+        except Exception as e:
+            print(f"📊 Configuration check failed: {e}")
+            print()
+    
     print("📊 Function Availability Check:")
-    functions = chuk_llm.get_available_functions()
-    print(f"   Total functions available: {len(functions)}")
+    print(f"   Total functions found: {len(functions)}")
     
-    # Count global aliases
-    providers = chuk_llm.get_available_providers()
-    global_aliases = [f for f in functions if not any(p in f for p in providers) and f.endswith('_sync')]
-    print(f"   Global alias functions: {len(global_aliases)}")
+    # Categorize functions
+    core_funcs = [f for f in functions if f in ['ask_sync', 'quick_question', 'compare_providers']]
+    provider_funcs = [f for f in functions if f.startswith('ask_') and f.endswith('_sync') and '_' in f[4:-5]]
+    global_funcs = [f for f in functions if f.startswith('ask_') and f.endswith('_sync') and '_' not in f[4:-5]]
     
-    if global_aliases:
-        print(f"   Examples: {', '.join(global_aliases[:5])}")
+    print(f"   Core functions: {len(core_funcs)}")
+    print(f"   Provider functions: {len(provider_funcs)}")
+    print(f"   Global aliases: {len(global_funcs)}")
+    
+    if global_funcs:
+        print(f"   Examples: {', '.join(global_funcs[:5])}")
+    
+    # Show API key status once
+    print()
+    print("🔑 API KEY STATUS:")
+    
+    # Check which API keys are available
+    api_keys = {
+        'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY'),
+        'ANTHROPIC_API_KEY': os.getenv('ANTHROPIC_API_KEY'), 
+        'GROQ_API_KEY': os.getenv('GROQ_API_KEY'),
+        'GOOGLE_API_KEY': os.getenv('GOOGLE_API_KEY'),
+        'MISTRAL_API_KEY': os.getenv('MISTRAL_API_KEY'),
+    }
+    
+    for key, value in api_keys.items():
+        if value:
+            # Show first 8 and last 4 characters for security
+            masked = f"{value[:8]}...{value[-4:]}" if len(value) > 12 else "***set***"
+            print(f"   ✅ {key}: {masked}")
+        else:
+            print(f"   ❌ {key}: Not set")
+    
+    if not any(api_keys.values()):
+        print("   💡 Create a .env file with your API keys to test actual responses")
     print()
     
     # Test default provider
     print("🌟 DEFAULT PROVIDER")
+    ask_sync = functions.get('ask_sync')
     test_provider("Default (ask_sync)", ask_sync, question)
     
     # Test global aliases if available
-    if any(additional_functions.values()):
-        print("⚡ GLOBAL ALIASES (if available)")
-        
-        if additional_functions['ask_gpt4_sync']:
-            test_provider("GPT-4 Global", additional_functions['ask_gpt4_sync'], question)
-        
-        if additional_functions['ask_claude4_sync']:
-            test_provider("Claude 4 Global", additional_functions['ask_claude4_sync'], question)
-        
-        if additional_functions['ask_llama70b_sync']:
-            test_provider("Llama 70B Global", additional_functions['ask_llama70b_sync'], question)
+    global_aliases_to_test = [
+        ('ask_gpt4_sync', 'GPT-4 Global'),
+        ('ask_claude4_sync', 'Claude 4 Global'),
+        ('ask_llama_sync', 'Llama Global'),
+    ]
+    
+    available_globals = [(name, desc) for name, desc in global_aliases_to_test if name in functions]
+    
+    if available_globals:
+        print("⚡ GLOBAL ALIASES")
+        for func_name, description in available_globals:
+            test_provider(description, functions[func_name], question)
     
     # Test capability-based functions
-    if any(f for f in ['ask_fastest_sync', 'ask_smartest_sync', 'ask_creative_sync'] if additional_functions.get(f)):
-        print("🎯 CAPABILITY-BASED FUNCTIONS")
-        
-        if additional_functions['ask_fastest_sync']:
-            test_provider("Fastest Model", additional_functions['ask_fastest_sync'], question)
-        
-        if additional_functions['ask_smartest_sync']:
-            test_provider("Smartest Model", additional_functions['ask_smartest_sync'], question)
-        
-        if additional_functions['ask_creative_sync']:
-            test_provider("Most Creative", additional_functions['ask_creative_sync'], question)
+    capability_functions = [
+        ('ask_fastest_sync', 'Fastest Model'),
+        ('ask_smartest_sync', 'Smartest Model'), 
+        ('ask_creative_sync', 'Most Creative'),
+        ('ask_cheapest_sync', 'Most Cost-Effective')
+    ]
     
-    # Test major providers (guaranteed to work)
+    available_capabilities = [(name, desc) for name, desc in capability_functions if name in functions]
+    
+    if available_capabilities:
+        print("🎯 CAPABILITY-BASED FUNCTIONS")
+        for func_name, description in available_capabilities:
+            test_provider(description, functions[func_name], question)
+    
+    # Test major providers
+    providers_to_test = [
+        ('ask_openai_sync', 'OpenAI'),
+        ('ask_anthropic_sync', 'Anthropic'),
+        ('ask_groq_sync', 'Groq'),
+        ('ask_gemini_sync', 'Google Gemini'),
+        ('ask_mistral_sync', 'Mistral'),
+        ('ask_ollama_sync', 'Ollama'),
+        ('ask_deepseek_sync', 'DeepSeek'),
+    ]
+    
     print("☁️  MAJOR PROVIDERS")
-    test_provider("OpenAI", ask_openai_sync, question)
-    test_provider("Anthropic", ask_anthropic_sync, question)
-    test_provider("Groq", ask_groq_sync, question)
-    test_provider("Google Gemini", ask_gemini_sync, question)
-    test_provider("Mistral", ask_mistral_sync, question)
-    test_provider("Ollama", ask_ollama_sync, question)
-    test_provider("DeepSeek", ask_deepseek_sync, question)
+    for func_name, description in providers_to_test:
+        func = functions.get(func_name)
+        test_provider(description, func, question)
     
     # Test some provider-specific functions if available
-    print("🔧 PROVIDER-SPECIFIC FUNCTIONS")
+    specific_to_test = [
+        ('ask_openai_gpt4o_sync', 'OpenAI GPT-4o'),
+        ('ask_anthropic_opus_sync', 'Anthropic Opus'),
+        ('ask_groq_instant_sync', 'Groq Instant'),
+    ]
     
-    if additional_functions['ask_openai_gpt4o_sync']:
-        test_provider("OpenAI GPT-4o", additional_functions['ask_openai_gpt4o_sync'], question)
+    available_specific = [(name, desc) for name, desc in specific_to_test if name in functions]
     
-    if additional_functions['ask_anthropic_opus_sync']:
-        test_provider("Anthropic Opus", additional_functions['ask_anthropic_opus_sync'], question)
-    
-    if additional_functions['ask_groq_instant_sync']:
-        test_provider("Groq Instant", additional_functions['ask_groq_instant_sync'], question)
+    if available_specific:
+        print("🔧 PROVIDER-SPECIFIC FUNCTIONS")
+        for func_name, description in available_specific:
+            test_provider(description, functions[func_name], question)
     
     # Test utility functions
     print("🛠️  UTILITY FUNCTIONS")
     
-    print("🤖 Quick Question")
-    try:
-        response = quick_question("What's 1+1?")
-        print(f"   {response}")
-    except Exception as e:
-        print(f"   ❌ Error: {e}")
-    print()
+    quick_question = functions.get('quick_question')
+    if quick_question:
+        print("🤖 Quick Question")
+        try:
+            response = quick_question("What's 1+1?")
+            print(f"   {response}")
+        except Exception as e:
+            print(f"   ❌ Error: {e}")
+        print()
     
-    print("🤖 Compare Providers")
-    try:
-        results = compare_providers("What's the square root of 16?", ["openai", "anthropic"])
-        for provider, response in results.items():
-            print(f"   {provider}: {response}")
-    except Exception as e:
-        print(f"   ❌ Error: {e}")
-    print()
+    compare_providers = functions.get('compare_providers')
+    if compare_providers:
+        print("🤖 Compare Providers")
+        try:
+            # Use a simpler question for comparison
+            results = compare_providers("What's the square root of 16?", ["openai", "anthropic"])
+            for provider, response in results.items():
+                # Truncate long responses
+                if len(str(response)) > 80:
+                    response = str(response)[:77] + "..."
+                print(f"   {provider}: {response}")
+        except Exception as e:
+            print(f"   ❌ Error: {e}")
+        print()
     
-    # Test different task types with available functions
+    # Test different task types
     print("📝 TASK DEMONSTRATIONS")
     
     # Creative task
     creative_question = "Write a haiku about coding. Be creative!"
     print("🎨 CREATIVE TASK")
-    if additional_functions['ask_creative_sync']:
-        test_provider("Creative Model", additional_functions['ask_creative_sync'], creative_question)
-    else:
-        test_provider("Anthropic (Creative)", ask_anthropic_sync, creative_question)
+    creative_func = functions.get('ask_creative_sync') or functions.get('ask_anthropic_sync')
+    test_provider("Creative Model", creative_func, creative_question)
     
     # Speed test
     speed_question = "Name 3 colors. Be brief."
     print("⚡ SPEED TEST")
-    if additional_functions['ask_fastest_sync']:
-        test_provider("Fastest Model", additional_functions['ask_fastest_sync'], speed_question)
-    else:
-        test_provider("Groq (Fast)", ask_groq_sync, speed_question)
+    speed_func = functions.get('ask_fastest_sync') or functions.get('ask_groq_sync')
+    test_provider("Fastest Model", speed_func, speed_question)
     
     # Cost test
-    if additional_functions['ask_cheapest_sync']:
-        cost_question = "What's 2*3? Be brief."
-        print("💰 COST-EFFECTIVE TEST")
-        test_provider("Cheapest Model", additional_functions['ask_cheapest_sync'], cost_question)
+    cost_question = "What's 2*3? Answer briefly."
+    print("💰 COST-EFFECTIVE TEST")
+    cost_func = functions.get('ask_cheapest_sync') or functions.get('ask_openai_gpt4o_mini_sync')
+    test_provider("Cheapest Model", cost_func, cost_question)
     
     print("=" * 70)
     print("✅ Demo complete!")
     print()
     print("💡 WHAT WE DEMONSTRATED:")
-    print("   ✅ Core functions (ask_sync, quick_question, compare_providers)")
-    print("   ✅ Provider functions (ask_openai_sync, ask_anthropic_sync, etc.)")
-    
-    if any(additional_functions.values()):
-        available_globals = [k for k, v in additional_functions.items() if v is not None]
-        print(f"   ✅ Global aliases: {len(available_globals)} available")
-        if available_globals:
-            print(f"      Examples: {', '.join(available_globals[:3])}")
-    else:
-        print("   ⚠️  No global aliases found (check your providers.yaml)")
-    
-    print(f"   📊 Total functions available: {len(chuk_llm.get_available_functions())}")
+    print(f"   ✅ Core functions: {len(core_funcs)} available")
+    print(f"   ✅ Provider functions: {len(provider_funcs)} available")
+    print(f"   ✅ Global aliases: {len(global_funcs)} available")
+    print(f"   📊 Total functions tested: {len(functions)}")
+    print()
+    print("🔑 TO USE WITH YOUR API KEYS:")
+    print("   1. Create a .env file in your project root:")
+    print("      OPENAI_API_KEY=your-openai-key")
+    print("      ANTHROPIC_API_KEY=your-anthropic-key")
+    print("      GROQ_API_KEY=your-groq-key")
+    print("      GOOGLE_API_KEY=your-google-key")
+    print("   2. Or export them as environment variables")
+    print("   3. Re-run this demo to see actual AI responses!")
     print()
     print("💻 To see all available functions:")
-    print("   chuk_llm.show_functions()")
+    print("   python -c \"import chuk_llm; print(len(chuk_llm.__all__)); print(chuk_llm.__all__[:10])\"")
     print("=" * 70)
 
 if __name__ == "__main__":

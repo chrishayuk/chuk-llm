@@ -1,47 +1,78 @@
-"""Synchronous wrappers for simple scripts."""
+# chuk_llm/api/sync.py
+"""
+Clean synchronous wrappers
+==========================
+
+Simple sync wrappers for the async API.
+"""
 
 import asyncio
-import warnings
+import threading
 from typing import List, Dict, Any
+
 from .core import ask, stream
 
-def _run_async_safe(coro):
-    """Helper to run async functions, handling existing event loop safely."""
+# Thread-local storage for event loops
+_thread_local = threading.local()
+
+
+def _get_or_create_loop():
+    """Get or create an event loop for the current thread"""
     try:
-        # Try to get the current event loop
         loop = asyncio.get_running_loop()
-        # If we're in an event loop, we can't use asyncio.run()
+        # We're already in an async context
         raise RuntimeError(
-            "Cannot call sync functions from within an async context. "
-            "Use the async version instead (e.g., ask() instead of ask_sync())"
+            "Cannot call sync functions from async context. "
+            "Use the async version instead."
         )
     except RuntimeError as e:
-        if "cannot call sync functions" in str(e).lower():
+        if "Cannot call sync functions" in str(e):
+            raise e
+        # No running loop, we can create one
+        pass
+    
+    # Check if we have a loop for this thread
+    if not hasattr(_thread_local, 'loop') or _thread_local.loop.is_closed():
+        _thread_local.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_thread_local.loop)
+    
+    return _thread_local.loop
+
+
+def _run_async(coro):
+    """Run async coroutine safely"""
+    try:
+        # Check if we're already in an async context
+        asyncio.get_running_loop()
+        raise RuntimeError(
+            "Cannot call sync functions from async context. "
+            "Use the async version instead."
+        )
+    except RuntimeError as e:
+        if "Cannot call sync functions" in str(e):
             raise e
     
-    # Import the persistent loop runner from providers module
-    from .providers import _run_async_on_persistent_loop
-    return _run_async_on_persistent_loop(coro)
+    # We're not in an async context, safe to use asyncio.run
+    return asyncio.run(coro)
+
 
 def ask_sync(prompt: str, **kwargs) -> str:
-    """Synchronous version of ask().
+    """
+    Synchronous version of ask().
     
     Args:
         prompt: The message to send
-        **kwargs: All the same arguments as ask() (provider, model, temperature, etc.)
+        **kwargs: All the same arguments as ask()
         
     Returns:
         The LLM's response as a string
-        
-    Examples:
-        response = ask_sync("Hello!")
-        response = ask_sync("Hello!", provider="anthropic")
-        response = ask_sync("Hello!", provider="openai", model="gpt-4o")
     """
-    return _run_async_safe(ask(prompt, **kwargs))
+    return _run_async(ask(prompt, **kwargs))
+
 
 def stream_sync(prompt: str, **kwargs) -> List[str]:
-    """Synchronous version of stream() - returns list of chunks.
+    """
+    Synchronous version of stream() - returns list of chunks.
     
     Args:
         prompt: The message to send
@@ -49,35 +80,32 @@ def stream_sync(prompt: str, **kwargs) -> List[str]:
         
     Returns:
         List of response chunks
-        
-    Examples:
-        chunks = stream_sync("Write a story")
-        full_response = "".join(chunks)
     """
-    async def collect_stream():
+    async def collect_chunks():
         chunks = []
         async for chunk in stream(prompt, **kwargs):
             chunks.append(chunk)
         return chunks
     
-    return _run_async_safe(collect_stream())
+    return _run_async(collect_chunks())
+
 
 def compare_providers(question: str, providers: List[str] = None) -> Dict[str, str]:
-    """Ask the same question to multiple providers synchronously.
+    """
+    Ask the same question to multiple providers.
     
     Args:
-        question: The question to ask all providers
-        providers: List of provider names (defaults to ["openai", "anthropic"])
+        question: The question to ask
+        providers: List of provider names (uses available providers if not specified)
         
     Returns:
         Dictionary mapping provider names to responses
-        
-    Examples:
-        results = compare_providers("What is AI?")
-        results = compare_providers("Hello!", ["openai", "anthropic", "groq"])
     """
     if providers is None:
-        providers = ["openai", "anthropic"]
+        from chuk_llm.configuration.config import get_config
+        config = get_config()
+        all_providers = config.get_all_providers()
+        providers = all_providers[:3] if len(all_providers) >= 3 else all_providers
     
     results = {}
     for provider in providers:
@@ -87,3 +115,23 @@ def compare_providers(question: str, providers: List[str] = None) -> Dict[str, s
             results[provider] = f"Error: {str(e)}"
     
     return results
+
+
+def quick_question(question: str, provider: str = None) -> str:
+    """
+    Quick one-off question using default or specified provider.
+    
+    Args:
+        question: The question to ask
+        provider: Provider to use (uses global default if not specified)
+        
+    Returns:
+        The response
+    """
+    if not provider:
+        from chuk_llm.configuration.config import get_config
+        config = get_config()
+        settings = config.get_global_settings()
+        provider = settings.get("active_provider", "openai")
+    
+    return ask_sync(question, provider=provider)

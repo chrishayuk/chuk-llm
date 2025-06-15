@@ -14,7 +14,7 @@ from datetime import datetime
 import traceback
 
 # chuk_llm imports
-from chuk_llm.llm.llm_client import get_llm_client
+from chuk_llm.llm.client import get_client
 from chuk_llm.llm.core.base import BaseLLMClient
 
 # Configure logging
@@ -219,7 +219,7 @@ class LLMBenchmark:
             print("=" * 60)
         
         try:
-            client = get_llm_client(provider, model=model)
+            client = get_client(provider, model=model)
         except Exception as e:
             error_msg = f"Failed to initialize {provider} client: {str(e)}"
             logger.error(error_msg)

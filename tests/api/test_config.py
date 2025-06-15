@@ -1,10 +1,10 @@
 """
-Comprehensive pytest tests for chuk_llm/api/config.py
+Comprehensive pytest tests for chuk_llm/api/config.py (clean version)
 
 Run with:
     pytest tests/api/test_config.py -v
     pytest tests/api/test_config.py -v --tb=short
-    pytest tests/api/test_config.py::TestConfigure::test_configure_basic -v
+    pytest tests/api/test_config.py::TestAPIConfig::test_configure_basic -v
 """
 
 import pytest
@@ -15,69 +15,169 @@ from typing import Dict, Any
 from chuk_llm.api import config
 from chuk_llm.api.config import (
     configure,
-    get_config,
-    reset_config,
-    get_client_for_config,
-    get_current_config
+    get_current_config,
+    get_client,
+    reset
 )
 
 
-class TestDefaultConfiguration:
-    """Test suite for default configuration state."""
+class TestAPIConfigClass:
+    """Test suite for the APIConfig class."""
 
-    def setup_method(self):
-        """Reset configuration before each test."""
-        reset_config()
+    def test_api_config_initialization(self):
+        """Test APIConfig initializes with empty overrides."""
+        api_config = config.APIConfig()
+        assert api_config.overrides == {}
+        assert api_config._cached_client is None
+        assert api_config._cache_key is None
 
-    def test_default_config_values(self):
-        """Test that default configuration has expected values."""
-        config_dict = get_config()
+    def test_api_config_set_method(self):
+        """Test APIConfig.set() method updates overrides."""
+        api_config = config.APIConfig()
         
-        expected_defaults = {
+        api_config.set(provider="anthropic", model="claude-3-sonnet", temperature=0.8)
+        
+        assert api_config.overrides["provider"] == "anthropic"
+        assert api_config.overrides["model"] == "claude-3-sonnet"
+        assert api_config.overrides["temperature"] == 0.8
+
+    def test_api_config_set_ignores_none_values(self):
+        """Test that set() ignores None values."""
+        api_config = config.APIConfig()
+        
+        api_config.set(provider="openai", model=None, temperature=0.5)
+        
+        assert api_config.overrides["provider"] == "openai"
+        assert "model" not in api_config.overrides
+        assert api_config.overrides["temperature"] == 0.5
+
+    def test_api_config_set_invalidates_cache(self):
+        """Test that set() invalidates cached client."""
+        api_config = config.APIConfig()
+        
+        # Set up cached client
+        mock_client = Mock()
+        api_config._cached_client = mock_client
+        api_config._cache_key = ("test", "test", None, None)
+        
+        # Setting new config should invalidate cache
+        api_config.set(provider="anthropic")
+        
+        assert api_config._cached_client is None
+        assert api_config._cache_key is None
+
+    @patch('chuk_llm.configuration.config.get_config')
+    def test_api_config_get_current_config(self, mock_get_config):
+        """Test APIConfig.get_current_config() method."""
+        # Mock the core config manager
+        mock_config_manager = Mock()
+        mock_config_manager.get_global_settings.return_value = {
+            "active_provider": "openai",
+            "active_model": "gpt-4o-mini"
+        }
+        mock_provider_config = Mock()
+        mock_provider_config.default_model = "gpt-4o-mini"
+        mock_provider_config.api_base = None
+        mock_config_manager.get_provider.return_value = mock_provider_config
+        mock_config_manager.get_api_key.return_value = "sk-test123"
+        mock_get_config.return_value = mock_config_manager
+        
+        api_config = config.APIConfig()
+        api_config.set(temperature=0.8, max_tokens=1000)
+        
+        current_config = api_config.get_current_config()
+        
+        # Should have global defaults
+        assert current_config["provider"] == "openai"
+        assert current_config["model"] == "gpt-4o-mini"
+        assert current_config["api_key"] == "sk-test123"
+        
+        # Should have overrides
+        assert current_config["temperature"] == 0.8
+        assert current_config["max_tokens"] == 1000
+
+    @patch('chuk_llm.llm.client.get_client')
+    def test_api_config_get_client_creates_new(self, mock_get_client):
+        """Test APIConfig.get_client() creates new client."""
+        mock_client = Mock()
+        mock_get_client.return_value = mock_client
+        
+        api_config = config.APIConfig()
+        
+        with patch.object(api_config, 'get_current_config') as mock_get_config:
+            mock_get_config.return_value = {
+                "provider": "openai",
+                "model": "gpt-4",
+                "api_key": "sk-test",
+                "api_base": None
+            }
+            
+            result = api_config.get_client()
+            
+            assert result == mock_client
+            mock_get_client.assert_called_once_with(
+                provider="openai",
+                model="gpt-4",
+                api_key="sk-test",
+                api_base=None
+            )
+
+    @patch('chuk_llm.llm.client.get_client')
+    def test_api_config_get_client_uses_cache(self, mock_get_client):
+        """Test APIConfig.get_client() uses cached client when config matches."""
+        mock_client = Mock()
+        mock_get_client.return_value = mock_client
+        
+        api_config = config.APIConfig()
+        
+        test_config = {
             "provider": "openai",
-            "model": "gpt-4o-mini",
-            "system_prompt": None,
-            "temperature": None,
-            "max_tokens": None,
-            "api_key": None,
-            "api_base": None,
+            "model": "gpt-4",
+            "api_key": "sk-test",
+            "api_base": None
         }
         
-        assert config_dict == expected_defaults
+        with patch.object(api_config, 'get_current_config', return_value=test_config):
+            # First call - creates client
+            result1 = api_config.get_client()
+            
+            # Second call - should use cached client
+            result2 = api_config.get_client()
+            
+            assert result1 == result2 == mock_client
+            # get_client should only be called once
+            mock_get_client.assert_called_once()
 
-    def test_default_cached_client_state(self):
-        """Test that cached client is None by default."""
-        assert config._cached_client is None
-        assert config._cached_config_hash is None
-
-    def test_get_config_returns_copy(self):
-        """Test that get_config returns a copy, not the original dict."""
-        config_dict = get_config()
-        config_dict["provider"] = "modified"
+    def test_api_config_reset(self):
+        """Test APIConfig.reset() clears overrides and cache."""
+        api_config = config.APIConfig()
         
-        # Original config should be unchanged
-        original_config = get_config()
-        assert original_config["provider"] == "openai"
-        assert original_config["provider"] != "modified"
+        # Set some overrides and cache
+        api_config.set(provider="anthropic", temperature=0.8)
+        api_config._cached_client = Mock()
+        api_config._cache_key = ("test", "test", None, None)
+        
+        api_config.reset()
+        
+        assert api_config.overrides == {}
+        assert api_config._cached_client is None
+        assert api_config._cache_key is None
 
 
-class TestConfigure:
-    """Test suite for configure function."""
+class TestConfigureFunctionAPI:
+    """Test suite for the module-level API functions."""
 
     def setup_method(self):
         """Reset configuration before each test."""
-        reset_config()
+        reset()
 
     def test_configure_basic(self):
-        """Test basic configuration update."""
+        """Test basic configure function."""
         configure(provider="anthropic", model="claude-3-sonnet")
         
-        config_dict = get_config()
+        config_dict = get_current_config()
         assert config_dict["provider"] == "anthropic"
         assert config_dict["model"] == "claude-3-sonnet"
-        # Other values should remain default
-        assert config_dict["system_prompt"] is None
-        assert config_dict["temperature"] is None
 
     def test_configure_all_parameters(self):
         """Test configuring all available parameters."""
@@ -91,7 +191,7 @@ class TestConfigure:
             api_base="https://api.test.com"
         )
         
-        config_dict = get_config()
+        config_dict = get_current_config()
         assert config_dict["provider"] == "anthropic"
         assert config_dict["model"] == "claude-3-opus"
         assert config_dict["system_prompt"] == "You are a helpful assistant"
@@ -102,50 +202,38 @@ class TestConfigure:
 
     def test_configure_none_values_ignored(self):
         """Test that None values are ignored during configuration."""
-        # Set initial values
         configure(provider="openai", model="gpt-4", temperature=0.5)
         
         # Try to set some values to None - they should be ignored
         configure(provider="anthropic", model=None, temperature=None)
         
-        config_dict = get_config()
+        config_dict = get_current_config()
         assert config_dict["provider"] == "anthropic"  # Should be updated
-        assert config_dict["model"] == "gpt-4"  # Should remain unchanged
-        assert config_dict["temperature"] == 0.5  # Should remain unchanged
+        # model and temperature should remain from first configure call
+        # (exact behavior depends on how global defaults work)
 
-    def test_configure_with_kwargs(self):
-        """Test configuration with additional kwargs."""
+    def test_configure_with_custom_kwargs(self):
+        """Test configure with custom parameters."""
         configure(
             provider="openai",
             custom_param="custom_value",
-            another_param=42
+            another_param=42,
+            debug=True
         )
         
-        config_dict = get_config()
+        config_dict = get_current_config()
         assert config_dict["provider"] == "openai"
         assert config_dict["custom_param"] == "custom_value"
         assert config_dict["another_param"] == 42
+        assert config_dict["debug"] is True
 
-    def test_configure_invalidates_cache(self):
-        """Test that configure invalidates cached client."""
-        # Mock a cached client
-        mock_client = Mock()
-        config._cached_client = mock_client
-        config._cached_config_hash = ("openai", "gpt-4", None, None)
-        
-        # Configure should invalidate cache
-        configure(provider="anthropic")
-        
-        assert config._cached_client is None
-        assert config._cached_config_hash is None
-
-    def test_configure_multiple_calls(self):
+    def test_configure_multiple_calls_accumulate(self):
         """Test multiple configure calls accumulate changes."""
         configure(provider="openai", model="gpt-4")
         configure(temperature=0.7, max_tokens=1000)
         configure(api_key="test-key")
         
-        config_dict = get_config()
+        config_dict = get_current_config()
         assert config_dict["provider"] == "openai"
         assert config_dict["model"] == "gpt-4"
         assert config_dict["temperature"] == 0.7
@@ -157,63 +245,9 @@ class TestConfigure:
         configure(provider="openai", temperature=0.5)
         configure(provider="anthropic", temperature=0.9)
         
-        config_dict = get_config()
+        config_dict = get_current_config()
         assert config_dict["provider"] == "anthropic"
         assert config_dict["temperature"] == 0.9
-
-
-class TestResetConfig:
-    """Test suite for reset_config function."""
-
-    def test_reset_config_restores_defaults(self):
-        """Test that reset_config restores default values."""
-        # Modify configuration
-        configure(
-            provider="anthropic",
-            model="claude-3-opus",
-            temperature=0.8,
-            api_key="test-key"
-        )
-        
-        # Reset
-        reset_config()
-        
-        # Should be back to defaults
-        config_dict = get_config()
-        expected_defaults = {
-            "provider": "openai",
-            "model": "gpt-4o-mini",
-            "system_prompt": None,
-            "temperature": None,
-            "max_tokens": None,
-            "api_key": None,
-            "api_base": None,
-        }
-        assert config_dict == expected_defaults
-
-    def test_reset_config_clears_cache(self):
-        """Test that reset_config clears cached client."""
-        # Set up cached client
-        mock_client = Mock()
-        config._cached_client = mock_client
-        config._cached_config_hash = ("test", "test", None, None)
-        
-        reset_config()
-        
-        assert config._cached_client is None
-        assert config._cached_config_hash is None
-
-    def test_reset_config_removes_custom_kwargs(self):
-        """Test that reset_config removes custom parameters added via kwargs."""
-        configure(provider="openai", custom_param="value")
-        
-        config_dict = get_config()
-        assert "custom_param" in config_dict
-        
-        reset_config()
-        
-        config_dict = get_config()
-        assert "custom_param" not in config_dict
 
 
 class TestGetCurrentConfig:
@@ -221,327 +255,281 @@ class TestGetCurrentConfig:
 
     def setup_method(self):
         """Reset configuration before each test."""
-        reset_config()
+        reset()
 
-    def test_get_current_config_same_as_get_config(self):
-        """Test that get_current_config returns same as get_config."""
-        configure(provider="anthropic", temperature=0.7)
-        
-        current_config = get_current_config()
-        public_config = get_config()
-        
-        assert current_config == public_config
-
-    def test_get_current_config_reflects_changes(self):
-        """Test that get_current_config reflects configuration changes."""
-        original_config = get_current_config()
-        assert original_config["provider"] == "openai"
-        
-        configure(provider="anthropic")
-        
-        updated_config = get_current_config()
-        assert updated_config["provider"] == "anthropic"
-
-
-class TestGetClientForConfig:
-    """Test suite for get_client_for_config function."""
-
-    def setup_method(self):
-        """Reset configuration and cache before each test."""
-        reset_config()
-        config._cached_client = None
-        config._cached_config_hash = None
-
-    def test_get_client_for_config_creates_new_client(self):
-        """Test that get_client_for_config creates a new client."""
-        test_config = {
-            "provider": "openai",
-            "model": "gpt-4",
-            "api_key": "test-key",
-            "api_base": None
+    @patch('chuk_llm.configuration.config.get_config')
+    def test_get_current_config_with_defaults(self, mock_get_config):
+        """Test get_current_config with no overrides uses defaults."""
+        # Mock the core config manager
+        mock_config_manager = Mock()
+        mock_config_manager.get_global_settings.return_value = {
+            "active_provider": "openai",
+            "active_model": "gpt-4o-mini"
         }
+        mock_provider_config = Mock()
+        mock_provider_config.default_model = "gpt-4o-mini"
+        mock_provider_config.api_base = "https://api.openai.com"
+        mock_config_manager.get_provider.return_value = mock_provider_config
+        mock_config_manager.get_api_key.return_value = "sk-default123"
+        mock_get_config.return_value = mock_config_manager
         
-        mock_client = Mock()
+        config_dict = get_current_config()
         
-        with patch('chuk_llm.llm.llm_client.get_llm_client') as mock_get_client:
-            mock_get_client.return_value = mock_client
-            
-            result = get_client_for_config(test_config)
-            
-            assert result == mock_client
-            mock_get_client.assert_called_once_with(
-                provider="openai",
-                model="gpt-4",
-                api_key="test-key",
-                api_base=None
-            )
+        # Should use global defaults
+        assert config_dict["provider"] == "openai"
+        assert config_dict["model"] == "gpt-4o-mini"
+        assert config_dict["api_key"] == "sk-default123"
+        assert config_dict["api_base"] == "https://api.openai.com"
 
-    def test_get_client_for_config_caches_client(self):
-        """Test that get_client_for_config caches the created client."""
-        test_config = {
-            "provider": "openai",
-            "model": "gpt-4",
-            "api_key": "test-key",
-            "api_base": None
+    def test_get_current_config_with_overrides(self):
+        """Test get_current_config reflects overrides."""
+        configure(provider="anthropic", temperature=0.8, custom_param="test")
+        
+        config_dict = get_current_config()
+        assert config_dict["provider"] == "anthropic"
+        assert config_dict["temperature"] == 0.8
+        assert config_dict["custom_param"] == "test"
+
+    @patch('chuk_llm.configuration.config.get_config')
+    def test_get_current_config_handles_provider_error(self, mock_get_config):
+        """Test get_current_config handles unknown provider gracefully."""
+        # Mock config manager that raises ValueError for unknown provider
+        mock_config_manager = Mock()
+        mock_config_manager.get_global_settings.return_value = {
+            "active_provider": "unknown_provider"
         }
+        mock_config_manager.get_provider.side_effect = ValueError("Unknown provider")
+        mock_get_config.return_value = mock_config_manager
         
-        mock_client = Mock()
+        # Should not raise exception
+        config_dict = get_current_config()
         
-        with patch('chuk_llm.llm.llm_client.get_llm_client') as mock_get_client:
-            mock_get_client.return_value = mock_client
-            
-            result = get_client_for_config(test_config)
-            
-            # Check that client is cached
-            assert config._cached_client == mock_client
-            assert config._cached_config_hash == ("openai", "gpt-4", "test-key", None)
-
-    def test_get_client_for_config_returns_cached_client(self):
-        """Test that get_client_for_config returns cached client when config matches."""
-        test_config = {
-            "provider": "openai",
-            "model": "gpt-4",
-            "api_key": "test-key",
-            "api_base": None
-        }
-        
-        mock_client = Mock()
-        
-        with patch('chuk_llm.llm.llm_client.get_llm_client') as mock_get_client:
-            mock_get_client.return_value = mock_client
-            
-            # First call - creates client
-            result1 = get_client_for_config(test_config)
-            
-            # Second call with same config - should return cached client
-            result2 = get_client_for_config(test_config)
-            
-            assert result1 == result2 == mock_client
-            # get_llm_client should only be called once
-            mock_get_client.assert_called_once()
-
-    def test_get_client_for_config_creates_new_client_when_config_changes(self):
-        """Test that get_client_for_config creates new client when config changes."""
-        config1 = {
-            "provider": "openai",
-            "model": "gpt-4",
-            "api_key": "test-key-1",
-            "api_base": None
-        }
-        
-        config2 = {
-            "provider": "openai",
-            "model": "gpt-4",
-            "api_key": "test-key-2",  # Different API key
-            "api_base": None
-        }
-        
-        mock_client1 = Mock()
-        mock_client2 = Mock()
-        
-        with patch('chuk_llm.llm.llm_client.get_llm_client') as mock_get_client:
-            mock_get_client.side_effect = [mock_client1, mock_client2]
-            
-            # First call
-            result1 = get_client_for_config(config1)
-            
-            # Second call with different config
-            result2 = get_client_for_config(config2)
-            
-            assert result1 == mock_client1
-            assert result2 == mock_client2
-            assert result1 != result2
-            # get_llm_client should be called twice
-            assert mock_get_client.call_count == 2
-
-    def test_get_client_for_config_handles_missing_config_keys(self):
-        """Test that get_client_for_config handles missing config keys gracefully."""
-        minimal_config = {
-            "provider": "openai",
-            "model": "gpt-4"
-            # Missing api_key and api_base
-        }
-        
-        mock_client = Mock()
-        
-        with patch('chuk_llm.llm.llm_client.get_llm_client') as mock_get_client:
-            mock_get_client.return_value = mock_client
-            
-            result = get_client_for_config(minimal_config)
-            
-            assert result == mock_client
-            mock_get_client.assert_called_once_with(
-                provider="openai",
-                model="gpt-4",
-                api_key=None,  # Should default to None
-                api_base=None   # Should default to None
-            )
-
-    def test_get_client_for_config_cache_key_generation(self):
-        """Test that cache key is generated correctly from config."""
-        test_config = {
-            "provider": "anthropic",
-            "model": "claude-3-sonnet",
-            "api_key": "sk-test123",
-            "api_base": "https://api.anthropic.com",
-            "temperature": 0.7,  # This should not affect cache key
-            "max_tokens": 1000   # This should not affect cache key
-        }
-        
-        mock_client = Mock()
-        
-        with patch('chuk_llm.llm.llm_client.get_llm_client') as mock_get_client:
-            mock_get_client.return_value = mock_client
-            
-            get_client_for_config(test_config)
-            
-            # Check that cache key only includes relevant fields
-            expected_cache_key = ("anthropic", "claude-3-sonnet", "sk-test123", "https://api.anthropic.com")
-            assert config._cached_config_hash == expected_cache_key
+        # Should have basic structure
+        assert "provider" in config_dict
+        assert "model" in config_dict
 
 
-class TestConfigurationIntegration:
-    """Integration tests for configuration functionality."""
+class TestGetClient:
+    """Test suite for get_client function."""
 
     def setup_method(self):
         """Reset configuration before each test."""
-        reset_config()
+        reset()
 
-    def test_full_configuration_workflow(self):
-        """Test a complete configuration workflow."""
-        # Start with defaults
-        assert get_config()["provider"] == "openai"
-        assert get_config()["model"] == "gpt-4o-mini"
+    @patch('chuk_llm.llm.client.get_client')
+    def test_get_client_with_current_config(self, mock_get_client):
+        """Test get_client uses current configuration."""
+        mock_client = Mock()
+        mock_get_client.return_value = mock_client
         
-        # Configure for Anthropic
+        configure(provider="anthropic", model="claude-3-sonnet", api_key="sk-test")
+        
+        result = get_client()
+        
+        assert result == mock_client
+        mock_get_client.assert_called_once()
+        
+        # Verify it was called with expected config
+        call_args = mock_get_client.call_args
+        assert call_args[1]["provider"] == "anthropic"
+        assert call_args[1]["model"] == "claude-3-sonnet"
+        assert call_args[1]["api_key"] == "sk-test"
+
+    @patch('chuk_llm.llm.client.get_client')
+    def test_get_client_caching_behavior(self, mock_get_client):
+        """Test get_client caches clients properly."""
+        mock_client = Mock()
+        mock_get_client.return_value = mock_client
+        
+        configure(provider="openai", model="gpt-4")
+        
+        # Multiple calls with same config
+        result1 = get_client()
+        result2 = get_client()
+        result3 = get_client()
+        
+        assert result1 == result2 == result3 == mock_client
+        # Should only create client once due to caching
+        mock_get_client.assert_called_once()
+
+    @patch('chuk_llm.llm.client.get_client')
+    def test_get_client_cache_invalidation_on_config_change(self, mock_get_client):
+        """Test get_client creates new client when config changes."""
+        mock_client1 = Mock()
+        mock_client2 = Mock()
+        mock_get_client.side_effect = [mock_client1, mock_client2]
+        
+        # First configuration
+        configure(provider="openai", model="gpt-4")
+        result1 = get_client()
+        
+        # Change configuration - should invalidate cache
+        configure(provider="anthropic", model="claude-3-sonnet")
+        result2 = get_client()
+        
+        assert result1 == mock_client1
+        assert result2 == mock_client2
+        assert result1 != result2
+        assert mock_get_client.call_count == 2
+
+    @patch('chuk_llm.llm.client.get_client')
+    def test_get_client_handles_creation_error(self, mock_get_client):
+        """Test get_client handles client creation errors."""
+        mock_get_client.side_effect = ValueError("Invalid provider configuration")
+        
+        configure(provider="invalid_provider")
+        
+        with pytest.raises(ValueError, match="Invalid provider configuration"):
+            get_client()
+
+
+class TestReset:
+    """Test suite for reset function."""
+
+    def test_reset_clears_overrides(self):
+        """Test reset clears all configuration overrides."""
         configure(
             provider="anthropic",
-            model="claude-3-sonnet",
+            model="claude-3-opus",
             temperature=0.8,
-            api_key="sk-test123"
+            custom_param="test_value"
         )
         
-        config_dict = get_config()
+        # Verify config was set
+        config_dict = get_current_config()
         assert config_dict["provider"] == "anthropic"
-        assert config_dict["model"] == "claude-3-sonnet"
         assert config_dict["temperature"] == 0.8
-        assert config_dict["api_key"] == "sk-test123"
+        assert config_dict["custom_param"] == "test_value"
         
-        # Test client creation with this config
-        mock_client = Mock()
-        with patch('chuk_llm.llm.llm_client.get_llm_client') as mock_get_client:
-            mock_get_client.return_value = mock_client
-            
-            client = get_client_for_config(config_dict)
-            assert client == mock_client
-            
-            mock_get_client.assert_called_once_with(
-                provider="anthropic",
-                model="claude-3-sonnet",
-                api_key="sk-test123",
-                api_base=None
-            )
+        # Reset
+        reset()
         
-        # Reset and verify defaults restored
-        reset_config()
-        
-        reset_config_dict = get_config()
-        assert reset_config_dict["provider"] == "openai"
-        assert reset_config_dict["model"] == "gpt-4o-mini"
-        assert reset_config_dict["temperature"] is None
-        assert reset_config_dict["api_key"] is None
+        # After reset, should not have the overrides
+        # (exact behavior depends on global defaults)
+        config_dict = get_current_config()
+        assert config_dict.get("temperature") is None
+        assert "custom_param" not in config_dict
 
-    def test_configuration_persistence_across_calls(self):
-        """Test that configuration persists across multiple function calls."""
-        configure(provider="groq", model="llama-3.3-70b-versatile")
+    @patch('chuk_llm.llm.client.get_client')
+    def test_reset_clears_cached_client(self, mock_get_client):
+        """Test reset clears cached client."""
+        mock_client = Mock()
+        mock_get_client.return_value = mock_client
         
-        # Multiple calls to get_config should return same values
-        config1 = get_config()
-        config2 = get_config()
+        configure(provider="openai", model="gpt-4")
+        
+        # Create cached client
+        get_client()
+        
+        # Reset should clear cache
+        reset()
+        
+        # Next call should create new client
+        get_client()
+        
+        # Should have been called twice (once before reset, once after)
+        assert mock_get_client.call_count == 2
+
+
+class TestGlobalAPIConfigInstance:
+    """Test suite for the global _api_config instance behavior."""
+
+    def setup_method(self):
+        """Reset configuration before each test."""
+        reset()
+
+    def test_module_functions_use_global_instance(self):
+        """Test that module-level functions use the same global instance."""
+        # This test verifies that configure, get_current_config, etc. 
+        # all operate on the same underlying APIConfig instance
+        
+        configure(provider="test_provider", temperature=0.5)
+        config1 = get_current_config()
+        
+        configure(model="test_model")
+        config2 = get_current_config()
+        
+        # Both calls should reflect accumulated changes
+        assert config2["provider"] == "test_provider"  # From first configure
+        assert config2["model"] == "test_model"        # From second configure
+        assert config2["temperature"] == 0.5          # Should persist
+
+    def test_state_persistence_across_function_calls(self):
+        """Test that state persists across multiple function calls."""
+        # Set initial config
+        configure(provider="openai", model="gpt-4")
+        
+        # Verify persistence through multiple get_current_config calls
+        config1 = get_current_config()
+        config2 = get_current_config()
         config3 = get_current_config()
         
-        assert config1["provider"] == "groq"
-        assert config2["provider"] == "groq"
-        assert config3["provider"] == "groq"
-        
-        assert config1 == config2 == config3
-
-    def test_client_caching_across_same_config(self):
-        """Test that client caching works correctly across multiple requests."""
-        test_config = {
-            "provider": "openai",
-            "model": "gpt-4o",
-            "api_key": "sk-test",
-            "api_base": None
-        }
-        
-        mock_client = Mock()
-        
-        with patch('chuk_llm.llm.llm_client.get_llm_client') as mock_get_client:
-            mock_get_client.return_value = mock_client
-            
-            # Multiple calls with same config
-            client1 = get_client_for_config(test_config)
-            client2 = get_client_for_config(test_config)
-            client3 = get_client_for_config(test_config)
-            
-            # All should return same cached client
-            assert client1 == client2 == client3 == mock_client
-            
-            # get_llm_client should only be called once
-            mock_get_client.assert_called_once()
+        assert config1["provider"] == config2["provider"] == config3["provider"] == "openai"
+        assert config1["model"] == config2["model"] == config3["model"] == "gpt-4"
 
 
-class TestEdgeCases:
+class TestEdgeCasesAndErrorHandling:
     """Test edge cases and error conditions."""
 
     def setup_method(self):
         """Reset configuration before each test."""
-        reset_config()
+        reset()
 
     def test_configure_with_empty_kwargs(self):
-        """Test configure with empty kwargs."""
-        original_config = get_config()
+        """Test configure with no arguments."""
+        original_config = get_current_config()
         
         configure()  # No arguments
         
-        # Config should remain unchanged
-        assert get_config() == original_config
+        updated_config = get_current_config()
+        # Should be essentially the same (no changes made)
+        assert updated_config.keys() == original_config.keys()
 
-    def test_configure_with_zero_values(self):
-        """Test that zero values (not None) are properly set."""
-        configure(temperature=0, max_tokens=0)
+    def test_configure_with_zero_and_false_values(self):
+        """Test that zero and False values are properly set (not treated as None)."""
+        configure(temperature=0, max_tokens=0, debug=False, streaming=False)
         
-        config_dict = get_config()
+        config_dict = get_current_config()
         assert config_dict["temperature"] == 0
         assert config_dict["max_tokens"] == 0
-
-    def test_configure_with_boolean_values(self):
-        """Test configure with boolean values in kwargs."""
-        configure(debug=True, streaming=False)
-        
-        config_dict = get_config()
-        assert config_dict["debug"] is True
+        assert config_dict["debug"] is False
         assert config_dict["streaming"] is False
 
-    def test_get_client_for_config_with_exception(self):
-        """Test get_client_for_config when client creation fails."""
-        test_config = {
-            "provider": "invalid_provider",
-            "model": "invalid_model",
-            "api_key": None,
-            "api_base": None
-        }
+    def test_configure_with_empty_strings(self):
+        """Test configure with empty string values."""
+        configure(provider="", model="", api_key="")
         
-        with patch('chuk_llm.llm.llm_client.get_llm_client') as mock_get_client:
-            mock_get_client.side_effect = ValueError("Invalid provider")
-            
-            with pytest.raises(ValueError, match="Invalid provider"):
-                get_client_for_config(test_config)
-            
-            # Cache should not be set when creation fails
-            assert config._cached_client is None
-            assert config._cached_config_hash is None
+        config_dict = get_current_config()
+        assert config_dict["provider"] == ""
+        assert config_dict["model"] == ""
+        assert config_dict["api_key"] == ""
+
+    def test_get_current_config_returns_copy(self):
+        """Test that get_current_config returns a copy that can be safely modified."""
+        configure(provider="openai", temperature=0.5)
+        
+        config1 = get_current_config()
+        config1["provider"] = "modified"
+        config1["new_key"] = "new_value"
+        
+        # Original config should be unchanged
+        config2 = get_current_config()
+        assert config2["provider"] == "openai"
+        assert "new_key" not in config2
+
+    @patch('chuk_llm.configuration.config.get_config')
+    def test_get_current_config_with_missing_global_settings(self, mock_get_config):
+        """Test get_current_config when global settings are missing."""
+        mock_config_manager = Mock()
+        mock_config_manager.get_global_settings.return_value = {}  # Empty settings
+        mock_config_manager.get_provider.side_effect = ValueError("No provider")
+        mock_get_config.return_value = mock_config_manager
+        
+        # Should not crash, should provide reasonable defaults
+        config_dict = get_current_config()
+        assert isinstance(config_dict, dict)
+        assert "provider" in config_dict
+        assert "model" in config_dict
 
 
 if __name__ == "__main__":

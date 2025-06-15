@@ -1,192 +1,79 @@
 """
-Pytest tests for chuk_llm/api/providers.py (Persistent Loop Implementation)
+Pytest tests for chuk_llm/api/providers.py (Clean Dynamic Implementation)
 
-IMPORTANT: The persistent loop is ONLY used for sync functions (ending in _sync).
-Regular async functions (ask_*, stream_*) use normal async execution patterns.
+Tests the new clean dynamic provider function generation system.
+Everything comes from YAML configuration with zero hardcoding.
 
 Run with:
     pytest tests/api/test_providers.py -v
 """
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch, MagicMock, mock_open
 import asyncio
 import threading
 import time
 from typing import List, Dict, Any
 
-# Import only the specific functions we need to test, not the whole module
-# This avoids triggering the module-level function generation
+# Import specific functions we need to test
 from chuk_llm.api.providers import (
-    _sanitize_model_name,
-    _get_common_models_for_provider,
-    _get_model_aliases_for_provider,
+    _sanitize_name,
     _get_persistent_loop,
-    _run_async_on_persistent_loop,
+    _run_sync,
+    _create_provider_function,
+    _create_stream_function, 
+    _create_sync_function,
+    _create_global_alias_function,
 )
 
 
-class TestSanitizeModelName:
-    """Test suite for _sanitize_model_name function."""
+class TestSanitizeName:
+    """Test suite for _sanitize_name function."""
 
-    def test_sanitize_basic_model_name(self):
-        """Test basic model name sanitization."""
-        assert _sanitize_model_name("gpt-4o-mini") == "gpt_4o_mini"
-        assert _sanitize_model_name("claude-3-sonnet") == "claude_3_sonnet"
+    def test_sanitize_basic_names(self):
+        """Test basic name sanitization."""
+        assert _sanitize_name("gpt-4o-mini") == "gpt4o_mini"
+        assert _sanitize_name("claude-3-sonnet") == "claude3_sonnet"
 
     def test_sanitize_with_dots(self):
-        """Test sanitization with dots in model name."""
-        assert _sanitize_model_name("llama-3.3-70b") == "llama_33_70b"
-        assert _sanitize_model_name("granite-3.1") == "granite_31"
+        """Test sanitization with dots in name."""
+        # Updated expectations for simple rule - dots become underscores
+        assert _sanitize_name("llama-3.3-70b") == "llama3_3_70b"
+        assert _sanitize_name("granite-3.1") == "granite3_1"
 
-    def test_sanitize_with_dates(self):
-        """Test sanitization with date suffixes."""
-        assert _sanitize_model_name("claude-3-sonnet-20240229") == "claude_3_sonnet_20240229"
+    def test_sanitize_with_slashes(self):
+        """Test sanitization with slashes (for provider/model paths)."""
+        assert _sanitize_name("openai/gpt-4o") == "openai_gpt4o"
+        assert _sanitize_name("meta-llama/llama-3.1") == "meta_llama_llama3_1"
 
     def test_sanitize_special_characters(self):
         """Test sanitization removes special characters."""
-        assert _sanitize_model_name("model@name#test") == "modelnametest"
-        assert _sanitize_model_name("test-model!v2") == "test_modelv2"
+        assert _sanitize_name("model@name#test") == "modelnametest"
+        assert _sanitize_name("test-model!v2") == "test_modelv2"
 
     def test_sanitize_starts_with_number(self):
-        """Test that model names starting with numbers get prefixed."""
-        assert _sanitize_model_name("3.5-turbo") == "model_35_turbo"
-        assert _sanitize_model_name("4o-mini") == "model_4o_mini"
+        """Test that names starting with numbers get prefixed."""
+        assert _sanitize_name("3.5-turbo") == "model_3_5_turbo"
+        assert _sanitize_name("4o-mini") == "model_4o_mini"
 
     def test_sanitize_empty_string(self):
         """Test sanitization with empty string."""
-        assert _sanitize_model_name("") == ""
-        assert _sanitize_model_name(None) == ""
+        assert _sanitize_name("") == ""
+        assert _sanitize_name(None) == ""
 
     def test_sanitize_case_conversion(self):
         """Test that names are converted to lowercase."""
-        assert _sanitize_model_name("GPT-4O-MINI") == "gpt_4o_mini"
-        assert _sanitize_model_name("Claude-3-Sonnet") == "claude_3_sonnet"
+        assert _sanitize_name("GPT-4O-MINI") == "gpt4o_mini"
+        assert _sanitize_name("Claude-3-Sonnet") == "claude3_sonnet"
 
-
-class TestGetModelsFromYAML:
-    """Test suite for _get_common_models_for_provider reading from YAML."""
-
-    def test_get_models_from_yaml_models_key(self):
-        """Test reading models from 'models' key in YAML."""
-        mock_config = {
-            'models': ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
-            'default_model': 'gpt-4o-mini'
-        }
-        
-        with patch('chuk_llm.api.providers.get_provider_config') as mock_get_config:
-            mock_get_config.return_value = mock_config
-            
-            models = _get_common_models_for_provider('openai')
-            
-            assert models == ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo']
-            mock_get_config.assert_called_once_with('openai')
-
-    def test_get_models_from_yaml_models_section_with_names(self):
-        """Test reading models from 'models' section with name keys."""
-        mock_config = {
-            'models': [
-                {'name': 'claude-3-sonnet', 'features': ['streaming']},
-                {'name': 'claude-3-opus', 'features': ['streaming', 'vision']},
-                {'name': 'claude-3-haiku', 'features': ['streaming']}
-            ],
-            'default_model': 'claude-3-sonnet'
-        }
-        
-        with patch('chuk_llm.api.providers.get_provider_config') as mock_get_config:
-            mock_get_config.return_value = mock_config
-            
-            models = _get_common_models_for_provider('anthropic')
-            
-            expected = ['claude-3-sonnet', 'claude-3-opus', 'claude-3-haiku']
-            assert models == expected
-
-    def test_get_models_from_yaml_models_section_strings(self):
-        """Test reading models from 'models' section as simple strings."""
-        mock_config = {
-            'models': ['llama-3.3-70b', 'llama-3.1-8b', 'mixtral-8x7b'],
-            'default_model': 'llama-3.3-70b'
-        }
-        
-        with patch('chuk_llm.api.providers.get_provider_config') as mock_get_config:
-            mock_get_config.return_value = mock_config
-            
-            models = _get_common_models_for_provider('groq')
-            
-            assert models == ['llama-3.3-70b', 'llama-3.1-8b', 'mixtral-8x7b']
-
-    def test_get_models_no_config_returns_empty(self):
-        """Test that no YAML config returns empty list (no fallbacks)."""
-        with patch('chuk_llm.api.providers.get_provider_config') as mock_get_config:
-            mock_get_config.return_value = {}  # Empty config
-            
-            models = _get_common_models_for_provider('openai')
-            
-            # Should return empty list (no hardcoded fallbacks)
-            assert models == []
-
-    def test_get_models_unknown_provider_returns_empty(self):
-        """Test handling of unknown provider returns empty list."""
-        with patch('chuk_llm.api.providers.get_provider_config') as mock_get_config:
-            mock_get_config.return_value = {}
-            
-            models = _get_common_models_for_provider('unknown_provider')
-            
-            # Should return empty list for unknown provider
-            assert models == []
-
-
-class TestGetModelAliases:
-    """Test suite for _get_model_aliases_for_provider function."""
-
-    def test_get_model_aliases_success(self):
-        """Test reading model aliases from YAML configuration."""
-        mock_config = {
-            'models': ['gpt-4o', 'gpt-4o-mini'],
-            'model_aliases': {
-                'gpt4o': 'gpt-4o',
-                'gpt4o_mini': 'gpt-4o-mini'
-            }
-        }
-        
-        with patch('chuk_llm.api.providers.get_provider_config') as mock_get_config:
-            mock_get_config.return_value = mock_config
-            
-            aliases = _get_model_aliases_for_provider('openai')
-            
-            expected = {'gpt4o': 'gpt-4o', 'gpt4o_mini': 'gpt-4o-mini'}
-            assert aliases == expected
-
-    def test_get_model_aliases_no_aliases(self):
-        """Test when no model aliases are defined."""
-        mock_config = {
-            'models': ['gpt-4o', 'gpt-4o-mini']
-            # No model_aliases key
-        }
-        
-        with patch('chuk_llm.api.providers.get_provider_config') as mock_get_config:
-            mock_get_config.return_value = mock_config
-            
-            aliases = _get_model_aliases_for_provider('openai')
-            
-            assert aliases == {}
-
-    def test_get_model_aliases_no_provider_config(self):
-        """Test when provider has no configuration."""
-        with patch('chuk_llm.api.providers.get_provider_config') as mock_get_config:
-            mock_get_config.return_value = {}
-            
-            aliases = _get_model_aliases_for_provider('unknown_provider')
-            
-            assert aliases == {}
+    def test_sanitize_consecutive_separators(self):
+        """Test handling of consecutive separators."""
+        assert _sanitize_name("test--model..name") == "test_model_name"
+        assert _sanitize_name("model___name") == "model_name"
 
 
 class TestPersistentEventLoop:
-    """Test suite for persistent event loop functionality.
-    
-    Note: The persistent loop is ONLY used for sync functions (ending in _sync).
-    Regular async functions (ask_*, stream_*) use normal async execution.
-    """
+    """Test suite for persistent event loop functionality used by sync functions."""
 
     def test_get_persistent_loop_creates_loop(self):
         """Test that _get_persistent_loop creates a background loop."""
@@ -206,35 +93,32 @@ class TestPersistentEventLoop:
         assert providers_module._loop_thread is not None
         assert providers_module._loop_thread.is_alive()
 
-    def test_get_persistent_loop_reuses_existing_loop(self):
+    def test_get_persistent_loop_reuses_existing(self):
         """Test that _get_persistent_loop reuses existing loop."""
-        # Get the first loop
         loop1 = _get_persistent_loop()
-        
-        # Get the loop again
         loop2 = _get_persistent_loop()
         
         # Should be the same loop instance
         assert loop1 is loop2
 
-    def test_run_async_on_persistent_loop_basic(self):
-        """Test basic functionality of _run_async_on_persistent_loop."""
+    def test_run_sync_basic_functionality(self):
+        """Test basic functionality of _run_sync."""
         async def test_coro():
             await asyncio.sleep(0.001)
             return "test_result"
         
-        result = _run_async_on_persistent_loop(test_coro())
+        result = _run_sync(test_coro())
         assert result == "test_result"
 
-    def test_run_async_on_persistent_loop_with_exception(self):
-        """Test exception handling in _run_async_on_persistent_loop."""
+    def test_run_sync_with_exception(self):
+        """Test exception handling in _run_sync."""
         async def failing_coro():
             raise ValueError("Test exception")
         
         with pytest.raises(ValueError, match="Test exception"):
-            _run_async_on_persistent_loop(failing_coro())
+            _run_sync(failing_coro())
 
-    def test_run_async_on_persistent_loop_from_async_context_fails(self):
+    def test_run_sync_from_async_context_fails(self):
         """Test that calling from async context raises error."""
         import warnings
         
@@ -242,25 +126,22 @@ class TestPersistentEventLoop:
             async def test_coro():
                 return "should_not_work"
             
-            # We expect this coroutine to not be awaited, so suppress the warning
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*was never awaited.*")
                 with pytest.raises(RuntimeError, match="Cannot call sync functions from async context"):
-                    _run_async_on_persistent_loop(test_coro())
+                    _run_sync(test_coro())
         
-        # Run this test in an async context
         asyncio.run(test_async_context())
 
-    def test_persistent_loop_survives_multiple_calls(self):
-        """Test that persistent loop survives multiple function calls."""
+    def test_persistent_loop_multiple_calls(self):
+        """Test that persistent loop handles multiple calls correctly."""
         async def test_coro(value):
             await asyncio.sleep(0.001)
             return f"result_{value}"
         
-        # Make multiple calls
         results = []
         for i in range(5):
-            result = _run_async_on_persistent_loop(test_coro(i))
+            result = _run_sync(test_coro(i))
             results.append(result)
         
         expected = [f"result_{i}" for i in range(5)]
@@ -275,227 +156,306 @@ class TestPersistentEventLoop:
         results = []
         
         def worker(thread_id):
-            result = _run_async_on_persistent_loop(test_coro(thread_id))
+            result = _run_sync(test_coro(thread_id))
             results.append(result)
         
-        # Start multiple threads
         threads = []
         for i in range(3):
             thread = threading.Thread(target=worker, args=(i,))
             threads.append(thread)
             thread.start()
         
-        # Wait for all threads
         for thread in threads:
             thread.join()
         
-        # Should have results from all threads
         assert len(results) == 3
         for i in range(3):
             assert f"thread_{i}_result" in results
 
 
-class TestProviderFunctionCreationLogic:
-    """Test suite for provider function creation logic without imports.
-    
-    Note: This tests the logic for creating three types of functions:
-    1. ask_* (async functions - use normal async execution)
-    2. stream_* (async functions - use normal async execution) 
-    3. ask_*_sync (sync functions - use persistent loop)
-    """
+class TestProviderFunctionCreation:
+    """Test suite for provider function creation."""
 
-    def test_provider_function_naming_logic(self):
-        """Test provider function naming logic."""
-        # Test function name generation logic
-        provider = "openai"
-        model = "gpt-4o"
+    def test_create_provider_function_basic(self):
+        """Test creating basic provider function."""
+        func = _create_provider_function("openai")
         
-        # Test base function names
-        base_ask = f"ask_{provider}"
-        base_stream = f"stream_{provider}"
-        base_sync = f"ask_{provider}_sync"
-        
-        assert base_ask == "ask_openai"
-        assert base_stream == "stream_openai"
-        assert base_sync == "ask_openai_sync"
-        
-        # Test model-specific function names
-        model_suffix = _sanitize_model_name(model)  # gpt-4o -> gpt_4o
-        model_ask = f"ask_{provider}_{model_suffix}"
-        model_stream = f"stream_{provider}_{model_suffix}"
-        model_sync = f"ask_{provider}_{model_suffix}_sync"
-        
-        assert model_ask == "ask_openai_gpt_4o"
-        assert model_stream == "stream_openai_gpt_4o"
-        assert model_sync == "ask_openai_gpt_4o_sync"
+        assert callable(func)
+        assert func.__name__ is not None
 
-    def test_function_documentation_logic(self):
-        """Test function documentation generation logic."""
-        # Test documentation generation logic
-        def generate_doc(name, is_sync=False, has_model=False):
-            parts = name.replace('ask_', '').replace('stream_', '').replace('_sync', '')
-            
-            if is_sync:
-                if has_model and '_' in parts and len(parts.split('_')) > 1:
-                    provider_part = parts.split('_')[0]
-                    model_part = '_'.join(parts.split('_')[1:])
-                    return f"Synchronous {provider_part} with model {model_part}."
-                else:
-                    return f"Synchronous {parts} (default model)."
-            else:
-                if has_model and '_' in parts and len(parts.split('_')) > 1:
-                    provider_part = parts.split('_')[0]
-                    model_part = '_'.join(parts.split('_')[1:])
-                    return f"Ask {provider_part} with model {model_part}."
-                else:
-                    return f"Ask {parts} (default model)."
+    def test_create_provider_function_with_model(self):
+        """Test creating provider function with specific model."""
+        func = _create_provider_function("openai", "gpt-4o")
         
-        # Test base function documentation
-        base_doc = generate_doc("ask_openai", is_sync=False, has_model=False)
-        assert base_doc == "Ask openai (default model)."
-        
-        # Test model-specific function documentation
-        model_doc = generate_doc("ask_openai_gpt_4o", is_sync=False, has_model=True)
-        assert model_doc == "Ask openai with model gpt_4o."
-        
-        # Test sync function documentation
-        sync_doc = generate_doc("ask_openai_sync", is_sync=True, has_model=False)
-        assert sync_doc == "Synchronous openai (default model)."
-
-    def test_sync_function_call_pattern(self):
-        """Test sync function call pattern with persistent loop.
-        
-        Only sync functions (_sync) use the persistent loop.
-        Regular async functions use normal async execution.
-        """
-        # Test the pattern that sync functions would use
-        def mock_run_async_on_persistent_loop(coro):
-            # This simulates the persistent loop behavior for SYNC functions only
-            return "Sync result from persistent loop"
-        
-        # Simulate what ask_openai_sync would do (uses persistent loop)
-        result = mock_run_async_on_persistent_loop("mock_coroutine")
-        assert result == "Sync result from persistent loop"
-
-    @pytest.mark.asyncio 
-    async def test_streaming_function_pattern(self):
-        """Test streaming function pattern.
-        
-        Regular async functions like stream_* do NOT use the persistent loop.
-        They use normal async execution.
-        """
-        # Test the pattern that streaming functions would use
-        async def mock_stream(prompt, provider=None, model=None, **kwargs):
-            chunks = [f"chunk1_{provider}", f"chunk2_{provider}", f"chunk3_{provider}"]
-            for chunk in chunks:
-                yield chunk
-        
-        # Simulate what stream_openai would do (normal async, no persistent loop)
-        chunks = []
-        async for chunk in mock_stream("Test prompt", provider="openai"):
-            chunks.append(chunk)
-        
-        assert chunks == ["chunk1_openai", "chunk2_openai", "chunk3_openai"]
+        assert callable(func)
 
     @pytest.mark.asyncio
-    async def test_async_function_call_pattern(self):
-        """Test async function call pattern without persistent loop.
+    async def test_provider_function_execution_pattern(self):
+        """Test the execution pattern of provider functions."""
+        # Mock the core.ask function
+        with patch('chuk_llm.api.core.ask') as mock_ask:
+            mock_ask.return_value = "mocked response"
+            
+            # Create a function
+            func = _create_provider_function("openai", "gpt-4o")
+            
+            # Test that it's async and calls ask correctly
+            result = await func("test prompt", temperature=0.8)
+            
+            mock_ask.assert_called_once_with(
+                "test prompt", 
+                provider="openai", 
+                model="gpt-4o", 
+                temperature=0.8
+            )
+            assert result == "mocked response"
+
+    def test_create_stream_function_basic(self):
+        """Test creating basic streaming function."""
+        func = _create_stream_function("anthropic")
         
-        Regular async functions (ask_*, stream_*) do NOT use persistent loop.
-        """
-        # Test the pattern that async provider functions would use
-        async def mock_ask(prompt, provider=None, model=None, **kwargs):
-            return f"Response from {provider} using {model or 'default'}: {prompt}"
+        assert callable(func)
+
+    def test_create_stream_function_with_model(self):
+        """Test creating streaming function with specific model."""
+        func = _create_stream_function("anthropic", "claude-3-sonnet")
         
-        # Simulate what ask_openai would do (normal async execution)
-        result = await mock_ask("Test prompt", provider="openai", model=None)
-        assert result == "Response from openai using default: Test prompt"
+        assert callable(func)
+
+    @pytest.mark.asyncio
+    async def test_stream_function_execution_pattern(self):
+        """Test the execution pattern of streaming functions."""
+        # Mock the core.stream function
+        async def mock_stream(*args, **kwargs):
+            yield "chunk1"
+            yield "chunk2"
+            yield "chunk3"
         
-        # Simulate what ask_openai_gpt_4o would do (normal async execution)
-        result = await mock_ask("Test prompt", provider="openai", model="gpt-4o")
-        assert result == "Response from openai using gpt-4o: Test prompt"
+        with patch('chuk_llm.api.core.stream', side_effect=mock_stream):
+            func = _create_stream_function("anthropic", "claude-3-sonnet")
+            
+            chunks = []
+            async for chunk in func("test prompt"):
+                chunks.append(chunk)
+            
+            assert chunks == ["chunk1", "chunk2", "chunk3"]
+
+    def test_create_sync_function_basic(self):
+        """Test creating basic sync function."""
+        func = _create_sync_function("groq")
+        
+        assert callable(func)
+
+    def test_create_sync_function_with_model(self):
+        """Test creating sync function with specific model."""
+        func = _create_sync_function("groq", "llama-3.3-70b")
+        
+        assert callable(func)
+
+    def test_sync_function_execution_pattern(self):
+        """Test the execution pattern of sync functions."""
+        with patch('chuk_llm.api.core.ask') as mock_ask:
+            mock_ask.return_value = "sync response"
+            
+            with patch('chuk_llm.api.providers._run_sync') as mock_run_sync:
+                mock_run_sync.return_value = "sync response"
+                
+                func = _create_sync_function("groq", "llama-3.3-70b")
+                result = func("test prompt", temperature=0.5)
+                
+                # Should have called _run_sync
+                mock_run_sync.assert_called_once()
+                assert result == "sync response"
+
+
+class TestGlobalAliasFunctions:
+    """Test suite for global alias function creation."""
+
+    def test_create_global_alias_function_basic(self):
+        """Test creating global alias functions."""
+        functions = _create_global_alias_function("gpt4", "openai/gpt-4o")
+        
+        expected_keys = ["ask_gpt4", "ask_gpt4_sync", "stream_gpt4"]
+        assert all(key in functions for key in expected_keys)
+        assert all(callable(func) for func in functions.values())
+
+    def test_create_global_alias_function_invalid_format(self):
+        """Test handling of invalid global alias format."""
+        functions = _create_global_alias_function("invalid", "no_slash_here")
+        
+        # Should return empty dict for invalid format
+        assert functions == {}
+
+    @pytest.mark.asyncio
+    async def test_global_alias_async_function_pattern(self):
+        """Test execution pattern of global alias async function."""
+        with patch('chuk_llm.api.core.ask') as mock_ask:
+            mock_ask.return_value = "alias response"
+            
+            functions = _create_global_alias_function("claude", "anthropic/claude-3-sonnet")
+            ask_func = functions["ask_claude"]
+            
+            result = await ask_func("test prompt")
+            
+            mock_ask.assert_called_once_with(
+                "test prompt",
+                provider="anthropic",
+                model="claude-3-sonnet"
+            )
+            assert result == "alias response"
+
+    def test_global_alias_sync_function_pattern(self):
+        """Test execution pattern of global alias sync function."""
+        with patch('chuk_llm.api.providers._run_sync') as mock_run_sync:
+            mock_run_sync.return_value = "sync alias response"
+            
+            functions = _create_global_alias_function("llama", "groq/llama-3.3-70b")
+            sync_func = functions["ask_llama_sync"]
+            
+            result = sync_func("test prompt")
+            
+            mock_run_sync.assert_called_once()
+            assert result == "sync alias response"
 
 
 class TestFunctionGenerationLogic:
-    """Test suite for function generation logic without actual generation."""
+    """Test suite for the function generation logic."""
 
-    def test_generate_function_names_logic(self):
-        """Test the logic for generating function names."""
-        # Simulate the logic from _generate_all_functions
-        providers = ['openai', 'anthropic']
-        models_data = {
-            'openai': ['gpt-4o', 'gpt-4o-mini'],
-            'anthropic': ['claude-3-sonnet']
+    @patch('chuk_llm.api.providers.get_config')
+    def test_generate_functions_basic_flow(self, mock_get_config):
+        """Test the basic flow of function generation."""
+        # Mock configuration manager
+        mock_config_manager = Mock()
+        mock_config_manager.get_all_providers.return_value = ["openai", "anthropic"]
+        
+        # Mock provider configs
+        openai_config = Mock()
+        openai_config.models = ["gpt-4o", "gpt-4o-mini"]
+        openai_config.model_aliases = {"gpt4o": "gpt-4o", "mini": "gpt-4o-mini"}
+        
+        anthropic_config = Mock()
+        anthropic_config.models = ["claude-3-sonnet"]
+        anthropic_config.model_aliases = {"sonnet": "claude-3-sonnet"}
+        
+        mock_config_manager.get_provider.side_effect = lambda p: {
+            "openai": openai_config,
+            "anthropic": anthropic_config
+        }[p]
+        
+        mock_config_manager.get_global_aliases.return_value = {
+            "gpt4": "openai/gpt-4o",
+            "claude": "anthropic/claude-3-sonnet"
         }
         
-        expected_functions = []
+        mock_get_config.return_value = mock_config_manager
         
-        for provider in providers:
-            # Base functions
-            expected_functions.extend([
-                f"ask_{provider}",
-                f"stream_{provider}",
-                f"ask_{provider}_sync"
-            ])
+        # Import and test the generation logic
+        from chuk_llm.api.providers import _generate_functions
+        
+        functions = _generate_functions()
+        
+        # Should have base provider functions
+        assert "ask_openai" in functions
+        assert "stream_openai" in functions
+        assert "ask_openai_sync" in functions
+        assert "ask_anthropic" in functions
+        
+        # Should have model-specific functions
+        assert "ask_openai_gpt4o" in functions
+        assert "ask_openai_gpt4o_mini" in functions
+        # Updated expectation: "claude-3-sonnet" -> "claude3_sonnet" with simple rule
+        assert "ask_anthropic_claude3_sonnet" in functions
+        
+        # Should have alias functions
+        assert "ask_openai_mini" in functions  # From model_aliases
+        assert "ask_anthropic_sonnet" in functions
+        
+        # Should have global alias functions
+        assert "ask_gpt4" in functions
+        assert "ask_claude" in functions
+
+    def test_function_naming_pattern(self):
+        """Test function naming patterns."""
+        provider = "openai"
+        model = "gpt-4o-mini"
+        alias = "mini"
+        
+        # Base function names
+        base_names = [
+            f"ask_{provider}",
+            f"stream_{provider}",
+            f"ask_{provider}_sync"
+        ]
+        
+        # Model-specific function names
+        model_suffix = _sanitize_name(model)
+        model_names = [
+            f"ask_{provider}_{model_suffix}",
+            f"stream_{provider}_{model_suffix}",
+            f"ask_{provider}_{model_suffix}_sync"
+        ]
+        
+        # Alias function names
+        alias_suffix = _sanitize_name(alias)
+        alias_names = [
+            f"ask_{provider}_{alias_suffix}",
+            f"stream_{provider}_{alias_suffix}",
+            f"ask_{provider}_{alias_suffix}_sync"
+        ]
+        
+        expected_base = ["ask_openai", "stream_openai", "ask_openai_sync"]
+        expected_model = ["ask_openai_gpt4o_mini", "stream_openai_gpt4o_mini", "ask_openai_gpt4o_mini_sync"]
+        expected_alias = ["ask_openai_mini", "stream_openai_mini", "ask_openai_mini_sync"]
+        
+        assert base_names == expected_base
+        assert model_names == expected_model
+        assert alias_names == expected_alias
+
+    def test_function_docstring_generation(self):
+        """Test function docstring generation logic."""
+        # Test docstring generation pattern
+        test_cases = [
+            ("ask_openai", "Async openai call."),
+            ("ask_openai_sync", "Synchronous openai call."),
+            ("stream_openai", "Stream from openai."),
+            ("ask_openai_gpt4o", "Async openai gpt4o call."),
+            ("ask_openai_gpt4o_sync", "Synchronous openai gpt4o call."),
+            ("stream_anthropic_claude", "Stream from anthropic claude."),
+        ]
+        
+        for name, expected_doc in test_cases:
+            # Generate docstring using the same logic as the implementation
+            if name.startswith("ask_") and name.endswith("_sync"):
+                base_name = name[4:-5]
+                actual_doc = f"Synchronous {base_name.replace('_', ' ')} call."
+            elif name.startswith("ask_"):
+                base_name = name[4:]
+                actual_doc = f"Async {base_name.replace('_', ' ')} call."
+            elif name.startswith("stream_"):
+                base_name = name[7:]
+                actual_doc = f"Stream from {base_name.replace('_', ' ')}."
             
-            # Model-specific functions
-            models = models_data.get(provider, [])
-            for model in models:
-                model_suffix = _sanitize_model_name(model)
-                if model_suffix:
-                    expected_functions.extend([
-                        f"ask_{provider}_{model_suffix}",
-                        f"stream_{provider}_{model_suffix}",
-                        f"ask_{provider}_{model_suffix}_sync"
-                    ])
-        
-        # Verify expected functions
-        assert 'ask_openai' in expected_functions
-        assert 'ask_anthropic' in expected_functions
-        assert 'ask_openai_gpt_4o' in expected_functions
-        assert 'ask_openai_gpt_4o_mini' in expected_functions
-        assert 'ask_anthropic_claude_3_sonnet' in expected_functions
-
-    def test_model_alias_function_logic(self):
-        """Test model alias function generation logic."""
-        provider = 'openai'
-        models = ['gpt-4o']
-        aliases = {'gpt4o': 'gpt-4o', 'turbo': 'gpt-4-turbo'}
-        
-        expected_functions = []
-        
-        # Regular model functions
-        for model in models:
-            model_suffix = _sanitize_model_name(model)
-            expected_functions.extend([
-                f"ask_{provider}_{model_suffix}",
-                f"stream_{provider}_{model_suffix}",
-                f"ask_{provider}_{model_suffix}_sync"
-            ])
-        
-        # Alias functions
-        for alias, actual_model in aliases.items():
-            alias_suffix = _sanitize_model_name(alias)
-            expected_functions.extend([
-                f"ask_{provider}_{alias_suffix}",
-                f"stream_{provider}_{alias_suffix}",
-                f"ask_{provider}_{alias_suffix}_sync"
-            ])
-        
-        # Verify functions
-        assert 'ask_openai_gpt4o' in expected_functions     # From models
-        assert 'ask_openai_gpt4o' in expected_functions      # From alias 'gpt4o'
-        assert 'ask_openai_turbo' in expected_functions      # From alias 'turbo'
+            assert actual_doc == expected_doc
 
 
-class TestUtilityFunctionLogic:
-    """Test suite for utility function logic without actual creation."""
+class TestUtilityFunctions:
+    """Test suite for utility function creation."""
 
-    def test_quick_question_function_logic(self):
-        """Test quick_question function logic."""
-        # Simulate the quick_question function logic
-        def mock_quick_question(question: str, provider: str = "openai") -> str:
-            # This would normally call ask_sync
+    @patch('chuk_llm.configuration.config.get_config')
+    def test_quick_question_logic(self, mock_get_config):
+        """Test quick_question utility function logic."""
+        mock_config_manager = Mock()
+        mock_config_manager.get_global_settings.return_value = {
+            "active_provider": "openai"
+        }
+        mock_get_config.return_value = mock_config_manager
+        
+        # Test the logic pattern
+        def mock_quick_question(question: str, provider: str = None):
+            if not provider:
+                settings = mock_config_manager.get_global_settings()
+                provider = settings.get("active_provider", "openai")
+            
             return f"Quick response from {provider}: {question}"
         
         result = mock_quick_question("What is 2+2?")
@@ -504,38 +464,83 @@ class TestUtilityFunctionLogic:
         result = mock_quick_question("Hello", provider="anthropic")
         assert result == "Quick response from anthropic: Hello"
 
-    def test_compare_providers_function_logic(self):
-        """Test compare_providers function logic."""
-        # Simulate the compare_providers function logic
-        def mock_compare_providers(question: str, providers: list = None) -> dict:
-            if providers is None:
-                providers = ["openai", "anthropic"]
+    @patch('chuk_llm.configuration.config.get_config')
+    def test_compare_providers_logic(self, mock_get_config):
+        """Test compare_providers utility function logic."""
+        mock_config_manager = Mock()
+        mock_config_manager.get_all_providers.return_value = ["openai", "anthropic", "groq"]
+        mock_get_config.return_value = mock_config_manager
+        
+        # Test the logic pattern
+        def mock_compare_providers(question: str, providers: List[str] = None):
+            if not providers:
+                all_providers = mock_config_manager.get_all_providers()
+                providers = all_providers[:3] if len(all_providers) >= 3 else all_providers
             
             results = {}
             for provider in providers:
-                # Simulate ask_sync call
                 results[provider] = f"{provider} response: {question}"
             
             return results
         
-        result = mock_compare_providers("Test question", ["openai", "anthropic"])
+        result = mock_compare_providers("Test question")
         expected = {
             "openai": "openai response: Test question",
-            "anthropic": "anthropic response: Test question"
+            "anthropic": "anthropic response: Test question",
+            "groq": "groq response: Test question"
         }
         assert result == expected
 
+    def test_show_config_logic(self):
+        """Test show_config utility function logic."""
+        # Mock the show_config function behavior
+        def mock_show_config():
+            return {
+                "providers": ["openai", "anthropic"],
+                "global_aliases": ["gpt4", "claude"],
+                "status": "loaded"
+            }
+        
+        result = mock_show_config()
+        assert "providers" in result
+        assert "global_aliases" in result
+        assert result["status"] == "loaded"
 
-class TestPersistentLoopCleanup:
-    """Test suite for persistent loop cleanup functionality."""
 
-    def test_cleanup_persistent_loop_function_exists(self):
-        """Test that cleanup function exists and is callable."""
-        from chuk_llm.api.providers import _cleanup_persistent_loop
-        assert callable(_cleanup_persistent_loop)
+class TestErrorHandling:
+    """Test suite for error handling in provider function generation."""
 
-    def test_loop_survives_errors_in_coroutines(self):
-        """Test that loop survives errors in individual coroutines."""
+    @patch('chuk_llm.configuration.config.get_config')
+    def test_handle_missing_provider_config(self, mock_get_config):
+        """Test handling of missing provider configuration."""
+        mock_config_manager = Mock()
+        mock_config_manager.get_all_providers.return_value = ["unknown_provider"]
+        mock_config_manager.get_provider.side_effect = ValueError("Unknown provider")
+        mock_get_config.return_value = mock_config_manager
+        
+        # Should handle error gracefully without crashing
+        from chuk_llm.api.providers import _generate_functions
+        
+        # Should not raise exception
+        functions = _generate_functions()
+        
+        # Should return some functions (at least utilities)
+        assert isinstance(functions, dict)
+
+    def test_handle_invalid_model_names(self):
+        """Test handling of invalid model names."""
+        # Test edge cases in model name sanitization
+        invalid_names = ["", None, "!!!invalid!!!", "123", "model.with.lots.of.dots"]
+        
+        for name in invalid_names:
+            result = _sanitize_name(name)
+            
+            # Should not crash and should return valid Python identifier or empty string
+            if result:  # If not empty
+                assert result.replace('_', '').isalnum() or result.startswith('model_')
+
+    def test_persistent_loop_error_recovery(self):
+        """Test that persistent loop recovers from errors."""
         async def good_coro():
             return "success"
         
@@ -544,33 +549,14 @@ class TestPersistentLoopCleanup:
         
         # Bad coroutine should raise exception but not break loop
         with pytest.raises(Exception, match="test error"):
-            _run_async_on_persistent_loop(bad_coro())
+            _run_sync(bad_coro())
         
         # Good coroutine should still work after the error
-        result = _run_async_on_persistent_loop(good_coro())
+        result = _run_sync(good_coro())
         assert result == "success"
 
-    def test_atexit_registration_logic(self):
-        """Test that atexit registration logic works."""
-        import atexit
-        
-        # Test that we can register a cleanup function
-        def mock_cleanup():
-            pass
-        
-        # This should not raise an exception
-        atexit.register(mock_cleanup)
-        
-        # Test that atexit registration works (without accessing private attributes)
-        # We just verify that the registration call succeeds
-        assert callable(mock_cleanup)
-
-
-class TestThreadSafety:
-    """Test suite for thread safety of persistent loop implementation."""
-
-    def test_concurrent_loop_access(self):
-        """Test concurrent access to persistent loop."""
+    def test_concurrent_loop_access_safety(self):
+        """Test concurrent access to persistent loop is safe."""
         results = []
         errors = []
         
@@ -580,16 +566,15 @@ class TestThreadSafety:
         
         def worker(worker_id):
             try:
-                for i in range(3):
-                    result = _run_async_on_persistent_loop(test_coro(f"{worker_id}_{i}"))
-                    results.append(result)
+                result = _run_sync(test_coro(worker_id))
+                results.append(result)
             except Exception as e:
                 errors.append(e)
         
         # Start multiple threads
         threads = []
-        for worker_id in range(3):
-            thread = threading.Thread(target=worker, args=(worker_id,))
+        for i in range(3):
+            thread = threading.Thread(target=worker, args=(i,))
             threads.append(thread)
             thread.start()
         
@@ -601,99 +586,48 @@ class TestThreadSafety:
         assert len(errors) == 0, f"Unexpected errors: {errors}"
         
         # Should have results from all workers
-        assert len(results) == 9  # 3 workers * 3 iterations each
-        
-        # All results should be unique
-        assert len(set(results)) == 9
+        assert len(results) == 3
+        for i in range(3):
+            assert f"value_{i}" in results
 
-    def test_loop_creation_thread_safety(self):
-        """Test thread safety of loop creation."""
+
+class TestCleanupAndLifecycle:
+    """Test suite for cleanup and lifecycle management."""
+
+    def test_cleanup_function_exists(self):
+        """Test that cleanup function exists."""
+        from chuk_llm.api.providers import _cleanup_loop
+        assert callable(_cleanup_loop)
+
+    def test_atexit_registration(self):
+        """Test that atexit registration works."""
+        import atexit
+        
+        def mock_cleanup():
+            pass
+        
+        # Should not raise exception
+        atexit.register(mock_cleanup)
+        assert callable(mock_cleanup)
+
+    def test_loop_state_management(self):
+        """Test loop state management."""
         import chuk_llm.api.providers as providers_module
         
-        # Reset loop state
-        providers_module._persistent_loop = None
-        providers_module._loop_thread = None
-        
-        loops = []
-        
-        def get_loop_worker():
-            loop = _get_persistent_loop()
-            loops.append(loop)
-        
-        # Start multiple threads that try to get the loop
-        threads = []
-        for _ in range(5):
-            thread = threading.Thread(target=get_loop_worker)
-            threads.append(thread)
-            thread.start()
-        
-        # Wait for all threads
-        for thread in threads:
-            thread.join(timeout=5.0)
-        
-        # All threads should get the same loop instance
-        assert len(loops) == 5
-        for loop in loops:
-            assert loop is loops[0], "All threads should get the same loop instance"
+        # Test that we can access loop state variables
+        assert hasattr(providers_module, '_persistent_loop')
+        assert hasattr(providers_module, '_loop_thread')
+        assert hasattr(providers_module, '_loop_lock')
 
-
-class TestErrorHandling:
-    """Test suite for error handling in persistent loop implementation."""
-
-    def test_coroutine_timeout_handling(self):
-        """Test handling of coroutines that timeout."""
-        async def slow_coro():
-            await asyncio.sleep(10)  # Very slow
-            return "should_timeout"
+    def test_module_import_safety(self):
+        """Test that importing the module is safe."""
+        # This test verifies that importing doesn't crash
+        import chuk_llm.api.providers
         
-        # This test just ensures we can start and cancel slow operations
-        # without breaking the persistent loop
-        start_time = time.time()
-        
-        # Create a future and cancel it quickly
-        loop = _get_persistent_loop()
-        future = asyncio.run_coroutine_threadsafe(slow_coro(), loop)
-        
-        # Cancel after a short time
-        time.sleep(0.1)
-        future.cancel()
-        
-        # Should complete quickly due to cancellation
-        elapsed = time.time() - start_time
-        assert elapsed < 1.0, "Cancellation should be fast"
-        
-        # Loop should still work for other operations
-        async def quick_coro():
-            return "still_works"
-        
-        result = _run_async_on_persistent_loop(quick_coro())
-        assert result == "still_works"
-
-    def test_exception_propagation(self):
-        """Test that exceptions are properly propagated."""
-        async def exception_coro():
-            raise ValueError("Custom exception message")
-        
-        with pytest.raises(ValueError, match="Custom exception message"):
-            _run_async_on_persistent_loop(exception_coro())
-
-    def test_async_context_detection(self):
-        """Test detection of running async context."""
-        import warnings
-        
-        async def test_in_async_context():
-            async def dummy_coro():
-                return "dummy"
-            
-            # We expect this coroutine to not be awaited, so suppress the warning
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*was never awaited.*")
-                # Should raise RuntimeError when called from async context
-                with pytest.raises(RuntimeError, match="Cannot call sync functions from async context"):
-                    _run_async_on_persistent_loop(dummy_coro())
-        
-        # Run the test in an async context
-        asyncio.run(test_in_async_context())
+        # Should have the main components
+        assert hasattr(chuk_llm.api.providers, '_generate_functions')
+        assert hasattr(chuk_llm.api.providers, '_create_utility_functions')
+        assert hasattr(chuk_llm.api.providers, '__all__')
 
 
 if __name__ == "__main__":

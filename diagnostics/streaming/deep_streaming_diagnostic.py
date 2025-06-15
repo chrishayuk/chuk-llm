@@ -5,18 +5,18 @@ Deep diagnostic to find where streaming is getting buffered.
 import asyncio
 import time
 import logging
-from chuk_llm.llm.llm_client import get_llm_client
+from chuk_llm.llm.client import get_client
 from chuk_llm.llm.configuration.provider_config import ProviderConfig
 
 # Enable debug logging
 logging.basicConfig(level=logging.DEBUG)
 
-async def test_llm_client_directly():
+async def test_client_directly():
     """Test the LLM client directly to see if it's the source of buffering."""
     print("=== Testing LLM Client Directly ===")
     
     # Create client directly (same as ChukAgent does)
-    client = get_llm_client(
+    client = get_client(
         provider="openai",
         model="gpt-4o-mini",
         config=ProviderConfig()
@@ -142,7 +142,7 @@ async def test_raw_openai():
 
 async def main():
     """Run all diagnostic tests."""
-    await test_llm_client_directly()
+    await test_client_directly()
     await test_raw_openai()
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ Test Ollama provider streaming behavior.
 """
 import asyncio
 import time
-from chuk_llm.llm.llm_client import get_llm_client
+from chuk_llm.llm.client import get_client
 from chuk_llm.llm.configuration.provider_config import ProviderConfig
 
 async def test_ollama_streaming():
@@ -13,7 +13,7 @@ async def test_ollama_streaming():
     
     try:
         # Get Ollama client
-        client = get_llm_client(
+        client = get_client(
             provider="ollama",
             model="qwen3",  # or whatever model you have available
             config=ProviderConfig()

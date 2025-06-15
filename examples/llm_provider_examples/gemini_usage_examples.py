@@ -36,8 +36,8 @@ if not os.getenv("GEMINI_API_KEY"):
     sys.exit(1)
 
 try:
-    from chuk_llm.llm.llm_client import get_llm_client
-    from chuk_llm.llm.configuration.capabilities import CapabilityChecker
+    from chuk_llm.llm.client import get_client
+    from chuk_llm.configuration.capabilities import CapabilityChecker
 except ImportError as e:
     print(f"❌ Import error: {e}")
     print("   Please make sure you're running from the chuk-llm directory")
@@ -52,7 +52,7 @@ async def basic_text_example(model: str = "gemini-2.5-flash-preview-05-20"):
     print(f"\n🤖 Basic Text Completion with {model}")
     print("=" * 60)
     
-    client = get_llm_client("gemini", model=model)
+    client = get_client("gemini", model=model)
     
     messages = [
         {"role": "user", "content": "Explain large language models in simple terms (2-3 sentences)."}
@@ -76,7 +76,7 @@ async def streaming_example(model: str = "gemini-2.5-flash-preview-05-20"):
     print(f"\n⚡ Streaming Example with {model}")
     print("=" * 60)
     
-    client = get_llm_client("gemini", model=model)
+    client = get_client("gemini", model=model)
     
     messages = [
         {"role": "user", "content": "Write a short poem about the future of technology."}
@@ -117,7 +117,7 @@ async def function_calling_example(model: str = "gemini-2.5-flash-preview-05-20"
         print(f"⚠️  Skipping function calling: {', '.join(issues)}")
         return None
     
-    client = get_llm_client("gemini", model=model)
+    client = get_client("gemini", model=model)
     
     # Define tools
     tools = [
@@ -238,7 +238,7 @@ async def vision_example(model: str = "gemini-2.5-flash-preview-05-20"):
         print(f"⚠️  Skipping vision: {', '.join(issues)}")
         return None
     
-    client = get_llm_client("gemini", model=model)
+    client = get_client("gemini", model=model)
     
     # Simple test image (1x1 red pixel)
     test_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
@@ -291,7 +291,7 @@ async def system_instructions_example(model: str = "gemini-2.5-flash-preview-05-
     print(f"\n🎭 System Instructions Example with {model}")
     print("=" * 60)
     
-    client = get_llm_client("gemini", model=model)
+    client = get_client("gemini", model=model)
     
     # Test different system instructions
     instructions = [
@@ -346,7 +346,7 @@ async def json_mode_example(model: str = "gemini-2.5-flash-preview-05-20"):
     print(f"\n📋 JSON Mode Example with {model}")
     print("=" * 60)
     
-    client = get_llm_client("gemini", model=model)
+    client = get_client("gemini", model=model)
     
     messages = [
         {
@@ -414,7 +414,7 @@ async def model_comparison_example():
     for model in models:
         try:
             print(f"🔄 Testing {model}...")
-            client = get_llm_client("gemini", model=model)
+            client = get_client("gemini", model=model)
             messages = [{"role": "user", "content": prompt}]
             
             start_time = time.time()
@@ -470,7 +470,7 @@ async def multiple_models_example():
     for model in models_to_test:
         try:
             print(f"🔄 Testing {model}...")
-            client = get_llm_client("gemini", model=model)
+            client = get_client("gemini", model=model)
             messages = [{"role": "user", "content": prompt}]
             
             start_time = time.time()
@@ -494,7 +494,7 @@ async def simple_chat_example(model: str = "gemini-2.5-flash-preview-05-20"):
     print(f"\n💬 Simple Chat Interface")
     print("=" * 60)
     
-    client = get_llm_client("gemini", model=model)
+    client = get_client("gemini", model=model)
     
     # Simulate a simple conversation
     conversation = [
@@ -532,7 +532,7 @@ async def model_info_example(model: str = "gemini-2.5-flash-preview-05-20"):
     print(f"\n📋 Model Information for {model}")
     print("=" * 60)
     
-    client = get_llm_client("gemini", model=model)
+    client = get_client("gemini", model=model)
     
     # Get model info from client
     if hasattr(client, 'get_model_info'):
@@ -559,7 +559,7 @@ async def large_context_example(model: str = "gemini-2.5-flash-preview-05-20"):
     print(f"\n📚 Large Context Test with {model}")
     print("=" * 60)
     
-    client = get_llm_client("gemini", model=model)
+    client = get_client("gemini", model=model)
     
     # Create a longer context to test Gemini's large context window
     long_text = """

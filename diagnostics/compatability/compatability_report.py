@@ -23,7 +23,7 @@ warnings.filterwarnings('ignore', message='.*function_call.*')
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from chuk_llm.llm.llm_client import get_llm_client
+from chuk_llm.llm.client import get_client
 
 
 class CompatibilityReportGenerator:
@@ -105,7 +105,7 @@ class CompatibilityReportGenerator:
         
         for provider in providers:
             try:
-                client = get_llm_client(provider)
+                client = get_client(provider)
                 
                 # Test method availability
                 method_compat = {}
@@ -175,7 +175,7 @@ class CompatibilityReportGenerator:
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     
-                    client = get_llm_client(provider)
+                    client = get_client(provider)
                     
                     # Test non-streaming response
                     response = await client.create_completion(test_message, stream=False)
@@ -263,7 +263,7 @@ class CompatibilityReportGenerator:
                 with warnings.catch_warnings():
                     warnings.simplefilter("ignore")
                     
-                    client = get_llm_client(provider)
+                    client = get_client(provider)
                     
                     # Test tool calling with enhanced error handling
                     try:

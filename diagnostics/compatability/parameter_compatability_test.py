@@ -20,7 +20,7 @@ warnings.filterwarnings('ignore', category=UserWarning)
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from chuk_llm.llm.llm_client import get_llm_client
+from chuk_llm.llm.client import get_client
 
 
 class ProviderAwareParameterTester:
@@ -179,7 +179,7 @@ class ProviderAwareParameterTester:
         }
         
         try:
-            client = get_llm_client(provider)
+            client = get_client(provider)
             total_tests = 0
             passed_tests = 0
             

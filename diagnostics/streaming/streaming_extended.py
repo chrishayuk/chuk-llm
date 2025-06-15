@@ -5,7 +5,7 @@ Extended Streaming Test - Tests with longer content to verify real streaming
 """
 import asyncio
 import time
-from chuk_llm.llm.llm_client import get_llm_client
+from chuk_llm.llm.client import get_client
 from chuk_llm.llm.configuration.provider_config import ProviderConfig
 
 async def test_extended_streaming():
@@ -13,7 +13,7 @@ async def test_extended_streaming():
     print("=== Extended Streaming Test ===")
     print("Testing with longer content to verify real-time streaming\n")
     
-    client = get_llm_client(
+    client = get_client(
         provider="openai",
         model="gpt-4o-mini",
         config=ProviderConfig()
@@ -117,7 +117,7 @@ async def test_parallel_streaming():
     print("\n\n=== Parallel Streaming Test ===")
     print("Testing 3 simultaneous streaming requests...\n")
     
-    client = get_llm_client(
+    client = get_client(
         provider="openai", 
         model="gpt-4o-mini",
         config=ProviderConfig()
@@ -174,7 +174,7 @@ async def test_error_handling():
     
     # Test with invalid model
     try:
-        client = get_llm_client(
+        client = get_client(
             provider="openai",
             model="invalid-model-xxx",
             config=ProviderConfig()

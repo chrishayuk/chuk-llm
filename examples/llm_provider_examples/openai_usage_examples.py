@@ -37,8 +37,8 @@ if not os.getenv("OPENAI_API_KEY"):
     sys.exit(1)
 
 try:
-    from chuk_llm.llm.llm_client import get_llm_client
-    from chuk_llm.llm.configuration.capabilities import CapabilityChecker
+    from chuk_llm.llm.client import get_client
+    from chuk_llm.configuration.capabilities import CapabilityChecker
 except ImportError as e:
     print(f"❌ Import error: {e}")
     print("   Please make sure you're running from the chuk-llm directory")
@@ -53,7 +53,7 @@ async def basic_text_example(model: str = "gpt-4.1"):
     print(f"\n🤖 Basic Text Completion with {model}")
     print("=" * 60)
     
-    client = get_llm_client("openai", model=model)
+    client = get_client("openai", model=model)
     
     messages = [
         {"role": "system", "content": "You are a helpful AI assistant."},
@@ -78,7 +78,7 @@ async def streaming_example(model: str = "gpt-4.1"):
     print(f"\n⚡ Streaming Example with {model}")
     print("=" * 60)
     
-    client = get_llm_client("openai", model=model)
+    client = get_client("openai", model=model)
     
     messages = [
         {"role": "user", "content": "Write a short haiku about artificial intelligence."}
@@ -119,7 +119,7 @@ async def function_calling_example(model: str = "gpt-4.1"):
         print(f"⚠️  Skipping function calling: {', '.join(issues)}")
         return None
     
-    client = get_llm_client("openai", model=model)
+    client = get_client("openai", model=model)
     
     # Define tools
     tools = [
@@ -236,7 +236,7 @@ async def vision_example(model: str = "gpt-4o"):
         print(f"⚠️  Skipping vision: {', '.join(issues)}")
         return None
     
-    client = get_llm_client("openai", model=model)
+    client = get_client("openai", model=model)
     
     # Simple test image (1x1 red pixel)
     test_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
@@ -276,7 +276,7 @@ async def json_mode_example(model: str = "gpt-4.1"):
     print(f"\n📋 JSON Mode Example with {model}")
     print("=" * 60)
     
-    client = get_llm_client("openai", model=model)
+    client = get_client("openai", model=model)
     
     messages = [
         {
@@ -343,7 +343,7 @@ async def model_comparison_example():
     for model in models:
         try:
             print(f"🔄 Testing {model}...")
-            client = get_llm_client("openai", model=model)
+            client = get_client("openai", model=model)
             messages = [{"role": "user", "content": prompt}]
             
             start_time = time.time()
@@ -399,7 +399,7 @@ async def multiple_models_example():
     for model in models_to_test:
         try:
             print(f"🔄 Testing {model}...")
-            client = get_llm_client("openai", model=model)
+            client = get_client("openai", model=model)
             messages = [{"role": "user", "content": prompt}]
             
             start_time = time.time()
@@ -423,7 +423,7 @@ async def simple_chat_example(model: str = "gpt-4.1"):
     print(f"\n💬 Simple Chat Interface")
     print("=" * 60)
     
-    client = get_llm_client("openai", model=model)
+    client = get_client("openai", model=model)
     
     # Simulate a simple conversation
     conversation = [
@@ -461,7 +461,7 @@ async def model_info_example(model: str = "gpt-4.1"):
     print(f"\n📋 Model Information for {model}")
     print("=" * 60)
     
-    client = get_llm_client("openai", model=model)
+    client = get_client("openai", model=model)
     
     # Get model info from client
     if hasattr(client, 'get_model_info'):
@@ -488,7 +488,7 @@ async def parameters_example(model: str = "gpt-4.1"):
     print(f"\n🎛️  Parameters Test with {model}")
     print("=" * 60)
     
-    client = get_llm_client("openai", model=model)
+    client = get_client("openai", model=model)
     
     # Test different temperatures
     temperatures = [0.1, 0.7, 1.2]

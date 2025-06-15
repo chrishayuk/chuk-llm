@@ -18,7 +18,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 async def quick_parameter_test():
     """Quick test of key parameters and kwargs handling"""
     
-    from chuk_llm.llm.llm_client import get_llm_client
+    from chuk_llm.llm.client import get_client
     
     providers = ["openai", "anthropic", "gemini", "groq", "ollama", "mistral"]
     
@@ -44,7 +44,7 @@ async def quick_parameter_test():
         print(f"\n🔧 Testing {provider.upper()}...")
         
         try:
-            client = get_llm_client(provider)
+            client = get_client(provider)
             
             # Test 1: Basic parameters
             print("  📋 Testing standard parameters...")

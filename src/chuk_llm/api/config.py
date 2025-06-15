@@ -1,106 +1,138 @@
-# src/chuk_llm/api/config.py
-"""Configuration management for the simple API - NO circular imports."""
+# chuk_llm/api/config.py
+"""
+API-level configuration management
+=================================
 
-from typing import Dict, Any
+Simple, clean configuration for the API layer.
+Uses the dynamic configuration system.
+"""
 
-# Global configuration
-_config = {
-    "provider": "openai",
-    "model": "gpt-4o-mini",
-    "system_prompt": None,
-    "temperature": None,
-    "max_tokens": None,
-    "api_key": None,
-    "api_base": None,
-}
+from typing import Dict, Any, Optional
 
-# Cached client for performance
-_cached_client = None
-_cached_config_hash = None
 
-def configure(
-    provider: str = None,
-    model: str = None,
-    system_prompt: str = None,
-    temperature: float = None,
-    max_tokens: int = None,
-    api_key: str = None,
-    api_base: str = None,
-    **kwargs
-):
-    """Configure global defaults for the LLM interface."""
-    global _config, _cached_client, _cached_config_hash
+class APIConfig:
+    """API-level configuration manager"""
     
-    # Update config with non-None values
-    updates = {
-        k: v for k, v in {
-            "provider": provider,
-            "model": model,
-            "system_prompt": system_prompt,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "api_key": api_key,
-            "api_base": api_base,
-        }.items() if v is not None
-    }
+    def __init__(self):
+        self.overrides: Dict[str, Any] = {}
+        self._cached_client = None
+        self._cache_key = None
     
-    _config.update(updates)
-    _config.update(kwargs)
+    def set(self, **kwargs):
+        """Set configuration overrides"""
+        # Only update with non-None values
+        for key, value in kwargs.items():
+            if value is not None:
+                self.overrides[key] = value
+        self._invalidate_cache()
     
-    # Invalidate cached client since config changed
-    _cached_client = None
-    _cached_config_hash = None
+    def get_current_config(self) -> Dict[str, Any]:
+        """Get current effective configuration"""
+        # CRITICAL FIX: Import inside method so mocking works
+        from chuk_llm.configuration.config import get_config
+        
+        config_manager = get_config()
+        global_settings = config_manager.get_global_settings()
+        
+        # Start with global defaults
+        result = {
+            "provider": global_settings.get("active_provider", "openai"),
+            "model": None,
+            "system_prompt": None,
+            "temperature": None,
+            "max_tokens": None,
+            "api_key": None,
+            "api_base": None,
+        }
+        
+        # Apply overrides
+        result.update(self.overrides)
+        
+        provider_name = result["provider"]
+        
+        # Resolve provider-specific defaults
+        try:
+            provider = config_manager.get_provider(provider_name)
+            if result["model"] is None:
+                result["model"] = provider.default_model
+            if result["api_base"] is None:
+                result["api_base"] = provider.api_base
+        except:
+            pass
+        
+        # Resolve API key - WITH PROPER ERROR HANDLING
+        if result["api_key"] is None:
+            try:
+                result["api_key"] = config_manager.get_api_key(provider_name)
+            except ValueError:
+                # Provider doesn't exist, leave api_key as None
+                pass
+            except Exception:
+                # Any other error, leave api_key as None
+                pass
+        
+        return result
+    
+    def get_client(self):
+        """Get LLM client with current configuration"""
+        config = self.get_current_config()
+        
+        # Check cache - use tuple of relevant config values
+        cache_key = (
+            config["provider"],
+            config["model"], 
+            config["api_key"],
+            config["api_base"]
+        )
+        
+        if self._cached_client and self._cache_key == cache_key:
+            return self._cached_client
+        
+        # Create new client
+        from chuk_llm.llm.client import get_client
+        client = get_client(
+            provider=config["provider"],
+            model=config["model"],
+            api_key=config["api_key"],
+            api_base=config["api_base"]
+        )
+        
+        # Cache it
+        self._cached_client = client
+        self._cache_key = cache_key
+        
+        return client
+    
+    def _invalidate_cache(self):
+        """Invalidate cached client"""
+        self._cached_client = None
+        self._cache_key = None
+    
+    def reset(self):
+        """Reset to defaults"""
+        self.overrides.clear()
+        self._invalidate_cache()
 
-def get_config() -> Dict[str, Any]:
-    """Get current configuration."""
-    return _config.copy()
 
-def reset_config():
-    """Reset to default configuration."""
-    global _config, _cached_client, _cached_config_hash
-    _config = {
-        "provider": "openai",
-        "model": "gpt-4o-mini",
-        "system_prompt": None,
-        "temperature": None,
-        "max_tokens": None,
-        "api_key": None,
-        "api_base": None,
-    }
-    _cached_client = None
-    _cached_config_hash = None
+# Global API config instance
+_api_config = APIConfig()
 
-def get_client_for_config(config: Dict[str, Any]):
-    """Get or create client for the given config."""
-    global _cached_client, _cached_config_hash
-    
-    # Create a hash of the relevant config for caching
-    config_key = (
-        config.get("provider"),
-        config.get("model"),
-        config.get("api_key"),
-        config.get("api_base"),
-    )
-    
-    # Return cached client if config hasn't changed
-    if _cached_client and _cached_config_hash == config_key:
-        return _cached_client
-    
-    # Create client using your existing basic factory
-    from chuk_llm.llm.llm_client import get_llm_client
-    client = get_llm_client(
-        provider=config["provider"],
-        model=config["model"],
-        api_key=config.get("api_key"),
-        api_base=config.get("api_base"),
-    )
-    
-    # Cache the client
-    _cached_client = client
-    _cached_config_hash = config_key
-    
-    return client
 
-def get_current_config():
-    """Get the current global config (internal)."""
-    return _config
+def configure(**kwargs):
+    """Configure API defaults"""
+    _api_config.set(**kwargs)
+
+
+def get_current_config() -> Dict[str, Any]:
+    """Get current configuration"""
+    return _api_config.get_current_config()
+
+
+def get_client():
+    """Get client with current configuration"""
+    return _api_config.get_client()
+
+
+def reset():
+    """Reset configuration"""
+    _api_config.reset()

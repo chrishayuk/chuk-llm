@@ -200,9 +200,9 @@ class ParameterCompatibilityDemo:
     async def _test_parameter_support(self, provider: str, param: str, details: Dict) -> str:
         """Test if a parameter is actually supported by a provider"""
         try:
-            from chuk_llm.llm.llm_client import get_llm_client
+            from chuk_llm.llm.client import get_client
             
-            client = get_llm_client(provider)
+            client = get_client(provider)
             
             # Choose appropriate test value
             test_values = details.get("test_values", [])
@@ -359,8 +359,8 @@ class ParameterCompatibilityDemo:
             test_value = 1.0
         
         try:
-            from chuk_llm.llm.llm_client import get_llm_client
-            client = get_llm_client(provider)
+            from chuk_llm.llm.client import get_client
+            client = get_client(provider)
             
             # Build test parameters
             test_params = {param: test_value}
@@ -416,8 +416,8 @@ class ParameterCompatibilityDemo:
         results = []
         for edge_value in edge_cases[param][:2]:  # Test first 2 edge cases
             try:
-                from chuk_llm.llm.llm_client import get_llm_client
-                client = get_llm_client(provider)
+                from chuk_llm.llm.client import get_client
+                client = get_client(provider)
                 
                 test_params = {param: edge_value}
                 
@@ -504,9 +504,9 @@ class ParameterCompatibilityDemo:
             
             for provider in self.providers[:4]:  # Test first 4 for demo
                 try:
-                    from chuk_llm.llm.llm_client import get_llm_client
+                    from chuk_llm.llm.client import get_client
                     
-                    client = get_llm_client(provider)
+                    client = get_client(provider)
                     
                     # Adjust parameters for provider
                     test_params = self._adjust_params_for_provider(provider, example['params'])

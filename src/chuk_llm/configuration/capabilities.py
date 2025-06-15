@@ -1,4 +1,4 @@
-# chuk_llm/llm/configuration/capabilities.py
+# chuk_llm/configuration/capabilities.py
 """
 Model-/Provider-capability registry with YAML overlay
 =====================================================

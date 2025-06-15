@@ -67,7 +67,7 @@ class Capture:
     kwargs = None
 
 # ---------------------------------------------------------------------------
-# Non‑streaming test (UPDATED for new interface)
+# Non‑streaming test (UPDATED for clean interface)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -92,12 +92,8 @@ async def test_create_completion_non_stream(monkeypatch, client):
 
     monkeypatch.setattr(client, "_regular_completion", fake_regular_completion)
 
-    # NEW INTERFACE: create_completion is no longer async when not streaming
-    result_awaitable = client.create_completion(messages, tools=tools, stream=False)
-    
-    # The result should be awaitable
-    assert hasattr(result_awaitable, '__await__')
-    result = await result_awaitable
+    # Clean interface: create_completion returns awaitable when not streaming
+    result = await client.create_completion(messages, tools=tools, stream=False)
     
     assert result == {"response": "Hello there!", "tool_calls": []}
 
@@ -109,7 +105,7 @@ async def test_create_completion_non_stream(monkeypatch, client):
     assert isinstance(conv_tools, list) and conv_tools[0]["name"] == "foo"
 
 # ---------------------------------------------------------------------------
-# Streaming test (UPDATED for new real streaming interface)
+# Streaming test (UPDATED for clean streaming interface)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -162,7 +158,7 @@ async def test_create_completion_stream(monkeypatch, client):
     monkeypatch.setattr(client.async_client.messages, "stream", fake_stream_method)
     monkeypatch.setattr(client, "_sanitize_tool_names", lambda t: t)
 
-    # NEW INTERFACE: create_completion returns async generator directly
+    # Clean interface: create_completion returns async generator directly
     iterator = client.create_completion(messages, tools=None, stream=True)
     
     # Should be an async generator
@@ -195,25 +191,48 @@ async def test_create_completion_stream(monkeypatch, client):
     assert Capture.kwargs["messages"][0]["content"] == [{"type": "text", "text": "Stream please"}]
 
 # ---------------------------------------------------------------------------
-# Test interface compliance (NEW) - FIXED to be async
+# Test interface compliance (UPDATED for clean interface)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_create_completion_interface_compliance(client):
     """Test that create_completion follows the correct interface."""
-    # Test non-streaming
+    # Test non-streaming - should return awaitable
     messages = [{"role": "user", "content": "Test"}]
     
-    # For non-streaming, we need to await the result
-    result = client.create_completion(messages, stream=False)
-    if asyncio.iscoroutine(result):
-        result = await result
+    # Mock the completion
+    async def mock_completion(payload):
+        return {"response": "Test response", "tool_calls": []}
     
+    import types
+    client._regular_completion = mock_completion
+    
+    # Non-streaming should return awaitable
+    result_coro = client.create_completion(messages, stream=False)
+    assert asyncio.iscoroutine(result_coro)
+    
+    result = await result_coro
     assert isinstance(result, dict)
     assert "response" in result
+    
+    # Streaming should return async iterator
+    async def mock_stream(payload):
+        yield {"response": "chunk1", "tool_calls": []}
+        yield {"response": "chunk2", "tool_calls": []}
+    
+    client._stream_completion_async = mock_stream
+    
+    stream_result = client.create_completion(messages, stream=True)
+    assert hasattr(stream_result, "__aiter__")
+    
+    chunks = []
+    async for chunk in stream_result:
+        chunks.append(chunk)
+    
+    assert len(chunks) == 2
 
 # ---------------------------------------------------------------------------
-# Test tool conversion (UPDATED)
+# Test tool conversion
 # ---------------------------------------------------------------------------
 
 def test_convert_tools(client):
@@ -241,8 +260,24 @@ def test_convert_tools(client):
     assert converted[0]["description"] == "Get weather info"
     assert "input_schema" in converted[0]
 
+def test_convert_tools_empty(client):
+    """Test tool conversion with empty/None input."""
+    assert client._convert_tools(None) == []
+    assert client._convert_tools([]) == []
+
+def test_convert_tools_error_handling(client):
+    """Test tool conversion with malformed tools."""
+    malformed_tools = [
+        {"type": "function"},  # Missing function key
+        {"function": {}},  # Missing name
+        {"function": {"name": "valid_tool", "parameters": {}}}  # Valid
+    ]
+    
+    converted = client._convert_tools(malformed_tools)
+    assert len(converted) == 3  # Should handle all tools, using fallbacks
+
 # ---------------------------------------------------------------------------
-# Test message splitting (UPDATED)
+# Test message splitting
 # ---------------------------------------------------------------------------
 
 def test_split_for_anthropic(client):
@@ -262,8 +297,78 @@ def test_split_for_anthropic(client):
     assert anthropic_messages[1]["role"] == "assistant" 
     assert anthropic_messages[2]["role"] == "user"
 
+def test_split_for_anthropic_multimodal(client):
+    """Test message splitting with multimodal content."""
+    messages = [
+        {"role": "user", "content": [
+            {"type": "text", "text": "Look at this"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
+        ]}
+    ]
+    
+    system_txt, anthropic_messages = client._split_for_anthropic(messages)
+    
+    assert system_txt == ""
+    assert len(anthropic_messages) == 1
+    assert anthropic_messages[0]["role"] == "user"
+    assert isinstance(anthropic_messages[0]["content"], list)
+
+def test_split_for_anthropic_tool_calls(client):
+    """Test message splitting with tool calls."""
+    messages = [
+        {"role": "assistant", "tool_calls": [{
+            "id": "call_123",
+            "function": {"name": "test_tool", "arguments": "{}"}
+        }]},
+        {"role": "tool", "tool_call_id": "call_123", "content": "Tool result"}
+    ]
+    
+    system_txt, anthropic_messages = client._split_for_anthropic(messages)
+    
+    assert len(anthropic_messages) == 2
+    assert anthropic_messages[0]["role"] == "assistant"
+    assert anthropic_messages[0]["content"][0]["type"] == "tool_use"
+    assert anthropic_messages[1]["role"] == "user"  # Tool response becomes user message
+
 # ---------------------------------------------------------------------------
-# Additional error handling and edge case tests
+# Parameter filtering tests
+# ---------------------------------------------------------------------------
+
+def test_filter_anthropic_params(client):
+    """Test parameter filtering for Anthropic compatibility."""
+    params = {
+        "temperature": 0.7,
+        "max_tokens": 100,
+        "top_p": 0.9,
+        "frequency_penalty": 0.5,  # Unsupported
+        "stop": ["stop"],  # Unsupported
+        "custom_param": "value"  # Unknown
+    }
+    
+    filtered = client._filter_anthropic_params(params)
+    
+    assert "temperature" in filtered
+    assert "max_tokens" in filtered  
+    assert "top_p" in filtered
+    assert "frequency_penalty" not in filtered
+    assert "stop" not in filtered
+    assert "custom_param" not in filtered
+
+def test_filter_anthropic_params_temperature_cap(client):
+    """Test temperature capping at 1.0."""
+    params = {"temperature": 2.0}
+    filtered = client._filter_anthropic_params(params)
+    assert filtered["temperature"] == 1.0
+
+def test_filter_anthropic_params_adds_max_tokens(client):
+    """Test that max_tokens is added if missing."""
+    params = {"temperature": 0.7}
+    filtered = client._filter_anthropic_params(params)
+    assert "max_tokens" in filtered
+    assert filtered["max_tokens"] == 1024
+
+# ---------------------------------------------------------------------------
+# Error handling tests
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -274,7 +379,6 @@ async def test_streaming_error_handling(monkeypatch, client):
     # Mock streaming with error
     async def error_stream(payload):
         yield {"response": "Starting...", "tool_calls": []}
-        # Yield error chunk instead of raising
         yield {"response": "Streaming error: Test error", "tool_calls": [], "error": True}
 
     monkeypatch.setattr(client, "_stream_completion_async", error_stream)
@@ -299,11 +403,40 @@ async def test_non_streaming_error_handling(monkeypatch, client):
 
     monkeypatch.setattr(client, "_regular_completion", error_completion)
 
-    result_awaitable = client.create_completion(messages, stream=False)
-    result = await result_awaitable
+    result = await client.create_completion(messages, stream=False)
 
     assert result["error"] is True
     assert "Test error" in result["response"]
+
+# ---------------------------------------------------------------------------
+# Integration and initialization tests
+# ---------------------------------------------------------------------------
+
+def test_client_initialization():
+    """Test client initialization with different parameters."""
+    # Test with default model
+    client1 = AnthropicLLMClient()
+    assert client1.model == "claude-3-7-sonnet-20250219"
+    
+    # Test with custom model and API key
+    client2 = AnthropicLLMClient(model="claude-test", api_key="test-key")
+    assert client2.model == "claude-test"
+    
+    # Test with API base
+    client3 = AnthropicLLMClient(model="claude-test", api_base="https://custom.anthropic.com")
+    assert client3.model == "claude-test"
+
+def test_get_model_info(client):
+    """Test model info method."""
+    info = client.get_model_info()
+    
+    assert info["provider"] == "anthropic"
+    assert info["model"] == "claude-test"
+    assert info["supports_streaming"] is True
+    assert info["supports_tools"] is True
+    assert info["supports_vision"] is True
+    assert "supported_parameters" in info
+    assert "unsupported_parameters" in info
 
 @pytest.mark.asyncio
 async def test_with_tool_calls(monkeypatch, client):
@@ -325,42 +458,17 @@ async def test_with_tool_calls(monkeypatch, client):
     monkeypatch.setattr(client, "_regular_completion", fake_tool_completion)
     monkeypatch.setattr(client, "_sanitize_tool_names", lambda t: t)
 
-    result_awaitable = client.create_completion(messages, tools=tools, stream=False)
-    result = await result_awaitable
+    result = await client.create_completion(messages, tools=tools, stream=False)
 
     assert result["response"] is None
     assert len(result["tool_calls"]) == 1
     assert result["tool_calls"][0]["function"]["name"] == "test_tool"
-
-def test_client_initialization():
-    """Test client initialization with different parameters."""
-    # Test with default model
-    client1 = AnthropicLLMClient()
-    assert client1.model == "claude-3-7-sonnet-20250219"
-    
-    # Test with custom model and API key
-    client2 = AnthropicLLMClient(model="claude-test", api_key="test-key")
-    assert client2.model == "claude-test"
-    
-    # Test with API base
-    client3 = AnthropicLLMClient(model="claude-test", api_base="https://custom.anthropic.com")
-    assert client3.model == "claude-test"
 
 def test_tool_name_sanitization(client):
     """Test that tool names are properly sanitized."""
     tools = [{"function": {"name": "invalid@name"}}]
     sanitized = client._sanitize_tool_names(tools)
     assert sanitized[0]["function"]["name"] == "invalid_name"
-
-def test_empty_tools_conversion(client):
-    """Test conversion with empty or None tools."""
-    # Test with None
-    result = client._convert_tools(None)
-    assert result == []
-    
-    # Test with empty list
-    result = client._convert_tools([])
-    assert result == []
 
 def test_complex_message_conversion(client):
     """Test message conversion with complex scenarios."""

@@ -4,7 +4,7 @@ Test Groq provider streaming behavior.
 """
 import asyncio
 import time
-from chuk_llm.llm.llm_client import get_llm_client
+from chuk_llm.llm.client import get_client
 from chuk_llm.llm.configuration.provider_config import ProviderConfig
 
 async def test_groq_streaming():
@@ -13,7 +13,7 @@ async def test_groq_streaming():
     
     try:
         # Get Groq client
-        client = get_llm_client(
+        client = get_client(
             provider="groq",
             model="llama-3.3-70b-versatile",
             config=ProviderConfig()

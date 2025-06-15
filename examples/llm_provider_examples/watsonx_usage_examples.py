@@ -46,8 +46,8 @@ if not os.getenv("WATSONX_PROJECT_ID"):
     sys.exit(1)
 
 try:
-    from chuk_llm.llm.llm_client import get_llm_client
-    from chuk_llm.llm.configuration.capabilities import CapabilityChecker
+    from chuk_llm.llm.client import get_client
+    from chuk_llm.configuration.capabilities import CapabilityChecker
 except ImportError as e:
     print(f"❌ Import error: {e}")
     print("   Please make sure you're running from the chuk-llm directory")
@@ -62,7 +62,7 @@ async def basic_text_example(model: str = "ibm/granite-3-8b-instruct"):
     print(f"\n🤖 Basic Text Completion with {model}")
     print("=" * 60)
     
-    client = get_llm_client("watsonx", model=model)
+    client = get_client("watsonx", model=model)
     
     messages = [
         {"role": "user", "content": "Explain the concept of recursion in programming in simple terms (2-3 sentences)."}
@@ -86,7 +86,7 @@ async def streaming_example(model: str = "ibm/granite-3-8b-instruct"):
     print(f"\n⚡ Streaming Example with {model}")
     print("=" * 60)
     
-    client = get_llm_client("watsonx", model=model)
+    client = get_client("watsonx", model=model)
     
     messages = [
         {"role": "user", "content": "Write a short poem about the beauty of code."}
@@ -127,7 +127,7 @@ async def function_calling_example(model: str = "ibm/granite-3-8b-instruct"):
         print(f"⚠️  Skipping function calling: {', '.join(issues)}")
         return None
     
-    client = get_llm_client("watsonx", model=model)
+    client = get_client("watsonx", model=model)
     
     # Define tools
     tools = [
@@ -235,7 +235,7 @@ async def system_message_example(model: str = "ibm/granite-3-8b-instruct"):
     print(f"\n🎭 System Message Example with {model}")
     print("=" * 60)
     
-    client = get_llm_client("watsonx", model=model)
+    client = get_client("watsonx", model=model)
     
     # Test different personas
     personas = [
@@ -295,7 +295,7 @@ async def model_comparison_example():
     for model in models:
         try:
             print(f"🔄 Testing {model}...")
-            client = get_llm_client("watsonx", model=model)
+            client = get_client("watsonx", model=model)
             messages = [{"role": "user", "content": prompt}]
             
             start_time = time.time()
@@ -337,7 +337,7 @@ async def simple_chat_example(model: str = "ibm/granite-3-8b-instruct"):
     print(f"\n💬 Simple Chat Interface")
     print("=" * 60)
     
-    client = get_llm_client("watsonx", model=model)
+    client = get_client("watsonx", model=model)
     
     # Simulate a simple conversation
     conversation = [
@@ -375,7 +375,7 @@ async def model_info_example(model: str = "ibm/granite-3-8b-instruct"):
     print(f"\n📋 Model Information for {model}")
     print("=" * 60)
     
-    client = get_llm_client("watsonx", model=model)
+    client = get_client("watsonx", model=model)
     
     # Get model info from client
     if hasattr(client, 'get_model_info'):
@@ -438,7 +438,7 @@ async def comprehensive_benchmark():
         model_results = {}
         
         try:
-            client = get_llm_client("watsonx", model=model)
+            client = get_client("watsonx", model=model)
             
             for task in tasks:
                 print(f"   📝 {task['name']}...", end="", flush=True)
@@ -528,7 +528,7 @@ async def long_context_example(model: str = "ibm/granite-3-8b-instruct"):
     print(f"\n📚 Long Context Test with {model}")
     print("=" * 60)
     
-    client = get_llm_client("watsonx", model=model)
+    client = get_client("watsonx", model=model)
     
     # Create a longer context
     long_text = """
@@ -575,7 +575,7 @@ async def vision_example(model: str = "meta-llama/llama-4-scout-17b-16e-instruct
         print(f"⚠️  Skipping vision: {', '.join(issues)}")
         return None
     
-    client = get_llm_client("watsonx", model=model)
+    client = get_client("watsonx", model=model)
     
     # Simple test image (1x1 red pixel)
     test_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="

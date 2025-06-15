@@ -354,6 +354,62 @@ class GeminiLLMClient(BaseLLMClient):
             return self._stream_completion_async(messages, tools, **kwargs)
         else:
             return self._regular_completion(messages, tools, **kwargs)
+        
+    def _parse_gemini_chunk(self, chunk) -> Tuple[str, List[Dict[str, Any]]]:
+        """Parse Gemini streaming chunk for text and function calls"""
+        chunk_text = ""
+        tool_calls = []
+        
+        try:
+            # Extract text content
+            if hasattr(chunk, 'text') and chunk.text:
+                chunk_text = chunk.text
+            
+            # Check for function calls
+            if hasattr(chunk, 'function_calls') and chunk.function_calls:
+                for fc in chunk.function_calls:
+                    try:
+                        tool_calls.append({
+                            "id": f"call_{uuid.uuid4().hex[:8]}",
+                            "type": "function",
+                            "function": {
+                                "name": getattr(fc, "name", "unknown"),
+                                "arguments": json.dumps(dict(getattr(fc, "args", {})))
+                            }
+                        })
+                    except Exception as e:
+                        log.debug(f"Error parsing function call in chunk: {e}")
+                        continue
+            
+            # Alternative: check candidates structure for function calls
+            elif hasattr(chunk, 'candidates') and chunk.candidates:
+                try:
+                    cand = chunk.candidates[0]
+                    if hasattr(cand, 'content') and hasattr(cand.content, 'parts'):
+                        for part in cand.content.parts:
+                            try:
+                                if hasattr(part, 'text') and part.text:
+                                    chunk_text += part.text
+                                elif hasattr(part, 'function_call'):
+                                    fc = part.function_call
+                                    tool_calls.append({
+                                        "id": f"call_{uuid.uuid4().hex[:8]}", 
+                                        "type": "function", 
+                                        "function": {
+                                            "name": getattr(fc, "name", "unknown"),
+                                            "arguments": json.dumps(dict(getattr(fc, "args", {})))
+                                        }
+                                    })
+                            except Exception as e:
+                                log.debug(f"Error parsing part in chunk: {e}")
+                                continue
+                except (AttributeError, IndexError, TypeError) as e:
+                    log.debug(f"Error parsing chunk candidates: {e}")
+            
+        except Exception as e:
+            log.debug(f"Error parsing Gemini chunk: {e}")
+        
+        return chunk_text, tool_calls
 
     async def _stream_completion_async(
         self,

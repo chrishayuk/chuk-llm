@@ -376,12 +376,12 @@ print(f"Using {config['provider']} with {config['model']}")
 
 ```python
 import asyncio
-from chuk_llm.llm.llm_client import get_llm_client
+from chuk_llm.llm.client import get_client
 from chuk_llm.llm.configuration.provider_config import ProviderConfig
 
 async def low_level_example():
     # Method 1: Direct client creation
-    client = get_llm_client("openai", model="gpt-4o-mini")
+    client = get_client("openai", model="gpt-4o-mini")
     
     # Method 2: Custom configuration
     config = ProviderConfig({
@@ -396,7 +396,7 @@ async def low_level_example():
         }
     })
     
-    client = get_llm_client("openai", config=config)
+    client = get_client("openai", config=config)
     
     # Use the client directly
     response = await client.create_completion([
@@ -416,11 +416,11 @@ For maximum control, use the low-level client API:
 
 ```python
 import asyncio
-from chuk_llm.llm.llm_client import get_llm_client
+from chuk_llm.llm.client import get_client
 
 async def low_level_examples():
     # Get a client for any provider
-    client = get_llm_client("openai", model="gpt-4o-mini")
+    client = get_client("openai", model="gpt-4o-mini")
     
     # Basic completion with full control
     response = await client.create_completion([
@@ -475,11 +475,11 @@ asyncio.run(low_level_examples())
 
 ```python
 import asyncio
-from chuk_llm.llm.llm_client import get_llm_client
+from chuk_llm.llm.client import get_client
 
 async def perplexity_low_level():
     # Use Perplexity for real-time web information
-    client = get_llm_client("perplexity", model="sonar-pro")
+    client = get_client("perplexity", model="sonar-pro")
     
     messages = [
         {"role": "user", "content": "What are the latest developments in AI today?"}
@@ -509,10 +509,10 @@ health = health_check_sync()
 print(f"Status: {health.get('status', 'unknown')}")
 
 # For advanced middleware control, use the low-level API:
-from chuk_llm.llm.core.enhanced_base import get_enhanced_llm_client
+from chuk_llm.llm.core.enhanced_base import get_enhanced_client
 
 async def advanced_middleware():
-    client = get_enhanced_llm_client(
+    client = get_enhanced_client(
         provider="openai",
         model="gpt-4o-mini",
         enable_logging=True,

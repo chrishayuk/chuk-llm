@@ -4,7 +4,7 @@ Simple Streaming Diagnostic
 """
 import asyncio
 import time
-from chuk_llm.llm.llm_client import get_llm_client
+from chuk_llm.llm.client import get_client
 from chuk_llm.llm.configuration.provider_config import ProviderConfig
 
 async def test_fixed_chuk_llm():
@@ -12,7 +12,7 @@ async def test_fixed_chuk_llm():
     print("=== Testing Fixed chuk_llm Client ===")
     
     # Get client directly (same as ChukAgent does)
-    client = get_llm_client(
+    client = get_client(
         provider="openai",
         model="gpt-4o-mini",
         config=ProviderConfig()

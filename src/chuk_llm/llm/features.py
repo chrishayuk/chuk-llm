@@ -90,11 +90,11 @@ class UnifiedLLMInterface:
     """High-level interface that abstracts provider differences"""
     
     def __init__(self, provider: str, model: str, **config_kwargs):
-        from chuk_llm.llm.llm_client import get_enhanced_llm_client
+        from chuk_llm.llm.client import get_enhanced_client
         
         self.provider = provider
         self.model = model
-        self.client = get_enhanced_llm_client(
+        self.client = get_enhanced_client(
             provider=provider,
             model=model,
             **config_kwargs

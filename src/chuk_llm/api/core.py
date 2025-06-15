@@ -1,10 +1,16 @@
-# src/chuk_llm/api/core.py
-"""Core ask/stream functions for the simple API."""
+# chuk_llm/api/core.py
+"""
+Core ask/stream functions - clean and simple
+============================================
+
+Main API functions using dynamic configuration.
+"""
 
 from typing import List, Dict, Any, Optional, AsyncIterator
-from chuk_llm.llm.system_prompt_generator import SystemPromptGenerator
-from .config import get_current_config, get_client_for_config
-from .provider_utils import get_provider_default_model
+from chuk_llm.configuration.config import get_config
+from chuk_llm.api.config import get_current_config
+from chuk_llm.llm.client import get_client
+
 
 async def ask(
     prompt: str,
@@ -17,91 +23,101 @@ async def ask(
     tools: List[Dict[str, Any]] = None,
     **kwargs
 ) -> str:
-    """Ask a question and get a response.
+    """
+    Ask a question and get a response.
     
     Args:
         prompt: The question/prompt to send
-        provider: LLM provider (defaults from global config)
-        model: Model name (defaults from provider config)
-        system_prompt: Override default system prompt
-        temperature: Override default temperature
-        max_tokens: Override default max tokens
-        tools: Function tools for the LLM to use
+        provider: LLM provider (uses config default if not specified)
+        model: Model name (uses provider default if not specified)
+        system_prompt: System prompt override
+        temperature: Temperature override
+        max_tokens: Max tokens override
+        tools: Function tools for the LLM
         **kwargs: Additional arguments
         
     Returns:
         The LLM's response as a string
     """
-    # Get the current global config
-    final_config = get_current_config().copy()
+    # Get base configuration
+    config = get_current_config()
     
     # Apply parameter overrides
     if provider is not None:
-        final_config["provider"] = provider
+        config["provider"] = provider
     if model is not None:
-        final_config["model"] = model
+        config["model"] = model
     if system_prompt is not None:
-        final_config["system_prompt"] = system_prompt
+        config["system_prompt"] = system_prompt
     if temperature is not None:
-        final_config["temperature"] = temperature
+        config["temperature"] = temperature
     if max_tokens is not None:
-        final_config["max_tokens"] = max_tokens
+        config["max_tokens"] = max_tokens
     
-    # If model is still None or we changed provider, get the default for the provider
-    if final_config.get("model") is None or (provider is not None and model is None):
-        provider_default = get_provider_default_model(final_config["provider"])
-        if provider_default:
-            final_config["model"] = provider_default
-        else:
-            # Fallback to trying the existing provider config system
-            try:
-                from chuk_llm.llm.configuration.provider_config import ProviderConfig
-                config_mgr = ProviderConfig()
-                provider_config = config_mgr.get_provider_config(final_config["provider"])
-                fallback_model = provider_config.get("default_model")
-                if fallback_model:
-                    final_config["model"] = fallback_model
-            except Exception:
-                # Keep the existing model from global config as last resort
-                pass
+    # Resolve model if needed
+    if not config.get("model") and provider:
+        config_manager = get_config()
+        try:
+            provider_config = config_manager.get_provider(provider)
+            config["model"] = provider_config.default_model
+        except ValueError:
+            pass
     
-    # Get the client
-    client = get_client_for_config(final_config)
+    # Validate features if needed
+    if tools:
+        config_manager = get_config()
+        try:
+            if not config_manager.supports_feature(config["provider"], "tools"):
+                raise ValueError(f"Provider {config['provider']} doesn't support function calling")
+        except ValueError:
+            pass  # Unknown provider, proceed anyway
+    
+    # Get client
+    from chuk_llm.llm.client import get_client
+    client = get_client(
+        provider=config["provider"],
+        model=config["model"],
+        api_key=config["api_key"],
+        api_base=config["api_base"]
+    )
     
     # Build messages
     messages = []
     
     # Add system prompt
-    if final_config.get("system_prompt"):
-        messages.append({"role": "system", "content": final_config["system_prompt"]})
+    if config.get("system_prompt"):
+        messages.append({"role": "system", "content": config["system_prompt"]})
     elif tools:
-        # Use your existing system prompt generator only when tools are provided
-        system_generator = SystemPromptGenerator()
-        system_content = system_generator.generate_prompt(tools)
+        # Generate system prompt for tools
+        from chuk_llm.llm.system_prompt_generator import SystemPromptGenerator
+        generator = SystemPromptGenerator()
+        system_content = generator.generate_prompt(tools)
         messages.append({"role": "system", "content": system_content})
     else:
-        # Simple system prompt for basic conversations without tools
-        simple_prompt = "You are a helpful AI assistant. Provide clear, accurate, and concise responses."
-        messages.append({"role": "system", "content": simple_prompt})
+        # Default system prompt
+        messages.append({
+            "role": "system", 
+            "content": "You are a helpful AI assistant. Provide clear, accurate, and concise responses."
+        })
     
     messages.append({"role": "user", "content": prompt})
     
     # Prepare completion arguments
     completion_args = {"messages": messages}
+    
     if tools:
         completion_args["tools"] = tools
-    if final_config.get("temperature") is not None:
-        completion_args["temperature"] = final_config["temperature"]
-    if final_config.get("max_tokens") is not None:
-        completion_args["max_tokens"] = final_config["max_tokens"]
+    if config.get("temperature") is not None:
+        completion_args["temperature"] = config["temperature"]
+    if config.get("max_tokens") is not None:
+        completion_args["max_tokens"] = config["max_tokens"]
     
-    # Add any additional kwargs
     completion_args.update(kwargs)
     
-    # Make the request using your client
+    # Make the request
     response = await client.create_completion(**completion_args)
     
-    # Extract response text
+    # Extract response
     if isinstance(response, dict):
         if response.get("error"):
             raise Exception(f"LLM Error: {response.get('error_message', 'Unknown error')}")
@@ -109,55 +125,76 @@ async def ask(
     
     return str(response)
 
+
 async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
-    """Stream a response token by token.
+    """
+    Stream a response token by token.
     
     Args:
         prompt: The question/prompt to send
-        **kwargs: Same arguments as ask(), plus streaming options
+        **kwargs: Same arguments as ask()
         
     Yields:
         str: Individual tokens/chunks from the LLM response
     """
-    # Get config and apply overrides
-    final_config = get_current_config().copy()
+    # Get base configuration
+    config = get_current_config()
     
-    # Extract config-relevant kwargs
+    # Apply parameter overrides
     provider = kwargs.get('provider')
     model = kwargs.get('model')
     
     if provider is not None:
-        final_config["provider"] = provider
+        config["provider"] = provider
     if model is not None:
-        final_config["model"] = model
-        
-    # Apply other config overrides
-    config_keys = ['system_prompt', 'temperature', 'max_tokens']
-    for key in config_keys:
-        if key in kwargs:
-            final_config[key] = kwargs[key]
+        config["model"] = model
     
-    # If model is still None or we changed provider, get the default for the provider
-    if final_config.get("model") is None or (provider is not None and model is None):
-        provider_default = get_provider_default_model(final_config["provider"])
-        if provider_default:
-            final_config["model"] = provider_default
+    # Apply other config overrides
+    for key in ['system_prompt', 'temperature', 'max_tokens']:
+        if key in kwargs:
+            config[key] = kwargs[key]
+    
+    # Resolve model if needed
+    if not config.get("model") and provider:
+        config_manager = get_config()
+        try:
+            provider_config = config_manager.get_provider(provider)
+            config["model"] = provider_config.default_model
+        except ValueError:
+            pass
+    
+    # Validate streaming support
+    config_manager = get_config()
+    try:
+        if not config_manager.supports_feature(config["provider"], "streaming"):
+            raise ValueError(f"Provider {config['provider']} doesn't support streaming")
+    except ValueError:
+        pass  # Unknown provider, proceed anyway
     
     # Get client
-    client = get_client_for_config(final_config)
+    from chuk_llm.llm.client import get_client
+    client = get_client(
+        provider=config["provider"],
+        model=config["model"],
+        api_key=config["api_key"],
+        api_base=config["api_base"]
+    )
     
-    # Build messages
+    # Build messages (same logic as ask())
     messages = []
-    if final_config.get("system_prompt"):
-        messages.append({"role": "system", "content": final_config["system_prompt"]})
+    
+    if config.get("system_prompt"):
+        messages.append({"role": "system", "content": config["system_prompt"]})
     elif kwargs.get("tools"):
-        system_generator = SystemPromptGenerator()
-        system_content = system_generator.generate_prompt(kwargs.get("tools"))
+        from chuk_llm.llm.system_prompt_generator import SystemPromptGenerator
+        generator = SystemPromptGenerator()
+        system_content = generator.generate_prompt(kwargs.get("tools"))
         messages.append({"role": "system", "content": system_content})
     else:
-        # Simple system prompt for basic conversations
-        simple_prompt = "You are a helpful AI assistant. Provide clear, accurate, and concise responses."
-        messages.append({"role": "system", "content": simple_prompt})
+        messages.append({
+            "role": "system",
+            "content": "You are a helpful AI assistant. Provide clear, accurate, and concise responses."
+        })
     
     messages.append({"role": "user", "content": prompt})
     
@@ -173,32 +210,27 @@ async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
     completion_args.update(non_config_kwargs)
     
     # Add config parameters
-    if final_config.get("temperature") is not None:
-        completion_args["temperature"] = final_config["temperature"]
-    if final_config.get("max_tokens") is not None:
-        completion_args["max_tokens"] = final_config["max_tokens"]
+    if config.get("temperature") is not None:
+        completion_args["temperature"] = config["temperature"]
+    if config.get("max_tokens") is not None:
+        completion_args["max_tokens"] = config["max_tokens"]
     
-    # Stream using client - FIXED VERSION
+    # Stream the response
     try:
-        # DON'T await - the client.create_completion returns an async generator directly when stream=True
         response_stream = client.create_completion(**completion_args)
         
-        # Check if it's an async generator/iterator
         if hasattr(response_stream, '__aiter__'):
-            # It's an async iterator - iterate directly
             async for chunk in response_stream:
                 if isinstance(chunk, dict):
                     if chunk.get("error"):
                         yield f"[Error: {chunk.get('error_message', 'Unknown error')}]"
-                        return  # Stop streaming on error
+                        return
                     content = chunk.get("response", "")
                     if content:
                         yield content
                 else:
-                    # Handle direct string chunks
                     yield str(chunk)
         else:
-            # If it's not an async iterator, we need to await it
             awaited_response = await response_stream
             if isinstance(awaited_response, dict):
                 if awaited_response.get("error"):
@@ -207,6 +239,6 @@ async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
                     yield awaited_response.get("response", "")
             else:
                 yield str(awaited_response)
-            
+                
     except Exception as e:
         yield f"[Streaming Error: {str(e)}]"

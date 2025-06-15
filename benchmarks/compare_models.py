@@ -145,9 +145,9 @@ class LiveBenchmarkRunner:
         """Get or create a cached client"""
         key = (provider, model)
         if key not in self.client_cache:
-            from chuk_llm.llm.llm_client import get_llm_client
+            from chuk_llm.llm.client import get_client
             try:
-                self.client_cache[key] = get_llm_client(provider=provider, model=model)
+                self.client_cache[key] = get_client(provider=provider, model=model)
             except Exception as e:
                 log.error(f"Failed to create client for {provider}:{model} - {e}")
                 raise

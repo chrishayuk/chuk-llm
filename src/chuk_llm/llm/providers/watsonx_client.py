@@ -1,5 +1,4 @@
 # chuk_llm/llm/providers/watsonx_client.py
-# chuk_llm/llm/providers/watsonx_client.py
 """
 Watson X chat-completion adapter
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

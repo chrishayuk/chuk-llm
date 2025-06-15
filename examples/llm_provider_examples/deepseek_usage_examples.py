@@ -45,8 +45,8 @@ if not os.getenv("DEEPSEEK_API_KEY"):
     sys.exit(1)
 
 try:
-    from chuk_llm.llm.llm_client import get_llm_client
-    from chuk_llm.llm.configuration.capabilities import CapabilityChecker
+    from chuk_llm.llm.client import get_client
+    from chuk_llm.configuration.capabilities import CapabilityChecker
 except ImportError as e:
     print(f"❌ Import error: {e}")
     print("   Make sure you installed chuk-llm and are running from the repo root")
@@ -63,7 +63,7 @@ async def basic_text_example(model: str = DEFAULT_MODEL):
     print(f"\n🤖 Basic Text Completion with {model}")
     print("=" * 60)
 
-    client = get_llm_client(PROVIDER, model=model)
+    client = get_client(PROVIDER, model=model)
 
     messages = [
         {"role": "system", "content": "You are a helpful AI assistant."},
@@ -85,7 +85,7 @@ async def streaming_example(model: str = DEFAULT_MODEL):
     print(f"\n⚡ Streaming Example with {model}")
     print("=" * 60)
 
-    client = get_llm_client(PROVIDER, model=model)
+    client = get_client(PROVIDER, model=model)
     messages = [{"role": "user", "content": "Write a short haiku about artificial intelligence."}]
 
     print("🌊 Streaming response:\n   ", end="", flush=True)
@@ -113,7 +113,7 @@ async def function_calling_example(model: str = DEFAULT_MODEL):
         print(f"⚠️  Skipping function calling: {', '.join(issues)}")
         return None
 
-    client = get_llm_client(PROVIDER, model=model)
+    client = get_client(PROVIDER, model=model)
 
     tools = [
         {
@@ -192,7 +192,7 @@ async def json_mode_example(model: str = DEFAULT_MODEL):
     print(f"\n📋 JSON Mode Example with {model}")
     print("=" * 60)
 
-    client = get_llm_client(PROVIDER, model=model)
+    client = get_client(PROVIDER, model=model)
     messages = [
         {
             "role": "system",
@@ -231,7 +231,7 @@ async def model_comparison_example():
     for m in models:
         try:
             print(f"🔄 Testing {m}…")
-            client = get_llm_client(PROVIDER, model=m)
+            client = get_client(PROVIDER, model=m)
             start = time.time()
             response = await client.create_completion([{"role": "user", "content": prompt}])
             duration = time.time() - start
@@ -252,7 +252,7 @@ async def simple_chat_example(model: str = DEFAULT_MODEL):
     print("\n💬 Simple Chat Interface")
     print("=" * 60)
 
-    client = get_llm_client(PROVIDER, model=model)
+    client = get_client(PROVIDER, model=model)
     conversation = [
         "Hello! What's the weather like?",
         "What's the most exciting development in AI recently?",
@@ -276,7 +276,7 @@ async def parameters_example(model: str = DEFAULT_MODEL):
     print("\n🎛️  Temperature Sweep")
     print("=" * 60)
 
-    client = get_llm_client(PROVIDER, model=model)
+    client = get_client(PROVIDER, model=model)
     prompt = "Write a creative opening line for a science-fiction story."
     for temp in (0.1, 0.7, 1.2):
         print(f"\n🌡️  Temperature {temp}:")

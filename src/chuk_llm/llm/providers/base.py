@@ -1,12 +1,14 @@
-# chuk_llm/llm/core/base.py
+# chuk_llm/llm/providers/base.py
+"""
+Base provider implementation with enhanced client functionality.
+"""
+
 from typing import List, Dict, Any, Optional, AsyncIterator, Union
 import time
 import asyncio
 from abc import ABC, abstractmethod
 
-from chuk_llm.llm.llm_client import get_llm_client
-from chuk_llm.llm.configuration.provider_config import ProviderConfig
-
+from chuk_llm.configuration.config import get_config
 from chuk_llm.llm.core.base import BaseLLMClient
 from chuk_llm.llm.middleware import CachingMiddleware, LoggingMiddleware, MetricsMiddleware, MiddlewareStack, Middleware
 from chuk_llm.llm.core.errors import with_retry, ProviderErrorMapper
@@ -158,13 +160,12 @@ class EnhancedBaseLLMClient(BaseLLMClient):
             await self.async_client.close()
 
 # Enhanced factory with middleware support
-def get_enhanced_llm_client(
+def get_enhanced_client(
     provider: str = "openai",
     *,
     model: Optional[str] = None,
     api_key: Optional[str] = None,
     api_base: Optional[str] = None,
-    config: Optional[ProviderConfig] = None,
     middleware: Optional[List[Middleware]] = None,
     enable_logging: bool = True,
     enable_metrics: bool = True,
@@ -189,7 +190,8 @@ def get_enhanced_llm_client(
         default_middleware.extend(middleware)
     
     # Get base client
-    base_client = get_llm_client(provider, model=model, api_key=api_key, api_base=api_base, config=config)
+    from chuk_llm.llm.client import get_client
+    base_client = get_client(provider, model=model, api_key=api_key, api_base=api_base)
     
     # Wrap with enhanced functionality
     if hasattr(base_client, '_enable_middleware'):

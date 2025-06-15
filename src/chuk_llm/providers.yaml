@@ -20,6 +20,7 @@ __global__:
 # ───────────────────────── Providers ────────────────────────────
 # OpenAI – most popular models for function generation
 openai:
+  client: chuk_llm.llm.providers.openai_client.OpenAILLMClient
   api_key_env: OPENAI_API_KEY
   default_model: gpt-4o-mini
   models:
@@ -76,6 +77,7 @@ deepseek:
 
 # Anthropic – Claude models
 anthropic:
+  client: chuk_llm.llm.providers.anthropic_client.AnthropicLLMClient
   api_key_env: ANTHROPIC_API_KEY
   default_model: claude-sonnet-4-20250514
   models:
@@ -129,6 +131,7 @@ groq:
 
 # Google Gemini
 gemini:
+  client: chuk_llm.llm.providers.gemini_client.GeminiLLMClient
   api_key_env: GOOGLE_API_KEY
   default_model: gemini-2.0-flash
   models:
@@ -154,6 +157,7 @@ gemini:
 
 # Mistral AI – official cloud
 mistral:
+  client: chuk_llm.llm.providers.mistral_client.MistralLLMClient
   api_key_env: MISTRAL_API_KEY
   default_model: mistral-large-latest
   models:
@@ -181,6 +185,7 @@ mistral:
 
 # Local Ollama daemon (no key needed)
 ollama:
+  client: chuk_llm.llm.providers.ollama_client.OllamaLLMClient
   api_base: http://localhost:11434
   default_model: qwen3
   models:
@@ -209,6 +214,7 @@ ollama:
 
 # IBM watsonx.ai
 watsonx:
+  client: chuk_llm.llm.providers.watsonx_client.WatsonxLLMClient
   api_key_env: WATSONX_API_KEY
   api_key_fallback_env: IBM_CLOUD_API_KEY
   watsonx_ai_url: https://us-south.ml.cloud.ibm.com
