@@ -10,71 +10,45 @@ All models, aliases, and providers come from YAML configuration.
 import asyncio
 import re
 import logging
-import threading
-import atexit
+import warnings
 from typing import Dict, Optional, List, AsyncIterator
 
 from chuk_llm.configuration.config import get_config
 
 logger = logging.getLogger(__name__)
 
-# Async loop management for sync functions
-_loop_thread = None
-_persistent_loop = None
-_loop_lock = threading.Lock()
-
-
-def _get_persistent_loop():
-    """Get or create persistent event loop for sync functions"""
-    global _loop_thread, _persistent_loop
-    
-    with _loop_lock:
-        if _persistent_loop is None or _persistent_loop.is_closed():
-            loop_ready = threading.Event()
-            
-            def run_loop():
-                global _persistent_loop
-                _persistent_loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(_persistent_loop)
-                loop_ready.set()
-                _persistent_loop.run_forever()
-            
-            _loop_thread = threading.Thread(target=run_loop, daemon=True)
-            _loop_thread.start()
-            loop_ready.wait()
-        
-        return _persistent_loop
+# Suppress specific asyncio cleanup warnings that don't affect functionality
+warnings.filterwarnings("ignore", message=".*Event loop is closed.*", category=RuntimeWarning)
+warnings.filterwarnings("ignore", message=".*Task exception was never retrieved.*", category=RuntimeWarning)
 
 
 def _run_sync(coro):
-    """Run async coroutine synchronously"""
+    """Simple sync wrapper using event loop manager"""
     try:
-        asyncio.get_running_loop()
-        raise RuntimeError(
-            "Cannot call sync functions from async context. "
-            "Use the async version instead."
-        )
-    except RuntimeError as e:
-        if "Cannot call sync functions" in str(e):
-            raise e
-    
-    loop = _get_persistent_loop()
-    future = asyncio.run_coroutine_threadsafe(coro, loop)
-    return future.result()
-
-
-def _cleanup_loop():
-    """Cleanup persistent loop on exit"""
-    global _persistent_loop, _loop_thread
-    
-    if _persistent_loop and not _persistent_loop.is_closed():
-        _persistent_loop.call_soon_threadsafe(_persistent_loop.stop)
-        if _loop_thread and _loop_thread.is_alive():
-            _loop_thread.join(timeout=1.0)
-
-
-atexit.register(_cleanup_loop)
-
+        # Try to import the event loop manager
+        from .event_loop_manager import run_sync
+        return run_sync(coro)
+    except ImportError:
+        # Fallback to simple asyncio.run if event loop manager not available
+        import asyncio
+        import warnings
+        
+        # Suppress warnings
+        warnings.filterwarnings("ignore", message=".*Event loop is closed.*", category=RuntimeWarning)
+        warnings.filterwarnings("ignore", message=".*Task exception was never retrieved.*", category=RuntimeWarning)
+        
+        try:
+            asyncio.get_running_loop()
+            raise RuntimeError(
+                "Cannot call sync functions from async context. "
+                "Use the async version instead."
+            )
+        except RuntimeError as e:
+            if "Cannot call sync functions" in str(e):
+                raise e
+        
+        # Use asyncio.run - each call gets a fresh loop and fresh client connections
+        return asyncio.run(coro)
 
 def _sanitize_name(name: str) -> str:
     """Convert any name to valid Python identifier

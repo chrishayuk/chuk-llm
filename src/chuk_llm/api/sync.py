@@ -1,59 +1,14 @@
 # chuk_llm/api/sync.py
 """
-Clean synchronous wrappers
-==========================
+Clean synchronous wrappers using event loop manager
+===================================================
 
 Simple sync wrappers for the async API.
 """
 
-import asyncio
-import threading
 from typing import List, Dict, Any
-
 from .core import ask, stream
-
-# Thread-local storage for event loops
-_thread_local = threading.local()
-
-
-def _get_or_create_loop():
-    """Get or create an event loop for the current thread"""
-    try:
-        loop = asyncio.get_running_loop()
-        # We're already in an async context
-        raise RuntimeError(
-            "Cannot call sync functions from async context. "
-            "Use the async version instead."
-        )
-    except RuntimeError as e:
-        if "Cannot call sync functions" in str(e):
-            raise e
-        # No running loop, we can create one
-        pass
-    
-    # Check if we have a loop for this thread
-    if not hasattr(_thread_local, 'loop') or _thread_local.loop.is_closed():
-        _thread_local.loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(_thread_local.loop)
-    
-    return _thread_local.loop
-
-
-def _run_async(coro):
-    """Run async coroutine safely"""
-    try:
-        # Check if we're already in an async context
-        asyncio.get_running_loop()
-        raise RuntimeError(
-            "Cannot call sync functions from async context. "
-            "Use the async version instead."
-        )
-    except RuntimeError as e:
-        if "Cannot call sync functions" in str(e):
-            raise e
-    
-    # We're not in an async context, safe to use asyncio.run
-    return asyncio.run(coro)
+from .event_loop_manager import run_sync
 
 
 def ask_sync(prompt: str, **kwargs) -> str:
@@ -67,7 +22,7 @@ def ask_sync(prompt: str, **kwargs) -> str:
     Returns:
         The LLM's response as a string
     """
-    return _run_async(ask(prompt, **kwargs))
+    return run_sync(ask(prompt, **kwargs))
 
 
 def stream_sync(prompt: str, **kwargs) -> List[str]:
@@ -87,7 +42,59 @@ def stream_sync(prompt: str, **kwargs) -> List[str]:
             chunks.append(chunk)
         return chunks
     
-    return _run_async(collect_chunks())
+    return run_sync(collect_chunks())
+
+
+def stream_sync_iter(prompt: str, **kwargs):
+    """
+    Synchronous streaming iterator.
+    
+    Args:
+        prompt: The message to send
+        **kwargs: All the same arguments as stream()
+        
+    Yields:
+        Response chunks as they arrive
+    """
+    import queue
+    import threading
+    
+    chunk_queue = queue.Queue()
+    exception = None
+    
+    def run_stream():
+        nonlocal exception
+        
+        async def async_stream():
+            try:
+                async for chunk in stream(prompt, **kwargs):
+                    chunk_queue.put(chunk)
+            except Exception as e:
+                exception = e
+            finally:
+                chunk_queue.put(None)  # Sentinel
+        
+        try:
+            run_sync(async_stream())
+        except Exception as e:
+            exception = e
+            chunk_queue.put(None)
+    
+    # Start streaming in a thread
+    thread = threading.Thread(target=run_stream)
+    thread.start()
+    
+    # Yield chunks as they arrive
+    while True:
+        chunk = chunk_queue.get()
+        if chunk is None:  # Sentinel
+            break
+        yield chunk
+    
+    thread.join()
+    
+    if exception:
+        raise exception
 
 
 def compare_providers(question: str, providers: List[str] = None) -> Dict[str, str]:

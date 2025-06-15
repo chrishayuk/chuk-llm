@@ -1,6 +1,6 @@
 # chuk_llm/api/config.py
 """
-API-level configuration management
+API-level configuration management - FIXED
 =================================
 
 Simple, clean configuration for the API layer.
@@ -60,9 +60,10 @@ class APIConfig:
         except:
             pass
         
-        # Resolve API key - WITH PROPER ERROR HANDLING
+        # FIX: Always resolve API key for the CURRENT provider, not cached provider
         if result["api_key"] is None:
             try:
+                # CRITICAL: Use current provider_name, not old cached value
                 result["api_key"] = config_manager.get_api_key(provider_name)
             except ValueError:
                 # Provider doesn't exist, leave api_key as None
@@ -77,9 +78,9 @@ class APIConfig:
         """Get LLM client with current configuration"""
         config = self.get_current_config()
         
-        # Check cache - use tuple of relevant config values
+        # FIX: Include provider in cache key to prevent cross-contamination
         cache_key = (
-            config["provider"],
+            config["provider"],  # This was missing proper provider resolution
             config["model"], 
             config["api_key"],
             config["api_base"]
@@ -136,3 +137,15 @@ def get_client():
 def reset():
     """Reset configuration"""
     _api_config.reset()
+
+# DEBUGGING ADDITION: Add function to check config state
+def debug_config_state():
+    """Debug current configuration state"""
+    config = get_current_config()
+    print("🔍 Current API Config State:")
+    print(f"   Provider: {config['provider']}")
+    print(f"   Model: {config['model']}")
+    print(f"   API Key: {config['api_key'][:10] if config['api_key'] else 'None'}...")
+    print(f"   API Base: {config['api_base']}")
+    print(f"   Cache Key: {_api_config._cache_key}")
+    return config

@@ -42,51 +42,74 @@ async def ask(
     # Get base configuration
     config = get_current_config()
     
-    # Apply parameter overrides
-    if provider is not None:
-        config["provider"] = provider
-    if model is not None:
-        config["model"] = model
-    if system_prompt is not None:
-        config["system_prompt"] = system_prompt
-    if temperature is not None:
-        config["temperature"] = temperature
-    if max_tokens is not None:
-        config["max_tokens"] = max_tokens
+    # Determine effective provider (override or default)
+    effective_provider = provider or config["provider"]
+    effective_model = model or config["model"]
     
-    # Resolve model if needed
-    if not config.get("model") and provider:
-        config_manager = get_config()
+    # FIX: When provider is overridden, we MUST resolve API key and api_base for that provider
+    config_manager = get_config()
+    
+    if provider is not None:
+        # Provider override - resolve all provider-specific settings
         try:
             provider_config = config_manager.get_provider(provider)
-            config["model"] = provider_config.default_model
-        except ValueError:
-            pass
+            effective_api_key = config_manager.get_api_key(provider)
+            effective_api_base = getattr(provider_config, 'api_base', None)
+            
+            # Resolve model if needed
+            if model is None:
+                effective_model = provider_config.default_model
+                
+        except (ValueError, Exception):
+            # Fallback to cached config if provider lookup fails
+            effective_api_key = config["api_key"] 
+            effective_api_base = config["api_base"]
+    else:
+        # No provider override - use cached config
+        effective_api_key = config["api_key"]
+        effective_api_base = config["api_base"]
+        
+        # Still resolve model if needed
+        if not effective_model:
+            try:
+                provider_config = config_manager.get_provider(effective_provider)
+                effective_model = provider_config.default_model
+            except (ValueError, Exception):
+                pass
+    
+    # Build effective configuration
+    effective_config = {
+        "provider": effective_provider,
+        "model": effective_model,
+        "api_key": effective_api_key,
+        "api_base": effective_api_base,
+        "system_prompt": system_prompt or config.get("system_prompt"),
+        "temperature": temperature if temperature is not None else config.get("temperature"),
+        "max_tokens": max_tokens if max_tokens is not None else config.get("max_tokens"),
+    }
     
     # Validate features if needed
     if tools:
-        config_manager = get_config()
         try:
-            if not config_manager.supports_feature(config["provider"], "tools"):
-                raise ValueError(f"Provider {config['provider']} doesn't support function calling")
-        except ValueError:
+            if not config_manager.supports_feature(effective_provider, "tools"):
+                raise ValueError(f"Provider {effective_provider} doesn't support function calling")
+        except (ValueError, Exception):
             pass  # Unknown provider, proceed anyway
     
-    # Get client
-    from chuk_llm.llm.client import get_client
+    # Get client with CORRECT parameters
     client = get_client(
-        provider=config["provider"],
-        model=config["model"],
-        api_key=config["api_key"],
-        api_base=config["api_base"]
+        provider=effective_config["provider"],
+        model=effective_config["model"],
+        api_key=effective_config["api_key"],
+        api_base=effective_config["api_base"]
     )
     
     # Build messages
     messages = []
     
     # Add system prompt
-    if config.get("system_prompt"):
-        messages.append({"role": "system", "content": config["system_prompt"]})
+    if effective_config.get("system_prompt"):
+        messages.append({"role": "system", "content": effective_config["system_prompt"]})
     elif tools:
         # Generate system prompt for tools
         from chuk_llm.llm.system_prompt_generator import SystemPromptGenerator
@@ -107,10 +130,10 @@ async def ask(
     
     if tools:
         completion_args["tools"] = tools
-    if config.get("temperature") is not None:
-        completion_args["temperature"] = config["temperature"]
-    if config.get("max_tokens") is not None:
-        completion_args["max_tokens"] = config["max_tokens"]
+    if effective_config.get("temperature") is not None:
+        completion_args["temperature"] = effective_config["temperature"]
+    if effective_config.get("max_tokens") is not None:
+        completion_args["max_tokens"] = effective_config["max_tokens"]
     
     completion_args.update(kwargs)
     
@@ -140,51 +163,71 @@ async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
     # Get base configuration
     config = get_current_config()
     
-    # Apply parameter overrides
+    # Apply parameter overrides using same logic as ask()
     provider = kwargs.get('provider')
     model = kwargs.get('model')
     
+    # Determine effective provider and settings
+    effective_provider = provider or config["provider"]
+    effective_model = model or config["model"]
+    
+    # FIX: Same API key resolution logic as ask()
+    config_manager = get_config()
+    
     if provider is not None:
-        config["provider"] = provider
-    if model is not None:
-        config["model"] = model
-    
-    # Apply other config overrides
-    for key in ['system_prompt', 'temperature', 'max_tokens']:
-        if key in kwargs:
-            config[key] = kwargs[key]
-    
-    # Resolve model if needed
-    if not config.get("model") and provider:
-        config_manager = get_config()
         try:
             provider_config = config_manager.get_provider(provider)
-            config["model"] = provider_config.default_model
-        except ValueError:
-            pass
+            effective_api_key = config_manager.get_api_key(provider)
+            effective_api_base = getattr(provider_config, 'api_base', None)
+            
+            if model is None:
+                effective_model = provider_config.default_model
+                
+        except (ValueError, Exception):
+            effective_api_key = config["api_key"]
+            effective_api_base = config["api_base"]
+    else:
+        effective_api_key = config["api_key"]
+        effective_api_base = config["api_base"]
+        
+        if not effective_model:
+            try:
+                provider_config = config_manager.get_provider(effective_provider)
+                effective_model = provider_config.default_model
+            except (ValueError, Exception):
+                pass
+    
+    # Build effective configuration
+    effective_config = {
+        "provider": effective_provider,
+        "model": effective_model,
+        "api_key": effective_api_key,
+        "api_base": effective_api_base,
+        "system_prompt": kwargs.get("system_prompt") or config.get("system_prompt"),
+        "temperature": kwargs.get("temperature") if "temperature" in kwargs else config.get("temperature"),
+        "max_tokens": kwargs.get("max_tokens") if "max_tokens" in kwargs else config.get("max_tokens"),
+    }
     
     # Validate streaming support
-    config_manager = get_config()
     try:
-        if not config_manager.supports_feature(config["provider"], "streaming"):
-            raise ValueError(f"Provider {config['provider']} doesn't support streaming")
-    except ValueError:
+        if not config_manager.supports_feature(effective_provider, "streaming"):
+            raise ValueError(f"Provider {effective_provider} doesn't support streaming")
+    except (ValueError, Exception):
         pass  # Unknown provider, proceed anyway
     
-    # Get client
-    from chuk_llm.llm.client import get_client
+    # Get client with CORRECT parameters
     client = get_client(
-        provider=config["provider"],
-        model=config["model"],
-        api_key=config["api_key"],
-        api_base=config["api_base"]
+        provider=effective_config["provider"],
+        model=effective_config["model"],
+        api_key=effective_config["api_key"],
+        api_base=effective_config["api_base"]
     )
     
     # Build messages (same logic as ask())
     messages = []
     
-    if config.get("system_prompt"):
-        messages.append({"role": "system", "content": config["system_prompt"]})
+    if effective_config.get("system_prompt"):
+        messages.append({"role": "system", "content": effective_config["system_prompt"]})
     elif kwargs.get("tools"):
         from chuk_llm.llm.system_prompt_generator import SystemPromptGenerator
         generator = SystemPromptGenerator()
@@ -210,10 +253,10 @@ async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
     completion_args.update(non_config_kwargs)
     
     # Add config parameters
-    if config.get("temperature") is not None:
-        completion_args["temperature"] = config["temperature"]
-    if config.get("max_tokens") is not None:
-        completion_args["max_tokens"] = config["max_tokens"]
+    if effective_config.get("temperature") is not None:
+        completion_args["temperature"] = effective_config["temperature"]
+    if effective_config.get("max_tokens") is not None:
+        completion_args["max_tokens"] = effective_config["max_tokens"]
     
     # Stream the response
     try:
