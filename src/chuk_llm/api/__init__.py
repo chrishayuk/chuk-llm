@@ -24,6 +24,8 @@ try:
         "ask", "stream",
         # Config functions  
         "configure", "get_current_config", "get_client", "reset_config",
+        # Conversation Functions
+        "conversation",
         # Sync functions
         "ask_sync", "stream_sync", "compare_providers", "quick_question",
     ] + getattr(providers, '__all__', [])
