@@ -2,11 +2,21 @@
 # diagnostics/streaming/streaming_extended.py
 """
 Extended Streaming Test - Tests with longer content to verify real streaming
+Updated to work with the new chuk-llm architecture
 """
 import asyncio
 import time
+import sys
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Add parent directory for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 from chuk_llm.llm.client import get_client
-from chuk_llm.llm.configuration.provider_config import ProviderConfig
 
 async def test_extended_streaming():
     """Test with a longer response to verify true streaming."""
@@ -15,8 +25,7 @@ async def test_extended_streaming():
     
     client = get_client(
         provider="openai",
-        model="gpt-4o-mini",
-        config=ProviderConfig()
+        model="gpt-4o-mini"
     )
     
     # Ask for a longer response that will take time to generate
@@ -30,6 +39,7 @@ async def test_extended_streaming():
     print("🔍 Testing streaming with longer content...")
     start_time = time.time()
     
+    # Get the stream directly (no await)
     response = client.create_completion(messages, stream=True)
     
     if not hasattr(response, '__aiter__'):
@@ -63,7 +73,7 @@ async def test_extended_streaming():
         chunk_count += 1
         
         if isinstance(chunk, dict) and "response" in chunk:
-            chunk_text = chunk["response"]
+            chunk_text = chunk["response"] or ""
             total_content += chunk_text
             print(chunk_text, end="", flush=True)
     
@@ -119,8 +129,7 @@ async def test_parallel_streaming():
     
     client = get_client(
         provider="openai", 
-        model="gpt-4o-mini",
-        config=ProviderConfig()
+        model="gpt-4o-mini"
     )
     
     async def stream_request(request_id: int):
@@ -129,6 +138,7 @@ async def test_parallel_streaming():
         ]
         
         start = time.time()
+        # Get stream directly (no await)
         response = client.create_completion(messages, stream=True)
         
         first_chunk_time = None
@@ -176,27 +186,133 @@ async def test_error_handling():
     try:
         client = get_client(
             provider="openai",
-            model="invalid-model-xxx",
-            config=ProviderConfig()
+            model="invalid-model-xxx"
         )
         
         messages = [{"role": "user", "content": "Hello"}]
+        # Get stream directly (no await)
         response = client.create_completion(messages, stream=True)
         
+        chunk_found = False
         async for chunk in response:
+            chunk_found = True
             if chunk.get("error"):
                 print(f"✅ Error properly streamed: {chunk.get('response')}")
                 break
             else:
                 print(f"Chunk: {chunk}")
+        
+        if not chunk_found:
+            print("⚠️  No chunks received from invalid model")
                 
     except Exception as e:
         print(f"✅ Exception properly raised: {e}")
+
+async def test_multiple_providers():
+    """Test streaming across multiple providers"""
+    print("\n\n=== Multi-Provider Streaming Test ===")
+    
+    providers_to_test = [
+        ("openai", "gpt-4o-mini"),
+        ("anthropic", "claude-sonnet-4-20250514"),
+        ("groq", "llama-3.3-70b-versatile"),
+    ]
+    
+    for provider, model in providers_to_test:
+        print(f"\n🔍 Testing {provider} with {model}...")
+        
+        try:
+            client = get_client(provider=provider, model=model)
+            messages = [{"role": "user", "content": "Write a haiku about streaming data."}]
+            
+            start_time = time.time()
+            response = client.create_completion(messages, stream=True)
+            
+            chunk_count = 0
+            content_chunks = []
+            first_chunk_time = None
+            
+            async for chunk in response:
+                if first_chunk_time is None:
+                    first_chunk_time = time.time() - start_time
+                
+                chunk_count += 1
+                if isinstance(chunk, dict) and chunk.get("response"):
+                    content_chunks.append(chunk["response"])
+                
+                # Stop after reasonable number of chunks
+                if chunk_count >= 10:
+                    break
+            
+            total_time = time.time() - start_time
+            full_content = "".join(content_chunks)
+            
+            print(f"   ✅ {provider}: {chunk_count} chunks, "
+                  f"first at {first_chunk_time:.3f}s, "
+                  f"total {total_time:.3f}s")
+            print(f"   Content: {full_content[:100]}...")
+            
+        except Exception as e:
+            print(f"   ❌ {provider}: Error - {e}")
+
+async def test_streaming_with_tools():
+    """Test streaming with function calling"""
+    print("\n\n=== Streaming + Tools Test ===")
+    
+    weather_tool = {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get weather for a location",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string", "description": "City name"}
+                },
+                "required": ["location"]
+            }
+        }
+    }
+    
+    try:
+        client = get_client(provider="openai", model="gpt-4o-mini")
+        messages = [{"role": "user", "content": "What's the weather in Tokyo? Use the get_weather function."}]
+        
+        start_time = time.time()
+        response = client.create_completion(messages, tools=[weather_tool], stream=True)
+        
+        chunk_count = 0
+        tool_calls_found = []
+        content_chunks = []
+        
+        async for chunk in response:
+            chunk_count += 1
+            
+            if isinstance(chunk, dict):
+                if chunk.get("response"):
+                    content_chunks.append(chunk["response"])
+                if chunk.get("tool_calls"):
+                    tool_calls_found.extend(chunk["tool_calls"])
+        
+        total_time = time.time() - start_time
+        
+        print(f"   ✅ Streaming + Tools: {chunk_count} chunks in {total_time:.3f}s")
+        print(f"   Content chunks: {len(content_chunks)}")
+        print(f"   Tool calls found: {len(tool_calls_found)}")
+        
+        if tool_calls_found:
+            for tc in tool_calls_found:
+                print(f"   Tool: {tc.get('function', {}).get('name', 'unknown')}")
+        
+    except Exception as e:
+        print(f"   ❌ Streaming + Tools failed: {e}")
 
 if __name__ == "__main__":
     print("🚀 Extended LLM Streaming Tests\n")
     
     # Run all tests
     asyncio.run(test_extended_streaming())
-    asyncio.run(test_parallel_streaming())
+    asyncio.run(test_parallel_streaming()) 
     asyncio.run(test_error_handling())
+    asyncio.run(test_multiple_providers())
+    asyncio.run(test_streaming_with_tools())

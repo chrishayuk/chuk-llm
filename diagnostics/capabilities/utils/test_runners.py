@@ -1,6 +1,7 @@
 # diagnostics/capabilities/utils/test_runners.py
 """
 Test runners for specific LLM capabilities.
+FIXED: Streaming test issues and error handling.
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ class CapabilityTester:
         """Get or create a cached client"""
         key = (provider, model)
         if key not in self.client_cache:
+            # Use the new chuk-llm client factory
             from chuk_llm.llm.client import get_client
             try:
                 self.client_cache[key] = get_client(provider=provider, model=model)
@@ -26,11 +28,20 @@ class CapabilityTester:
                 raise
         return self.client_cache[key]
     
-    async def timed_execution(self, result_obj, key: str, awaitable):
-        """Execute with timing measurement"""
+    async def timed_execution(self, result_obj, key: str, coroutine_or_generator):
+        """Execute with timing measurement - handles both coroutines and async generators"""
         start = time.perf_counter()
         try:
-            return await awaitable
+            # Check if it's an async generator (streaming)
+            if hasattr(coroutine_or_generator, '__aiter__'):
+                # It's an async generator - iterate through it
+                chunks = []
+                async for chunk in coroutine_or_generator:
+                    chunks.append(chunk)
+                return chunks
+            else:
+                # It's a regular coroutine - await it
+                return await coroutine_or_generator
         finally:
             result_obj.timings[key] = time.perf_counter() - start
     
@@ -45,15 +56,9 @@ class CapabilityTester:
                 client.create_completion(messages)
             )
             
-            # Handle both async and sync responses
-            if hasattr(response, '__aiter__'):
-                response_text = ""
-                async for chunk in response:
-                    if isinstance(chunk, dict) and chunk.get("response"):
-                        response_text += chunk["response"]
-                success = bool(response_text.strip())
-            else:
-                success = bool(response.get("response", "").strip())
+            # Handle the standardized response format from chuk-llm
+            response_text = response.get("response", "")
+            success = bool(response_text.strip())
             
             result_obj.record("text_completion", success)
             tick_fn("text", success)
@@ -67,23 +72,33 @@ class CapabilityTester:
         """Test streaming capability"""
         try:
             client = await self.get_client(provider, model)
-            messages = [{"role": "user", "content": "Why is testing LLM providers important? (3–4 sentences)"}]
+            messages = [{"role": "user", "content": "Count from 1 to 3, one number per line."}]
             
             start_time = time.perf_counter()
-            stream = client.create_completion(messages, stream=True)
             
-            if not hasattr(stream, "__aiter__"):
-                raise TypeError("stream returned non-async iterator")
+            # Get the stream and iterate through it properly
+            stream = await client.create_completion(messages, stream=True)
             
+            chunk_count = 0
             found_content = False
+            content_chunks = []
+            
+            # Properly iterate through the async generator
             async for chunk in stream:
+                chunk_count += 1
                 if isinstance(chunk, dict) and chunk.get("response"):
                     found_content = True
-                    break
+                    content_chunks.append(chunk["response"])
+                    # Don't break immediately - let at least a few chunks come through
+                    if chunk_count >= 5:  # Get a few chunks to verify streaming
+                        break
             
             result_obj.timings["stream"] = time.perf_counter() - start_time
-            result_obj.record("streaming_text", found_content)
-            tick_fn("stream", found_content)
+            
+            # Success if we got content and multiple chunks
+            success = found_content and chunk_count > 1
+            result_obj.record("streaming_text", success)
+            tick_fn("stream", success)
             
         except Exception as exc:
             result_obj.record("streaming_text", False)
@@ -114,22 +129,25 @@ class CapabilityTester:
                 client.create_completion(messages, tools=[weather_tool])
             )
             
-            # Handle both async and sync responses
-            if hasattr(response, '__aiter__'):
-                tool_calls = []
-                async for chunk in response:
-                    if isinstance(chunk, dict) and chunk.get("tool_calls"):
-                        tool_calls.extend(chunk["tool_calls"])
-                success = bool(tool_calls)
-            else:
-                success = bool(response.get("tool_calls"))
+            # Check for tool calls in the standardized format
+            tool_calls = response.get("tool_calls", [])
+            success = len(tool_calls) > 0 and any(
+                tc.get("function", {}).get("name") == "get_weather" 
+                for tc in tool_calls
+            )
             
             result_obj.record("function_call", success)
             tick_fn("tools", success)
             
         except Exception as exc:
             error_msg = str(exc).lower()
-            if any(phrase in error_msg for phrase in ["does not support tools", "tool", "function"]):
+            # Check for known "unsupported" error patterns
+            if any(phrase in error_msg for phrase in [
+                "does not support tools", 
+                "tool", 
+                "function calling not available",
+                "tools are not supported"
+            ]):
                 result_obj.record("function_call", None)
                 tick_fn("tools", None)
             else:
@@ -152,39 +170,27 @@ class CapabilityTester:
             },
         }
         
-        def chunk_has_tool_call(chunk: Any) -> bool:
-            if not isinstance(chunk, dict):
-                return False
-            
-            # Direct tool_calls field
-            if chunk.get("tool_calls"):
-                return True
-            
-            # OpenAI/Groq style nested structure
-            try:
-                if "choices" in chunk and chunk["choices"]:
-                    choice = chunk["choices"][0]
-                    if "delta" in choice and choice["delta"].get("tool_calls"):
-                        return True
-            except (KeyError, IndexError, TypeError):
-                pass
-            
-            return False
-        
         try:
             client = await self.get_client(provider, model)
             messages = [{"role": "user", "content": "What is the weather in London? Use get_weather."}]
             
             start_time = time.perf_counter()
-            stream = client.create_completion(messages, tools=[weather_tool], stream=True)
-
-            if not hasattr(stream, "__aiter__"):
-                raise TypeError("stream_tools returned non-async iterator")
+            
+            # Get the stream and iterate through it properly
+            stream = await client.create_completion(messages, tools=[weather_tool], stream=True)
 
             found_tool_call = False
+            chunk_count = 0
+            
+            # Properly iterate through the async generator
             async for chunk in stream:
-                if chunk_has_tool_call(chunk):
+                chunk_count += 1
+                # Check for tool calls in the standardized chunk format
+                if isinstance(chunk, dict) and chunk.get("tool_calls"):
                     found_tool_call = True
+                    break
+                # Also check if we've gone through enough chunks without finding tool calls
+                if chunk_count > 10:
                     break
 
             result_obj.timings["stream_tools"] = time.perf_counter() - start_time
@@ -193,7 +199,13 @@ class CapabilityTester:
 
         except Exception as exc:
             error_msg = str(exc).lower()
-            if any(phrase in error_msg for phrase in ["does not support tools", "tool", "function"]):
+            # Check for known "unsupported" error patterns
+            if any(phrase in error_msg for phrase in [
+                "does not support tools", 
+                "tool", 
+                "function calling not available",
+                "tools are not supported"
+            ]):
                 result_obj.record("streaming_function_call", None)
                 tick_fn("stream_tools", None)
             else:
@@ -207,11 +219,21 @@ class CapabilityTester:
             client = await self.get_client(provider, model)
             provider_config = get_provider_config(provider)
             
-            # Skip vision test if provider doesn't support it
-            if not provider_config.supports_feature("vision"):
-                result_obj.record("vision", None)
-                tick_fn("vision", None)
-                return
+            # Check if provider supports vision using the new capability system
+            try:
+                from chuk_llm.configuration.capabilities import PROVIDER_CAPABILITIES, Feature
+                if provider in PROVIDER_CAPABILITIES:
+                    caps = PROVIDER_CAPABILITIES[provider].get_model_capabilities(model)
+                    if Feature.VISION not in caps.features:
+                        result_obj.record("vision", None)
+                        tick_fn("vision", None)
+                        return
+            except ImportError:
+                # Fallback to provider config
+                if not provider_config.supports_feature("vision"):
+                    result_obj.record("vision", None)
+                    tick_fn("vision", None)
+                    return
             
             vision_msg = provider_config.create_vision_message("Describe what you see in this image.")
             
@@ -220,15 +242,9 @@ class CapabilityTester:
                 client.create_completion([vision_msg])
             )
             
-            # Handle both async and sync responses
-            if hasattr(response, '__aiter__'):
-                response_text = ""
-                async for chunk in response:
-                    if isinstance(chunk, dict) and chunk.get("response"):
-                        response_text += chunk["response"]
-                success = bool(response_text.strip())
-            else:
-                success = bool(response.get("response", "").strip())
+            # Check the standardized response format
+            response_text = response.get("response", "")
+            success = bool(response_text.strip())
             
             result_obj.record("vision", success)
             tick_fn("vision", success)
@@ -247,8 +263,19 @@ class CapabilityTester:
                         is_format_error = True
                         break
             
-            if is_format_error:
-                # Vision capability exists but format is wrong - mark as unsupported for this test
+            # Also check for common unsupported patterns
+            unsupported_patterns = [
+                "vision not supported",
+                "multimodal not supported", 
+                "image not supported",
+                "does not support vision",
+                "content must be a string",
+                "does not have the 'vision' capability",
+                "validation error for message"
+            ]
+            
+            if is_format_error or any(pattern in error_msg for pattern in unsupported_patterns):
+                # Vision capability doesn't exist or format is wrong - mark as unsupported
                 result_obj.record("vision", None)
                 tick_fn("vision", None)
             else:

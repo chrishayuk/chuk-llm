@@ -1,6 +1,7 @@
 # diagnostics/capabilities/utils/display_utils.py
 """
 Enhanced display utilities for diagnostic results.
+Updated to work with the new result models and provider system.
 """
 from __future__ import annotations
 
@@ -151,9 +152,13 @@ class DiagnosticDisplay:
         results_table.add_column("Provider", style="cyan", min_width=12)
         results_table.add_column("Model(s)", style="blue", min_width=20)
         
-        capabilities = [("Text", "text_completion"), ("Stream", "streaming_text"), 
-                       ("Tools", "function_call"), ("Str.Tools", "streaming_function_call"), 
-                       ("Vision", "vision")]
+        capabilities = [
+            ("Text", "text_completion"), 
+            ("Stream", "streaming_text"), 
+            ("Tools", "function_call"), 
+            ("Str.Tools", "streaming_function_call"), 
+            ("Vision", "vision")
+        ]
         
         for display_name, _ in capabilities:
             results_table.add_column(display_name, justify="center", min_width=8)
@@ -171,7 +176,8 @@ class DiagnosticDisplay:
             
             # Add capability results
             for _, attr_name in capabilities:
-                row_data.append(DiagnosticDisplay._format_bool(getattr(result, attr_name)))
+                capability_value = getattr(result, attr_name)
+                row_data.append(DiagnosticDisplay._format_bool(capability_value))
             
             # Add success rate with color coding
             success_rate = result.success_rate
@@ -241,3 +247,74 @@ class DiagnosticDisplay:
         else:
             plain_icon = {True: "✅", False: "❌", None: "—"}[success]
             print(f"[{provider}] {capability:<12} {plain_icon}{timing_str}")
+    
+    @staticmethod
+    def print_provider_header(provider: str):
+        """Print a header for a provider being tested"""
+        if HAS_RICH:
+            header_text = Text(f"Testing {provider.upper()}", style="bold cyan")
+            console.print(Panel(header_text, expand=False))
+        else:
+            print(f"\n=== {provider.upper()} ===")
+    
+    @staticmethod
+    def print_quick_summary(results: List[ProviderResult]):
+        """Print a quick one-line summary for each provider"""
+        if HAS_RICH:
+            table = Table(title="Quick Summary")
+            table.add_column("Provider", style="cyan")
+            table.add_column("Score", justify="center")
+            table.add_column("Features", style="magenta")
+            
+            for result in results:
+                score = f"{result.successful_capabilities}/{result.total_capabilities}"
+                features = ", ".join(sorted(result.feature_set)) or "—"
+                table.add_row(result.provider, score, features)
+            
+            console.print(table)
+        else:
+            print("\nQUICK SUMMARY:")
+            for result in results:
+                score = f"{result.successful_capabilities}/{result.total_capabilities}"
+                features = ", ".join(sorted(result.feature_set)) or "—"
+                print(f"  {result.provider:<12} {score:<5} {features}")
+    
+    @staticmethod
+    def print_capabilities_matrix(results: List[ProviderResult]):
+        """Print a matrix showing which providers support which capabilities"""
+        if not results:
+            return
+        
+        if HAS_RICH:
+            matrix_table = Table(title="🔍 Capabilities Matrix")
+            matrix_table.add_column("Provider", style="cyan")
+            
+            capabilities = ["Text", "Stream", "Tools", "Str+Tools", "Vision"]
+            for cap in capabilities:
+                matrix_table.add_column(cap, justify="center")
+            
+            for result in results:
+                row = [result.provider]
+                row.append(DiagnosticDisplay._format_bool(result.text_completion))
+                row.append(DiagnosticDisplay._format_bool(result.streaming_text))
+                row.append(DiagnosticDisplay._format_bool(result.function_call))
+                row.append(DiagnosticDisplay._format_bool(result.streaming_function_call))
+                row.append(DiagnosticDisplay._format_bool(result.vision))
+                
+                matrix_table.add_row(*row)
+            
+            console.print(matrix_table)
+        else:
+            print("\nCAPABILITIES MATRIX:")
+            header = f"{'Provider':<12} {'Text':<6} {'Stream':<8} {'Tools':<7} {'S+T':<5} {'Vision':<8}"
+            print(header)
+            print("-" * len(header))
+            
+            for result in results:
+                text_icon = {True: "✅", False: "❌", None: "—"}[result.text_completion]
+                stream_icon = {True: "✅", False: "❌", None: "—"}[result.streaming_text]
+                tools_icon = {True: "✅", False: "❌", None: "—"}[result.function_call]
+                stream_tools_icon = {True: "✅", False: "❌", None: "—"}[result.streaming_function_call]
+                vision_icon = {True: "✅", False: "❌", None: "—"}[result.vision]
+                
+                print(f"{result.provider:<12} {text_icon:<6} {stream_icon:<8} {tools_icon:<7} {stream_tools_icon:<5} {vision_icon:<8}")

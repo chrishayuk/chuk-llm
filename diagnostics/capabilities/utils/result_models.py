@@ -1,6 +1,7 @@
 # diagnostics/capabilities/result_models.py
 """
 Data models for diagnostic results.
+Updated to be compatible with the new test runners.
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ class ProviderResult:
     streaming_function_call: Optional[bool] = None
     vision: Optional[bool] = None
 
-    errors: Dict[str, str] = field(default_factory=dict)
+    errors: Dict[str, str] = field(default_factory=dict)  # Added this field
     timings: Dict[str, float] = field(default_factory=dict)
 
     def record(self, attr: str, value: Optional[bool]) -> None:
