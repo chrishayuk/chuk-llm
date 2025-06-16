@@ -27,20 +27,72 @@ load_dotenv()
 # Add parent directories to path for imports
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-# Import our utilities
-from utils.test_runners import CapabilityTester
-from utils.display_utils import DiagnosticDisplay
-from utils.provider_configs import get_provider_config
-from utils.result_models import ProviderResult
-
-# chuk-llm imports
+# Import our utilities (these should exist in utils/)
 try:
-    from chuk_llm.configuration.unified_config import get_config
-    from chuk_llm.configuration.capabilities import PROVIDER_CAPABILITIES, CapabilityChecker
+    from utils.test_runners import CapabilityTester
+    from utils.display_utils import DiagnosticDisplay
+    from utils.provider_configs import get_provider_config
+    from utils.result_models import ProviderResult
+except ImportError as e:
+    print(f"Warning: Could not import utilities: {e}")
+    print("Creating minimal fallback implementations...")
+    
+    # Minimal fallback implementations
+    class CapabilityTester:
+        async def test_text_completion(self, provider, model, result, tick):
+            pass
+        async def test_streaming(self, provider, model, result, tick):
+            pass
+        async def test_tools(self, provider, model, result, tick):
+            pass
+        async def test_streaming_tools(self, provider, model, result, tick):
+            pass
+        async def test_vision(self, provider, model, result, tick):
+            pass
+    
+    class DiagnosticDisplay:
+        def print_live_tick(self, provider, stage, success, timing):
+            pass
+        def print_provider_header(self, provider):
+            print(f"\n🔍 Testing {provider}")
+        def print_summary(self, results):
+            print(f"\n📊 Summary: {len(results)} providers tested")
+        def print_quick_summary(self, results):
+            print(f"Quick: {len(results)} providers")
+        def print_capabilities_matrix(self, results):
+            print("Matrix view not available")
+    
+    def get_provider_config(provider):
+        return {}
+    
+    class ProviderResult:
+        def __init__(self, provider, models):
+            self.provider = provider
+            self.models = models
+            self.errors = {}
+            self.timings = {}
+            self.successful_capabilities = 0
+            self.total_capabilities = 5
+            self.feature_set = set()
+        
+        def record(self, capability, result):
+            if result is not None:
+                self.successful_capabilities += 1
+                if result:
+                    self.feature_set.add(capability)
+        
+        def has_errors(self):
+            return len(self.errors) > 0
+
+# chuk-llm imports - FIXED
+try:
+    from chuk_llm.configuration.unified_config import get_config, CapabilityChecker
     from chuk_llm.llm.client import get_client
+    import chuk_llm
 except ImportError as e:
     print(f"Error importing chuk_llm: {e}")
     print("Make sure you're running from the project root directory")
+    print("Also ensure you've added REASONING to the Feature enum in unified_config.py")
     sys.exit(1)
 
 # Optional Rich imports for progress display
@@ -88,34 +140,70 @@ class DiagnosticRunner:
         
         return mapping
     
-    def build_provider_models(
-        self, 
-        provider: str, 
-        overrides: Dict[str, Dict[str, str]]
-    ) -> Dict[str, str]:
-        """Build model mapping for a provider, respecting CLI overrides"""
+    def build_provider_models(self, provider: str, overrides: Dict[str, Dict[str, str]]) -> Dict[str, str]:
+        """Build model mapping with intelligent capability-based selection"""
         provider_lower = provider.lower()
         provider_overrides = overrides.get(provider_lower, {})
         
         try:
             provider_config = self.config_manager.get_provider(provider)
             default_model = provider_config.default_model
-        except Exception:
+            
+            # Smart model selection based on capabilities
+            models = {}
+            capabilities = ["text", "streaming", "tools", "streaming_tools", "vision"]  # FIXED: Define capabilities here
+            
+            for capability in capabilities:
+                # Check override first
+                if provider_overrides.get(capability) or provider_overrides.get("*"):
+                    models[capability] = provider_overrides.get(capability) or provider_overrides.get("*")
+                    continue
+                
+                # Find best model for this capability
+                best_model = self._find_best_model_for_capability(provider_config, capability)
+                models[capability] = best_model or default_model
+                
+            return models
+            
+        except Exception as e:
+            # FIXED: Ensure capabilities is defined in all code paths
+            print(f"Warning: Error building models for {provider}: {e}")
             default_model = "default"
+            capabilities = ["text", "streaming", "tools", "streaming_tools", "vision"]  # FIXED: Define here too
+            return {cap: default_model for cap in capabilities}
         
-        capabilities = ["text", "streaming", "tools", "streaming_tools", "vision"]
-        models = {}
+    def _find_best_model_for_capability(self, provider_config, capability: str) -> Optional[str]:
+        """Find the best model for a specific capability"""
+        from chuk_llm.configuration.unified_config import Feature
         
-        for capability in capabilities:
-            # Check for specific capability override, then wildcard, then default
-            models[capability] = (
-                provider_overrides.get(capability) or 
-                provider_overrides.get("*") or 
-                default_model
-            )
+        capability_map = {
+            "text": Feature.STREAMING,
+            "streaming": Feature.STREAMING, 
+            "tools": Feature.TOOLS,
+            "streaming_tools": Feature.TOOLS,
+            "vision": Feature.VISION
+        }
         
-        return models
-    
+        required_feature = capability_map.get(capability)
+        if not required_feature:
+            return provider_config.default_model
+        
+        # Check if default model supports the capability
+        if provider_config.supports_feature(required_feature, provider_config.default_model):
+            return provider_config.default_model
+        
+        # Search through available models
+        for model in provider_config.models:
+            if provider_config.supports_feature(required_feature, model):
+                return model
+        
+        # Check model aliases
+        for alias, actual_model in provider_config.model_aliases.items():
+            if provider_config.supports_feature(required_feature, actual_model):
+                return actual_model
+        
+        return None 
+        
     def get_available_providers(self, requested_providers: List[str] = None) -> List[str]:
         """Get list of available providers, optionally filtered by request"""
         try:
@@ -359,6 +447,36 @@ class DiagnosticRunner:
                 print(f"⚠️  Providers with errors: {', '.join(error_providers)}")
 
 
+# Simple test function for basic validation
+async def test_basic_chuk_llm():
+    """Test basic ChukLLM functionality"""
+    print("🧪 Testing basic ChukLLM functionality...")
+    
+    try:
+        # Test configuration loading
+        config = get_config()
+        providers = config.get_all_providers()
+        print(f"✅ Configuration loaded: {len(providers)} providers found")
+        
+        # Test provider access
+        for provider in providers[:3]:  # Test first 3 providers
+            try:
+                provider_config = config.get_provider(provider)
+                print(f"✅ {provider}: {provider_config.default_model}")
+            except Exception as e:
+                print(f"❌ {provider}: {e}")
+        
+        # Test basic ask function
+        try:
+            response = await chuk_llm.ask("Hello, can you respond with just 'OK'?", provider="openai")
+            print(f"✅ Basic ask test: {response[:50]}...")
+        except Exception as e:
+            print(f"❌ Basic ask test failed: {e}")
+        
+    except Exception as e:
+        print(f"❌ Basic test failed: {e}")
+
+
 def create_argument_parser() -> argparse.ArgumentParser:
     """Create and configure the command-line argument parser"""
     parser = argparse.ArgumentParser(
@@ -371,6 +489,7 @@ Examples:
   python llm_diagnostics_main.py --model "openai:text=gpt-4o-mini,anthropic:vision=claude-sonnet-4-20250514"
   python llm_diagnostics_main.py --skip-tools --skip-image
   python llm_diagnostics_main.py --quick
+  python llm_diagnostics_main.py --test-basic
         """
     )
     
@@ -413,6 +532,11 @@ Examples:
         action="store_true",
         help="Show capabilities matrix view"
     )
+    parser.add_argument(
+        "--test-basic",
+        action="store_true",
+        help="Run basic ChukLLM functionality test only"
+    )
     
     return parser
 
@@ -421,6 +545,11 @@ async def main():
     """Main entry point"""
     parser = create_argument_parser()
     args = parser.parse_args()
+    
+    # If --test-basic is specified, just run the basic test
+    if args.test_basic:
+        await test_basic_chuk_llm()
+        return
     
     runner = DiagnosticRunner()
     

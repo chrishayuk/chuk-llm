@@ -254,11 +254,11 @@ class GeminiLLMClient(BaseLLMClient):
         load_dotenv()
 
         # get the api key
-        api_key = api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
         
         # check if we have a key
         if not api_key:
-            raise ValueError("GOOGLE_API_KEY / GEMINI_API_KEY env var not set")
+            raise ValueError("GEMINI_API_KEY / GEMINI_API_KEY env var not set")
         
         # Initialize with complete suppression
         with SuppressAllOutput():

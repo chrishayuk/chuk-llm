@@ -40,14 +40,14 @@ class GeminiVideoGenerator(BaseVideoGenerator):
         
         Args:
             model: Name of the video generation model to use
-            api_key: Optional API key (will use GOOGLE_API_KEY environment variable if not provided)
+            api_key: Optional API key (will use GEMINI_API_KEY environment variable if not provided)
             api_base: Not used for Gemini, kept for interface consistency
         """
         load_dotenv()
         self.model = model
-        api_key = api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
         if not api_key:
-            raise ValueError("GOOGLE_API_KEY / GEMINI_API_KEY environment variable not set")
+            raise ValueError("GEMINI_API_KEY / GEMINI_API_KEY environment variable not set")
         
         self.client = genai.Client(api_key=api_key)
         log.info("Gemini Video Generator initialized with model '%s'", model)

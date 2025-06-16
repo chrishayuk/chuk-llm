@@ -37,8 +37,8 @@ log = logging.getLogger("media_gen_cli")
 load_dotenv()
 
 # Check for API key
-if not os.getenv("GOOGLE_API_KEY") and not os.getenv("GEMINI_API_KEY"):
-    log.error("API key not found. Set the GOOGLE_API_KEY or GEMINI_API_KEY environment variable.")
+if not os.getenv("GEMINI_API_KEY") and not os.getenv("GEMINI_API_KEY"):
+    log.error("API key not found. Set the GEMINI_API_KEY or GEMINI_API_KEY environment variable.")
     sys.exit(1)
 
 # Import the generator clients

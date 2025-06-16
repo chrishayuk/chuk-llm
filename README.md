@@ -341,7 +341,7 @@ asyncio.run(function_calling_example())
 # API Keys
 export OPENAI_API_KEY="your-openai-key"
 export ANTHROPIC_API_KEY="your-anthropic-key"
-export GOOGLE_API_KEY="your-google-key"
+export GEMINI_API_KEY="your-google-key"
 export GROQ_API_KEY="your-groq-key"
 export PERPLEXITY_API_KEY="your-perplexity-key"
 

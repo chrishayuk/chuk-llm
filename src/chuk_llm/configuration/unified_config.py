@@ -32,13 +32,15 @@ logger = logging.getLogger(__name__)
 # ──────────────────────────── Feature Definitions ─────────────────────────────
 class Feature(str, Enum):
     """Supported LLM features"""
-    STREAMING = "streaming"
-    TOOLS = "tools" 
-    VISION = "vision"
-    JSON_MODE = "json_mode"
-    PARALLEL_CALLS = "parallel_calls"
-    SYSTEM_MESSAGES = "system_messages"
-    MULTIMODAL = "multimodal"
+    TEXT = "text"                          # Basic text completion capability
+    STREAMING = "streaming"                # Streaming response capability
+    TOOLS = "tools"                        # Function calling/tools
+    VISION = "vision"                      # Image/visual input processing
+    JSON_MODE = "json_mode"                # Structured JSON output
+    PARALLEL_CALLS = "parallel_calls"      # Multiple simultaneous function calls
+    SYSTEM_MESSAGES = "system_messages"    # System message support
+    MULTIMODAL = "multimodal"              # Multiple input modalities
+    REASONING = "reasoning"                # Advanced reasoning capabilities
 
     @classmethod
     def from_string(cls, value: str) -> "Feature":

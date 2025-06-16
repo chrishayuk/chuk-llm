@@ -1,4 +1,4 @@
-# chuk_llm.yaml - Complete Configuration with Reasoning Capability
+# chuk_llm.yaml - Complete Configuration with TEXT feature added
 # Unified configuration combining providers and capabilities
 
 ##############################################################################
@@ -44,8 +44,7 @@ __global_aliases__:
   phi: ollama/phi3
   
   # Enterprise models
-  watsonx: watsonx/meta-llama/llama-4-scout-17b-16e-instruct
-  perplexity: perplexity/sonar
+  watsonx: watsonx/ibm/granite-3-3-8b-instruct
   
   # Reasoning models
   reasoning: mistral/magistral-medium-2506
@@ -62,8 +61,8 @@ openai:
   api_key_env: "OPENAI_API_KEY"
   default_model: "gpt-4o-mini"
   
-  # Provider baseline features
-  features: [streaming, system_messages, json_mode]
+  # Provider baseline features - TEXT is fundamental
+  features: [text, streaming, system_messages, json_mode]
   max_context_length: 128000
   max_output_tokens: 4096
   rate_limits:
@@ -107,33 +106,33 @@ openai:
     reasoning_mini: "o3-mini"
   
   model_capabilities:
-    # O-series (reasoning models)
+    # O-series (reasoning models) - includes text
     - pattern: "o[1-4].*"
-      features: [tools, reasoning]
+      features: [text, streaming, tools, vision, reasoning, parallel_calls]
       max_context_length: 200000
       max_output_tokens: 32768
     
-    # GPT-4o (Omni family)
+    # GPT-4o (Omni family) - full capabilities including text
     - pattern: "gpt-4o.*"
-      features: [tools, vision, parallel_calls, reasoning]
+      features: [text, streaming, tools, vision, parallel_calls]
       max_context_length: 128000
       max_output_tokens: 8192
     
-    # GPT-4.0/4.1/4-Turbo (advanced reasoning)
+    # GPT-4.0/4.1/4-Turbo - text + advanced features
     - pattern: "gpt-4\\.[01].*|gpt-4-(turbo|preview).*"
-      features: [tools, vision, parallel_calls, reasoning]
+      features: [text, streaming, tools, vision, parallel_calls]
       max_context_length: 128000
       max_output_tokens: 8192
     
-    # GPT-4 (reasoning)
+    # GPT-4 - text + reasoning
     - pattern: "gpt-4$"
-      features: [tools, vision, reasoning]
+      features: [text, streaming, tools, vision, parallel_calls]
       max_context_length: 8192
       max_output_tokens: 4096
     
-    # GPT-3.5-Turbo (basic reasoning)
+    # GPT-3.5-Turbo - text + basic features
     - pattern: "gpt-3\\.5-turbo.*"
-      features: [tools, reasoning]
+      features: [text, streaming]
       max_context_length: 16384
       max_output_tokens: 4096
 
@@ -145,7 +144,8 @@ deepseek:
   api_base: "https://api.deepseek.com"
   default_model: "deepseek-reasoner"
   
-  features: [streaming, tools, json_mode, system_messages, reasoning]
+  # All text models have text capability
+  features: [text, streaming, json_mode, system_messages]
   max_context_length: 65536
   max_output_tokens: 8192
   rate_limits:
@@ -164,12 +164,12 @@ deepseek:
   
   model_capabilities:
     - pattern: "deepseek-chat"
-      features: [tools, json_mode, reasoning]
+      features: [text, streaming, json_mode]
       max_context_length: 65536
       max_output_tokens: 8192
     
     - pattern: "deepseek-reasoner"
-      features: [tools, json_mode, reasoning]
+      features: [text, streaming, json_mode, reasoning]
       max_context_length: 65536
       max_output_tokens: 8192
 
@@ -179,7 +179,8 @@ anthropic:
   api_key_env: "ANTHROPIC_API_KEY"
   default_model: "claude-sonnet-4-20250514"
   
-  features: [streaming, system_messages, reasoning]
+  # All Claude models have excellent text capabilities
+  features: [text, streaming, system_messages, reasoning]
   max_context_length: 200000
   max_output_tokens: 4096
   rate_limits:
@@ -213,27 +214,27 @@ anthropic:
     thinking: "claude-sonnet-4-20250514"
   
   model_capabilities:
-    # Claude 4 models (advanced reasoning)
+    # Claude 4 models - text + advanced capabilities
     - pattern: "claude-(opus|sonnet)-4-.*"
-      features: [tools, vision, parallel_calls, reasoning]
+      features: [text, streaming, tools, vision, parallel_calls, reasoning]
       max_context_length: 200000
       max_output_tokens: 8192
     
-    # Claude 3.7 models (advanced reasoning)
+    # Claude 3.7 models - text + advanced capabilities
     - pattern: "claude-3-7-.*"
-      features: [tools, vision, parallel_calls, reasoning]
+      features: [text, streaming, tools, vision, parallel_calls, reasoning]
       max_context_length: 200000
       max_output_tokens: 8192
     
-    # Claude 3.5 models (reasoning)
+    # Claude 3.5 models - text + capabilities
     - pattern: "claude-3-5-.*"
-      features: [tools, vision, parallel_calls, reasoning]
+      features: [text, streaming, tools, vision, parallel_calls]
       max_context_length: 200000
       max_output_tokens: 4096
     
-    # Other Claude 3 models (basic reasoning)
+    # Other Claude 3 models - text + basic capabilities
     - pattern: "claude-3-.*"
-      features: [tools, vision, reasoning]
+      features: [text, streaming, tools, vision]
       max_context_length: 200000
       max_output_tokens: 4096
 
@@ -245,7 +246,8 @@ groq:
   api_base: "https://api.groq.com"
   default_model: "llama-3.3-70b-versatile"
   
-  features: [streaming, tools, parallel_calls, reasoning]
+  # All Groq models support text
+  features: [text, streaming, tools, parallel_calls]
   max_context_length: 32768
   max_output_tokens: 8192
   rate_limits:
@@ -269,19 +271,20 @@ groq:
     powerful: "llama-3.3-70b-versatile"
   
   model_capabilities:
-    # All Groq models have reasoning capabilities
+    # All Groq models have text + capabilities
     - pattern: ".*"
-      features: [tools, reasoning]
+      features: [text, streaming, tools]
       max_context_length: 32768
       max_output_tokens: 8192
 
 # Google Gemini
 gemini:
   client_class: "chuk_llm.llm.providers.gemini_client.GeminiLLMClient"
-  api_key_env: "GOOGLE_API_KEY"
+  api_key_env: "GEMINI_API_KEY"
   default_model: "gemini-2.0-flash"
   
-  features: [streaming, tools, vision, json_mode, system_messages, reasoning]
+  # All Gemini models support text
+  features: [text, streaming, tools, vision, json_mode, system_messages, reasoning]
   max_context_length: 1000000
   max_output_tokens: 8192
   rate_limits:
@@ -303,19 +306,21 @@ gemini:
     thinking: "gemini-2.0-flash"
   
   model_capabilities:
-    # All Gemini models have advanced reasoning
+    # All Gemini models have text + advanced capabilities
     - pattern: "gemini-.*"
-      features: [tools, vision, json_mode, reasoning]
+      features: [text, streaming, tools, vision, json_mode, reasoning]
       max_context_length: 1000000
       max_output_tokens: 8192
 
 # Mistral AI – official cloud with Magistral reasoning
+# Mistral AI – fixed to use correct models for tools
 mistral:
   client_class: "chuk_llm.llm.providers.mistral_client.MistralLLMClient"
   api_key_env: "MISTRAL_API_KEY"
-  default_model: "magistral-medium-2506"
+  default_model: "mistral-medium-2505"  # CHANGED: Use tools-capable model as default
   
-  features: [streaming, tools, vision, system_messages, parallel_calls, reasoning]
+  # All Mistral models support text
+  features: [text, streaming, tools, vision, system_messages, parallel_calls, reasoning]
   max_context_length: 128000
   max_output_tokens: 8192
   rate_limits:
@@ -324,11 +329,10 @@ mistral:
   
   models:
     # Premier models (June 2025)
-    - "magistral-medium-2506"                    # New reasoning model
+    - "magistral-medium-2506"                    # Reasoning-only model
     - "magistral-small-2506"                     # Small reasoning model (free)
-    - "mistral-medium-2505"                      # Frontier multimodal model
+    - "mistral-medium-2505"                      # Frontier multimodal model with tools
     - "codestral-2501"                           # Latest coding model
-    - "mistral-ocr-2505"                         # OCR service
     - "mistral-saba-2502"                        # Middle East/South Asia languages
     - "mistral-large-2411"                       # Top-tier reasoning model
     - "pixtral-large-2411"                       # Frontier multimodal model
@@ -339,11 +343,6 @@ mistral:
     - "devstral-small-2505"                      # 24B code model (open source)
     - "mistral-small-2503"                       # Small with vision (v3.1)
     - "pixtral-12b-2409"                         # 12B vision model
-    
-    # Embedding/utility models
-    - "mistral-embed"                            # Text embeddings
-    - "codestral-embed"                          # Code embeddings
-    - "mistral-moderation-2411"                  # Moderation service
   
   model_aliases:
     # Magistral (reasoning) aliases
@@ -354,15 +353,12 @@ mistral:
     reasoning_small: "magistral-small-2506"
     thinking: "magistral-medium-2506"
     
-    # Size aliases (current generation)
+    # Size aliases (current generation) - UPDATED to use tools-capable models
     large: "mistral-large-2411"
-    medium: "mistral-medium-2505"
-    small: "mistral-small-2503"
+    medium: "mistral-medium-2505"               # Tools-capable multimodal
+    small: "mistral-small-2503"                 # Tools-capable with vision
     
     # Edge model aliases
-    edge: "ministral-3b-2410"
-    edge_small: "ministral-3b-2410"
-    edge_large: "ministral-8b-2410"
     ministral: "ministral-8b-2410"
     
     # Specialized aliases
@@ -370,10 +366,9 @@ mistral:
     pixtral_small: "pixtral-12b-2409"
     codestral: "codestral-2501"
     devstral: "devstral-small-2505"
-    ocr: "mistral-ocr-2505"
     saba: "mistral-saba-2502"
     
-    # Vision aliases
+    # Vision aliases - Point to tools+vision capable models
     vision: "pixtral-large-2411"
     vision_small: "pixtral-12b-2409"
     multimodal: "mistral-medium-2505"
@@ -383,89 +378,68 @@ mistral:
     code_open: "devstral-small-2505"
     coding: "codestral-2501"
     
-    # Embedding aliases
-    embed: "mistral-embed"
-    embed_code: "codestral-embed"
+    # Tools aliases - ADDED: Point to tools-capable models
+    tools: "mistral-medium-2505"
+    tools_vision: "pixtral-large-2411"
     
-    # Capability aliases
-    latest: "magistral-medium-2506"
-    free: "magistral-small-2506"
-    best: "magistral-medium-2506"
-    fastest: "ministral-3b-2410"
-    powerful: "mistral-large-2411"
+    # Capability aliases - UPDATED to use multimodal model as latest
+    latest: "mistral-medium-2505"              # CHANGED: Use tools-capable model
+    default: "mistral-medium-2505"             # CHANGED: Use tools-capable model
   
   model_capabilities:
-    # Magistral (reasoning) models - primary reasoning capability
+    # Magistral (reasoning) models - text + reasoning only (NO TOOLS)
     - pattern: "magistral-.*"
-      features: [tools, parallel_calls, reasoning]
+      features: [text, streaming, reasoning]
       max_context_length: 40960  # 40k tokens for reasoning
       max_output_tokens: 8192
     
-    # Mistral Large 2411 (top-tier reasoning)
+    # Mistral Large 2411 - text + tools capabilities
     - pattern: "mistral-large-2411"
-      features: [tools, parallel_calls, reasoning]
+      features: [text, streaming, tools, parallel_calls, reasoning]
       max_context_length: 131072  # 128k
       max_output_tokens: 8192
     
-    # Mistral Medium 2505 (frontier multimodal with reasoning)
+    # Mistral Medium 2505 - text + multimodal + tools capabilities (FLAGSHIP)
     - pattern: "mistral-medium-2505"
-      features: [tools, vision, multimodal, parallel_calls, reasoning]
+      features: [text, streaming, tools, vision, multimodal, parallel_calls, reasoning]
       max_context_length: 131072  # 128k
       max_output_tokens: 8192
     
-    # Mistral Small 2503 (with vision and reasoning)
+    # Mistral Small 2503 - text + vision + tools capabilities
     - pattern: "mistral-small-2503"
-      features: [tools, vision, multimodal, reasoning]
+      features: [text, streaming, tools, vision, multimodal, reasoning]
       max_context_length: 131072  # 128k
       max_output_tokens: 4096
     
-    # Pixtral models (vision with reasoning)
+    # Pixtral models - text + vision + tools capabilities
     - pattern: "pixtral-.*"
-      features: [tools, vision, multimodal, parallel_calls, reasoning]
+      features: [text, streaming, tools, vision, multimodal, parallel_calls, reasoning]
       max_context_length: 131072  # 128k
       max_output_tokens: 8192
     
-    # Codestral models (coding with reasoning)
+    # Codestral models - text + coding + tools capabilities
     - pattern: "codestral-.*"
-      features: [tools, reasoning]
+      features: [text, streaming, tools, reasoning]
       max_context_length: 262144  # 256k for code
       max_output_tokens: 8192
     
-    # Devstral (open source code model with reasoning)
+    # Devstral - text + coding + tools capabilities
     - pattern: "devstral-.*"
-      features: [tools, reasoning]
+      features: [text, streaming, tools, reasoning]
       max_context_length: 131072  # 128k
       max_output_tokens: 8192
     
-    # Ministral (edge models with reasoning)
+    # Ministral - text + edge + tools capabilities
     - pattern: "ministral-.*"
-      features: [tools, reasoning]
+      features: [text, streaming, tools, reasoning]
       max_context_length: 131072  # 128k
       max_output_tokens: 4096
     
-    # OCR model
-    - pattern: "mistral-ocr-.*"
-      features: [vision, multimodal]
-      max_context_length: 32768
-      max_output_tokens: 8192
-    
-    # Saba (Middle East/South Asia with reasoning)
+    # Saba - text + multilingual + tools capabilities
     - pattern: "mistral-saba-.*"
-      features: [tools, reasoning]
+      features: [text, streaming, tools, reasoning]
       max_context_length: 32768
       max_output_tokens: 4096
-    
-    # Embedding models
-    - pattern: ".*embed.*"
-      features: []
-      max_context_length: 8192
-      max_output_tokens: 0
-    
-    # Moderation model
-    - pattern: "mistral-moderation-.*"
-      features: []
-      max_context_length: 8192
-      max_output_tokens: 1024
 
 # Local Ollama daemon
 ollama:
@@ -473,7 +447,8 @@ ollama:
   api_base: "http://localhost:11434"
   default_model: "granite3.3"
   
-  features: [streaming, system_messages, reasoning]
+  # All Ollama models support text
+  features: [text, streaming, system_messages, reasoning]
   max_context_length: 8192
   max_output_tokens: 4096
   rate_limits: {}
@@ -505,56 +480,56 @@ ollama:
     reasoning: "llama3.3"
   
   model_capabilities:
-    # Gemma 3 models
+    # Gemma 3 models - text + capabilities
     - pattern: "gemma.*"
-      features: [tools, reasoning]
+      features: [text, streaming, tools]
       max_context_length: 8192
       max_output_tokens: 4096
     
-    # Llama 3.3/3.2 models (with reasoning)
+    # Llama 3.3/3.2 models - text + capabilities
     - pattern: "llama3\\.[23].*"
-      features: [tools, reasoning]
+      features: [text, streaming, tools]
       max_context_length: 32768
       max_output_tokens: 8192
     
-    # Mistral local models (with reasoning)
+    # Mistral local models - text + capabilities
     - pattern: "mistral.*"
-      features: [tools, reasoning]
+      features: [text, streaming, tools]
       max_context_length: 32768
       max_output_tokens: 8192
     
-    # Qwen models (with reasoning)
+    # Qwen models - text + capabilities
     - pattern: "qwen.*"
-      features: [tools, reasoning]
+      features: [text, streaming, tools, reasoning]
       max_context_length: 32768
       max_output_tokens: 8192
     
-    # CodeLlama models (reasoning for code)
+    # CodeLlama models - text + coding capabilities
     - pattern: ".*codellama.*|.*code.*"
-      features: [reasoning]  # No tools but has reasoning
+      features: [text, streaming]  # text + reasoning for code
       max_context_length: 16384
       max_output_tokens: 8192
     
-    # Phi models (basic reasoning)
+    # Phi models - text + basic capabilities
     - pattern: "phi.*"
-      features: [reasoning]
+      features: [text, streaming]
       max_context_length: 4096
       max_output_tokens: 2048
     
-    # Vision models
+    # Vision models - text + vision capabilities
     - pattern: "llama3\\.2.*vision.*"
-      features: [tools, vision, multimodal, reasoning]
+      features: [text, streaming, tools, vision, multimodal]
       max_context_length: 8192
       max_output_tokens: 4096
     
-    # Embedding models
+    # Embedding models - NO text completion (specialized)
     - pattern: ".*embed.*|.*embedding.*"
       features: []
       max_context_length: 512
     
-    # Granite models (with reasoning)
+    # Granite models - text + capabilities
     - pattern: "granite.*"
-      features: [tools, reasoning]
+      features: [text, streaming, tools, reasoning]
       max_context_length: 8192
       max_output_tokens: 4096
 
@@ -564,9 +539,10 @@ watsonx:
   api_key_env: "WATSONX_API_KEY"
   api_key_fallback_env: "IBM_CLOUD_API_KEY"
   watsonx_ai_url: "https://us-south.ml.cloud.ibm.com"
-  default_model: "meta-llama/llama-4-scout-17b-16e-instruct"
+  default_model: "ibm/granite-3-3-8b-instruct"
   
-  features: [streaming, system_messages, reasoning]
+  # All WatsonX models support text
+  features: [text, streaming, system_messages, reasoning]
   max_context_length: 131072
   max_output_tokens: 4096
   rate_limits:
@@ -607,7 +583,7 @@ watsonx:
     # Llama 4 aliases (new models)
     llama4_scout: "meta-llama/llama-4-scout-17b-16e-instruct"
     llama4_maverick: "meta-llama/llama-4-maverick-17b-128e-instruct-fp8"
-    llama4: "meta-llama/llama-4-scout-17b-16e-instruct"
+    llama4: "meta-llama/llama-4-maverick-17b-128e-instruct-fp8"
     
     # Llama 3.x aliases
     llama3_3: "meta-llama/llama-3-3-70b-instruct"
@@ -619,8 +595,8 @@ watsonx:
     llama3_2_3b: "meta-llama/llama-3-2-3b-instruct"
     
     # Simple Llama aliases (Llama 4 as defaults)
-    llama: "meta-llama/llama-4-scout-17b-16e-instruct"
-    llama_vision: "meta-llama/llama-4-scout-17b-16e-instruct"
+    llama: "meta-llama/llama-4-maverick-17b-128e-instruct-fp8"
+    llama_vision: "meta-llama/llama-4-maverick-17b-128e-instruct-fp8"
     
     # Mistral aliases
     mistral_medium: "mistralai/mistral-medium-2505"
@@ -631,132 +607,77 @@ watsonx:
     mistral_vision: "mistralai/pixtral-12b"
     
     # Capability aliases
-    latest: "meta-llama/llama-4-scout-17b-16e-instruct"
+    latest: "ibm/granite-3-3-8b-instruct"
     vision: "ibm/granite-vision-3-2-2b-instruct"
-    reasoning: "meta-llama/llama-4-scout-17b-16e-instruct"
-    powerful: "meta-llama/llama-3-405b-instruct"
-    free: "meta-llama/llama-4-scout-17b-16e-instruct"
+    reasoning: "ibm/granite-3-3-8b-instruct"
   
   extra:
     project_id_env: "WATSONX_PROJECT_ID"
     space_id_env: "WATSONX_SPACE_ID"
   
   model_capabilities:
-    # Llama 4 models (New - multimodal reasoning, long-context)
+    # Llama 4 models - text + multimodal capabilities
     - pattern: "meta-llama/llama-4-.*"
-      features: [tools, multimodal, reasoning]
+      features: [text, streaming, tools, multimodal]
       max_context_length: 131072  # 128k as specified
       max_output_tokens: 4096
     
-    # Llama 3.3 70B (Current generation with reasoning)
+    # Llama 3.3 70B - text + capabilities
     - pattern: "meta-llama/llama-3-3-70b-instruct"
-      features: [tools, reasoning]
+      features: [text, streaming, tools]
       max_context_length: 131072  # 128k
       max_output_tokens: 4096
     
-    # Llama 3.2 Vision models (with reasoning)
+    # Llama 3.2 Vision models - text + vision capabilities
     - pattern: "meta-llama/llama-3-2-.*vision-instruct"
-      features: [tools, vision, multimodal, reasoning]
+      features: [text, streaming, tools, vision, multimodal]
       max_context_length: 131072  # 128k
       max_output_tokens: 4096
     
-    # Llama 3.2 Small models (1B, 3B with reasoning)
+    # Llama 3.2 Small models - text + capabilities
     - pattern: "meta-llama/llama-3-2-[13]b-instruct"
-      features: [tools, reasoning]
+      features: [text, streaming, tools]
       max_context_length: 131072  # 128k
       max_output_tokens: 4096
     
-    # Llama 3 405B (Large model with advanced reasoning)
+    # Llama 3 405B - text + advanced capabilities
     - pattern: "meta-llama/llama-3-405b-instruct"
-      features: [tools, parallel_calls, reasoning]
+      features: [text, streaming, tools, parallel_calls]
       max_context_length: 131072  # 128k
       max_output_tokens: 4096
     
-    # IBM Granite family (with reasoning)
+    # IBM Granite family - text + capabilities
     - pattern: "ibm/granite-.*"
-      features: [tools, reasoning]
+      features: [text, streaming, tools, reasoning]
       max_context_length: 131072
       max_output_tokens: 4096
     
-    # IBM Granite Vision (with reasoning)
+    # IBM Granite Vision - text + vision capabilities
     - pattern: "ibm/granite-vision-.*"
-      features: [tools, vision, multimodal, reasoning]
+      features: [text, streaming, tools, vision, multimodal]
       max_context_length: 131072
       max_output_tokens: 4096
     
-    # Mistral Medium 2505 (New - with vision and reasoning)
+    # Mistral Medium 2505 - text + multimodal capabilities
     - pattern: "mistralai/mistral-medium-2505"
-      features: [tools, vision, multimodal, parallel_calls, reasoning]
+      features: [text, streaming, tools, vision, multimodal, parallel_calls]
       max_context_length: 131072  # 128k
       max_output_tokens: 8192
     
-    # Mistral Small 2503 (New - with vision and reasoning)
+    # Mistral Small 2503 - text + vision capabilities
     - pattern: "mistralai/mistral-small-3-1-24b-instruct-2503"
-      features: [tools, vision, multimodal, reasoning]
+      features: [text, streaming, tools, vision, multimodal]
       max_context_length: 131072  # 128k
       max_output_tokens: 4096
     
-    # Pixtral (Vision model with reasoning)
+    # Pixtral - text + vision capabilities
     - pattern: "mistralai/pixtral-12b"
-      features: [tools, vision, multimodal, reasoning]
+      features: [text, streaming, tools, vision, multimodal]
       max_context_length: 131072  # 128k
       max_output_tokens: 4096
     
-    # Mistral Large 2 (with reasoning)
+    # Mistral Large 2 - text + advanced capabilities
     - pattern: "mistralai/mistral-large-2"
-      features: [tools, parallel_calls, reasoning]
+      features: [text, streaming, tools, parallel_calls]
       max_context_length: 131072  # 128k
-      max_output_tokens: 8192
-      
-# Perplexity – search-augmented reasoning
-perplexity:
-  inherits: "openai"
-  client_class: "chuk_llm.llm.providers.openai_client.OpenAILLMClient"
-  api_key_env: "PERPLEXITY_API_KEY"
-  api_base: "https://api.perplexity.ai"
-  default_model: "sonar-reasoning-pro"
-  
-  features: [streaming, tools, system_messages, reasoning]
-  max_context_length: 128000
-  max_output_tokens: 8192
-  rate_limits:
-    default: 3000
-  
-  models:
-    - "sonar"
-    - "sonar-pro"
-    - "sonar-reasoning"
-    - "sonar-reasoning-pro"
-    - "sonar-deep-research"
-  
-  model_aliases:
-    # Simple aliases
-    pro: "sonar-pro"
-    reasoning: "sonar-reasoning-pro"
-    research: "sonar-deep-research"
-    latest: "sonar-reasoning-pro"
-    thinking: "sonar-reasoning"
-  
-  model_capabilities:
-    # General-purpose
-    - pattern: "sonar$"
-      features: [reasoning]
-      max_context_length: 200000
-      max_output_tokens: 8192
-
-    - pattern: "sonar-pro"
-      features: [reasoning]
-      max_context_length: 128000
-      max_output_tokens: 8192
-    
-    # Research-tuned (advanced reasoning)
-    - pattern: "sonar-deep-research"
-      features: [reasoning]
-      max_context_length: 128000
-      max_output_tokens: 8192
-    
-    # Reasoning-tuned (primary reasoning models)
-    - pattern: "sonar-reasoning.*"
-      features: [reasoning]
-      max_context_length: 200000
       max_output_tokens: 8192

@@ -48,7 +48,7 @@ def test_provider(name: str, func: Optional[Callable], question: str = "What's 2
         'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY'),
         'ANTHROPIC_API_KEY': os.getenv('ANTHROPIC_API_KEY'), 
         'GROQ_API_KEY': os.getenv('GROQ_API_KEY'),
-        'GOOGLE_API_KEY': os.getenv('GOOGLE_API_KEY'),
+        'GEMINI_API_KEY': os.getenv('GEMINI_API_KEY'),
         'MISTRAL_API_KEY': os.getenv('MISTRAL_API_KEY'),
     }
     
@@ -85,7 +85,7 @@ def test_provider(name: str, func: Optional[Callable], question: str = "What's 2
             elif "groq" in error_msg.lower():
                 error_msg = "No Groq API key set (GROQ_API_KEY environment variable)"
             elif "google" in error_msg.lower() or "gemini" in error_msg.lower():
-                error_msg = "No Google API key set (GOOGLE_API_KEY environment variable)"
+                error_msg = "No Google API key set (GEMINI_API_KEY environment variable)"
         elif "authentication" in error_msg.lower():
             error_msg = "Invalid API key or authentication failed"
         elif "401" in error_msg:
@@ -191,7 +191,7 @@ def main():
         'OPENAI_API_KEY': os.getenv('OPENAI_API_KEY'),
         'ANTHROPIC_API_KEY': os.getenv('ANTHROPIC_API_KEY'), 
         'GROQ_API_KEY': os.getenv('GROQ_API_KEY'),
-        'GOOGLE_API_KEY': os.getenv('GOOGLE_API_KEY'),
+        'GEMINI_API_KEY': os.getenv('GEMINI_API_KEY'),
         'MISTRAL_API_KEY': os.getenv('MISTRAL_API_KEY'),
     }
     
@@ -334,7 +334,7 @@ def main():
     print("      OPENAI_API_KEY=your-openai-key")
     print("      ANTHROPIC_API_KEY=your-anthropic-key")
     print("      GROQ_API_KEY=your-groq-key")
-    print("      GOOGLE_API_KEY=your-google-key")
+    print("      GEMINI_API_KEY=your-google-key")
     print("   2. Or export them as environment variables")
     print("   3. Re-run this demo to see actual AI responses!")
     print()
