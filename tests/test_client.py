@@ -198,6 +198,9 @@ class TestGetLLMClient:
         mock_provider.client_class = None
         mock_provider.default_model = "test-model"
         mock_provider.api_base = None
+        mock_provider.api_key_env = "TEST_API_KEY"  # Set as string, not MagicMock
+        mock_provider.api_key_fallback_env = None
+        mock_provider.name = "test_provider"
         mock_provider.extra = {}
         
         # Patch at the module level where get_config is imported
@@ -207,8 +210,10 @@ class TestGetLLMClient:
             mock_config.get_api_key.return_value = None
             mock_get_config.return_value = mock_config
             
-            with pytest.raises(ValueError, match="No client class configured"):
-                get_client(provider="test_provider")
+            # Also patch os.getenv to avoid the TypeError
+            with patch("os.getenv", return_value=None):
+                with pytest.raises(ValueError, match="No client class configured"):
+                    get_client(provider="test_provider")
 
     def test_get_client_client_init_error(self):
         """Test that get_client handles client initialization errors."""
@@ -217,6 +222,9 @@ class TestGetLLMClient:
         mock_provider.client_class = "chuk_llm.llm.providers.openai_client.OpenAILLMClient"
         mock_provider.default_model = "test-model"
         mock_provider.api_base = None
+        mock_provider.api_key_env = "OPENAI_API_KEY"  # Set as string
+        mock_provider.api_key_fallback_env = None
+        mock_provider.name = "openai"
         mock_provider.extra = {}
         
         with patch("chuk_llm.llm.client.get_config") as mock_get_config:
@@ -225,11 +233,13 @@ class TestGetLLMClient:
             mock_config.get_api_key.return_value = None
             mock_get_config.return_value = mock_config
             
-            with patch("chuk_llm.llm.providers.openai_client.OpenAILLMClient") as mock_openai:
-                mock_openai.side_effect = Exception("Client init error")
-                
-                with pytest.raises(ValueError, match="Failed to create .* client"):
-                    get_client(provider="openai")
+            # Patch os.getenv to return None (no API key set)
+            with patch("os.getenv", return_value=None):
+                with patch("chuk_llm.llm.providers.openai_client.OpenAILLMClient") as mock_openai:
+                    mock_openai.side_effect = Exception("Client init error")
+                    
+                    with pytest.raises(ValueError, match="Failed to create .* client"):
+                        get_client(provider="openai")
 
     def test_get_client_invalid_import_path(self):
         """Test error handling for invalid client import paths."""
@@ -238,6 +248,9 @@ class TestGetLLMClient:
         mock_provider.client_class = "invalid.path:Class"
         mock_provider.default_model = "test-model"
         mock_provider.api_base = None
+        mock_provider.api_key_env = "TEST_API_KEY"  # Set as string
+        mock_provider.api_key_fallback_env = None
+        mock_provider.name = "test"
         mock_provider.extra = {}
         
         # Patch at the module level where get_config is imported
@@ -247,8 +260,10 @@ class TestGetLLMClient:
             mock_config.get_api_key.return_value = None
             mock_get_config.return_value = mock_config
             
-            with pytest.raises(ValueError, match="Failed to import client class"):
-                get_client(provider="test")
+            # Patch os.getenv to avoid the TypeError
+            with patch("os.getenv", return_value=None):
+                with pytest.raises(ValueError, match="Failed to import client class"):
+                    get_client(provider="test")
 
 
 class TestOpenAIStyleMixin:

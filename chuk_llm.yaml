@@ -17,13 +17,13 @@ __global__:
 ##############################################################################
 __global_aliases__:
   # Ultra-short aliases for most popular models
-  gpt4: openai/gpt-4o
-  gpt4_mini: openai/gpt-4o-mini
+  gpt: openai/gpt-4.1
+  gpt_mini: openai/gpt-4.1-mini
   
   # Anthropic aliases
   claude: anthropic/claude-sonnet-4-20250514
   sonnet: anthropic/claude-sonnet-4-20250514
-  opus: claude-opus-4-20250514
+  opus: anthropic/claude-opus-4-20250514
   
   # Open source models
   llama: groq/llama-3.3-70b-versatile

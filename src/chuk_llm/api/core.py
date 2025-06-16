@@ -300,8 +300,10 @@ async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
     
     # Stream the response
     try:
-        response_stream = await client.create_completion(**completion_args)
+        # When streaming, create_completion returns an async generator directly
+        response_stream = client.create_completion(**completion_args)
         
+        # Check if it's already an async generator (no await needed)
         if hasattr(response_stream, '__aiter__'):
             async for chunk in response_stream:
                 if isinstance(chunk, dict):
@@ -314,14 +316,30 @@ async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
                 else:
                     yield str(chunk)
         else:
-            # Handle non-async response
-            if isinstance(response_stream, dict):
-                if response_stream.get("error"):
-                    yield f"[Error: {response_stream.get('error_message', 'Unknown error')}]"
-                else:
-                    yield response_stream.get("response", "")
+            # It might be a coroutine that needs awaiting
+            result = await response_stream
+            
+            if hasattr(result, '__aiter__'):
+                # Result is an async generator
+                async for chunk in result:
+                    if isinstance(chunk, dict):
+                        if chunk.get("error"):
+                            yield f"[Error: {chunk.get('error_message', 'Unknown error')}]"
+                            return
+                        content = chunk.get("response", "")
+                        if content:
+                            yield content
+                    else:
+                        yield str(chunk)
             else:
-                yield str(response_stream)
+                # Handle non-streaming response
+                if isinstance(result, dict):
+                    if result.get("error"):
+                        yield f"[Error: {result.get('error_message', 'Unknown error')}]"
+                    else:
+                        yield result.get("response", "")
+                else:
+                    yield str(result)
                 
     except Exception as e:
         logger.error(f"Streaming failed: {e}")

@@ -109,7 +109,7 @@ class APIConfig:
         
         # Create new client using unified client factory
         try:
-            from chuk_llm.llm.client_factory import get_client
+            from chuk_llm.llm.client import get_client
             client = get_client(
                 provider=config["provider"],
                 model=config["model"],
@@ -159,7 +159,7 @@ class APIConfig:
         config = self.get_current_config()
         
         try:
-            from chuk_llm.llm.client_factory import get_provider_info
+            from chuk_llm.llm.client import get_provider_info
             return get_provider_info(config["provider"], config["model"])
         except Exception as e:
             return {"error": str(e)}
@@ -306,7 +306,7 @@ def quick_setup(provider: str, model: Optional[str] = None, **kwargs):
 
 def list_available_setups() -> Dict[str, Any]:
     """List all available provider/model combinations"""
-    from chuk_llm.llm.client_factory import list_available_providers
+    from chuk_llm.llm.client import list_available_providers
     return list_available_providers()
 
 

@@ -469,7 +469,7 @@ class TestFunctionGenerationLogic:
 class TestUtilityFunctions:
     """Test suite for utility function creation."""
 
-    @patch('chuk_llm.configuration.config.get_config')
+    @patch('chuk_llm.configuration.unified_config.get_config')
     def test_quick_question_logic(self, mock_get_config):
         """Test quick_question utility function logic."""
         mock_config_manager = Mock()
@@ -492,7 +492,7 @@ class TestUtilityFunctions:
         result = mock_quick_question("Hello", provider="anthropic")
         assert result == "Quick response from anthropic: Hello"
 
-    @patch('chuk_llm.configuration.config.get_config')
+    @patch('chuk_llm.configuration.unified_config.get_config')
     def test_compare_providers_logic(self, mock_get_config):
         """Test compare_providers utility function logic."""
         mock_config_manager = Mock()
@@ -538,7 +538,7 @@ class TestUtilityFunctions:
 class TestErrorHandling:
     """Test suite for error handling in provider function generation."""
 
-    @patch('chuk_llm.configuration.config.get_config')
+    @patch('chuk_llm.configuration.unified_config.get_config')
     def test_handle_missing_provider_config(self, mock_get_config):
         """Test handling of missing provider configuration."""
         mock_config_manager = Mock()

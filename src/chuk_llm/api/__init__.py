@@ -47,6 +47,9 @@ from .sync import (
     quick_question
 )
 
+# Import all provider functions
+from .providers import *
+
 # Export clean API
 __all__ = [
     # Core async API
@@ -82,3 +85,10 @@ __all__ = [
     "list_available_providers",
     "validate_provider_setup",
 ]
+
+# Add provider functions to __all__
+try:
+    from .providers import __all__ as provider_all
+    __all__.extend(provider_all)
+except ImportError:
+    pass  # providers may not have generated functions yet
