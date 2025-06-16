@@ -214,12 +214,12 @@ ollama:
 
 # IBM watsonx.ai
 watsonx:
-  client: chuk_llm.llm.providers.watsonx_client.WatsonxLLMClient
+  client: chuk_llm.llm.providers.watsonx_client.WatsonXLLMClient  # Fixed class name
   api_key_env: WATSONX_API_KEY
   api_key_fallback_env: IBM_CLOUD_API_KEY
   watsonx_ai_url: https://us-south.ml.cloud.ibm.com
   project_id_env: WATSONX_PROJECT_ID
-  space_id_env:   WATSONX_SPACE_ID
+  space_id_env: WATSONX_SPACE_ID
   default_model: ibm/granite-3-8b-instruct
   models:
     - ibm/granite-3-8b-instruct
@@ -245,7 +245,6 @@ watsonx:
     large: mistralai/mistral-large
     efficient: meta-llama/llama-3-2-1b-instruct
     latest: ibm/granite-3-8b-instruct
-
 
 # Perplexity – OpenAI-style endpoint
 perplexity:
