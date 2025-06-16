@@ -258,6 +258,7 @@ class OllamaConfig(ProviderConfig):
         except ImportError:
             pass
         
+        # Ollama supports most features, but vision depends on the specific model
         return feature in ["text", "streaming", "tools", "streaming_tools", "vision"]
     
     def get_error_categories(self) -> Dict[str, list[str]]:

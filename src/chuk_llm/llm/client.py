@@ -1,8 +1,9 @@
+# chuk_llm/llm/client.py
 """
-Clean LLM client factory
-========================
+Clean LLM client factory with unified configuration
+==================================================
 
-Simple client factory using dynamic configuration.
+Simple client factory using the new unified configuration system.
 """
 
 import importlib
@@ -10,7 +11,7 @@ import inspect
 import logging
 from typing import Optional, Type, Any, Dict
 
-from chuk_llm.configuration.config import get_config
+from chuk_llm.configuration.unified_config import get_config, ConfigValidator, Feature
 from chuk_llm.llm.core.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
@@ -28,11 +29,6 @@ def _import_string(import_string: str) -> Type:
     
     module = importlib.import_module(module_path)
     return getattr(module, class_name)
-
-
-def _import_class(class_path: str) -> Type:
-    """Import class from string path (alias for _import_string)"""
-    return _import_string(class_path)
 
 
 def _supports_param(cls: Type, param_name: str) -> bool:
@@ -85,11 +81,6 @@ def _constructor_kwargs(cls: Type, config: Dict[str, Any]) -> Dict[str, Any]:
     return args
 
 
-def _get_constructor_args(cls: Type, config: Dict[str, Any]) -> Dict[str, Any]:
-    """Get constructor arguments for client class (alias for _constructor_kwargs)"""
-    return _constructor_kwargs(cls, config)
-
-
 def get_client(
     provider: str,
     model: Optional[str] = None,
@@ -98,7 +89,7 @@ def get_client(
     **kwargs
 ) -> BaseLLMClient:
     """
-    Get LLM client for provider.
+    Get LLM client for provider using unified configuration.
     
     Args:
         provider: Provider name (from YAML config)
@@ -110,39 +101,37 @@ def get_client(
     Returns:
         Configured LLM client
     """
-    # Try to get config manager, but don't fail if it's not available
-    provider_config = None
-    config_manager = None
-    
     try:
         config_manager = get_config()
         provider_config = config_manager.get_provider(provider)
     except Exception as e:
-        # If we can't get the provider from the config system, 
-        # let the error propagate so test mocks work properly
-        raise e
+        raise ValueError(f"Failed to get provider '{provider}': {e}")
     
-    if provider_config is None:
-        raise ValueError(f"Unknown provider '{provider}'")
+    # Determine the model to use
+    target_model = model or provider_config.default_model
+    if not target_model:
+        raise ValueError(f"No model specified and no default model for provider '{provider}'")
+    
+    # Validate provider configuration
+    is_valid, issues = ConfigValidator.validate_provider_config(provider_config)
+    if not is_valid:
+        raise ValueError(f"Invalid provider configuration for '{provider}': {', '.join(issues)}")
     
     # Build client configuration
     client_config = {
-        'model': model or getattr(provider_config, 'default_model', 'gpt-4o-mini'),
-        'api_key': api_key or _get_api_key_with_fallback(config_manager, provider, provider_config),
-        'api_base': api_base or getattr(provider_config, 'api_base', None),
+        'model': target_model,
+        'api_key': api_key or config_manager.get_api_key(provider),
+        'api_base': api_base or provider_config.api_base,
     }
     
     # Add extra provider config
-    extra = getattr(provider_config, 'extra', {})
-    client_config.update(extra)
+    client_config.update(provider_config.extra)
     
     # Add explicit kwargs (highest priority)
     client_config.update(kwargs)
     
-    # Get client class - be very explicit about this
-    client_class = getattr(provider_config, 'client_class', None)
-    
-    # Handle both None and empty string
+    # Get client class
+    client_class = provider_config.client_class
     if not client_class or client_class.strip() == '':
         raise ValueError(f"No client class configured for provider '{provider}'")
     
@@ -157,54 +146,57 @@ def get_client(
     # Create client instance
     try:
         client = ClientClass(**constructor_args)
-        logger.debug(f"Created {provider} client with model {client_config.get('model')}")
+        logger.debug(f"Created {provider} client with model {target_model}")
         return client
     except Exception as e:
         raise ValueError(f"Failed to create {provider} client: {e}")
 
 
-def _get_api_key_with_fallback(config_manager, provider: str, provider_config=None) -> Optional[str]:
-    """Get API key with fallback for testing."""
-    if config_manager and hasattr(config_manager, 'get_api_key'):
-        try:
-            return config_manager.get_api_key(provider)
-        except:
-            pass
+def validate_request_compatibility(
+    provider: str,
+    model: Optional[str] = None,
+    messages: Optional[Any] = None,
+    tools: Optional[Any] = None,
+    stream: bool = False,
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    Validate if a request is compatible with provider/model.
     
-    # Fallback to environment variables
-    import os
-    env_vars = {
-        "openai": "OPENAI_API_KEY",
-        "anthropic": "ANTHROPIC_API_KEY",
-        "groq": "GROQ_API_KEY",
-        "gemini": "GOOGLE_API_KEY"
-    }
-    return os.environ.get(env_vars.get(provider))
-
-
-def _get_test_provider_config(provider: str):
-    """Get built-in test configuration for common providers."""
+    Args:
+        provider: Provider name
+        model: Model name (optional)
+        messages: Chat messages (for vision detection)
+        tools: Function tools
+        stream: Whether streaming is requested
+        **kwargs: Additional parameters
     
-    # Define a simple but explicit config object
-    if provider == "openai":
-        class OpenAITestConfig:
-            name = "openai"
-            client_class = "chuk_llm.llm.providers.openai_client.OpenAILLMClient"
-            default_model = "gpt-4o-mini"
-            api_base = None
-            extra = {}
-        return OpenAITestConfig()
-    
-    elif provider == "anthropic":
-        class AnthropicTestConfig:
-            name = "anthropic"
-            client_class = "chuk_llm.llm.providers.anthropic_client.AnthropicLLMClient"
-            default_model = "claude-3-sonnet"
-            api_base = None
-            extra = {}
-        return AnthropicTestConfig()
-    
-    return None
+    Returns:
+        Dictionary with validation results
+    """
+    try:
+        is_valid, issues = ConfigValidator.validate_request_compatibility(
+            provider_name=provider,
+            model=model,
+            messages=messages,
+            tools=tools,
+            stream=stream,
+            **kwargs
+        )
+        
+        return {
+            'valid': is_valid,
+            'issues': issues,
+            'provider': provider,
+            'model': model
+        }
+    except Exception as e:
+        return {
+            'valid': False,
+            'issues': [f"Validation error: {e}"],
+            'provider': provider,
+            'model': model
+        }
 
 
 def list_available_providers() -> Dict[str, Dict[str, Any]]:
@@ -212,7 +204,7 @@ def list_available_providers() -> Dict[str, Dict[str, Any]]:
     List all available providers and their info.
     
     Returns:
-        Dictionary with provider info
+        Dictionary with provider info including model-level capabilities
     """
     config_manager = get_config()
     providers = {}
@@ -222,18 +214,72 @@ def list_available_providers() -> Dict[str, Dict[str, Any]]:
             provider_config = config_manager.get_provider(provider_name)
             has_api_key = bool(config_manager.get_api_key(provider_name))
             
+            # Get model capabilities info
+            model_info = {}
+            for model in provider_config.models:
+                model_caps = provider_config.get_model_capabilities(model)
+                model_info[model] = {
+                    'features': [f.value for f in model_caps.features],
+                    'max_context_length': model_caps.max_context_length,
+                    'max_output_tokens': model_caps.max_output_tokens
+                }
+            
             providers[provider_name] = {
                 'default_model': provider_config.default_model,
                 'models': provider_config.models,
                 'model_aliases': provider_config.model_aliases,
-                'features': list(provider_config.features),
+                'baseline_features': [f.value for f in provider_config.features],
+                'model_capabilities': model_info,
                 'has_api_key': has_api_key,
                 'api_base': provider_config.api_base,
+                'rate_limits': provider_config.rate_limits
             }
         except Exception as e:
             providers[provider_name] = {'error': str(e)}
     
     return providers
+
+
+def get_provider_info(provider: str, model: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Get detailed information about a specific provider/model combination.
+    
+    Args:
+        provider: Provider name
+        model: Model name (optional, uses default if not specified)
+    
+    Returns:
+        Detailed provider/model information
+    """
+    try:
+        config_manager = get_config()
+        provider_config = config_manager.get_provider(provider)
+        
+        target_model = model or provider_config.default_model
+        model_caps = provider_config.get_model_capabilities(target_model)
+        
+        return {
+            'provider': provider,
+            'model': target_model,
+            'client_class': provider_config.client_class,
+            'api_base': provider_config.api_base,
+            'has_api_key': bool(config_manager.get_api_key(provider)),
+            'features': [f.value for f in model_caps.features],
+            'max_context_length': model_caps.max_context_length,
+            'max_output_tokens': model_caps.max_output_tokens,
+            'rate_limits': provider_config.rate_limits,
+            'available_models': provider_config.models,
+            'model_aliases': provider_config.model_aliases,
+            'supports': {
+                'streaming': provider_config.supports_feature(Feature.STREAMING, target_model),
+                'tools': provider_config.supports_feature(Feature.TOOLS, target_model),
+                'vision': provider_config.supports_feature(Feature.VISION, target_model),
+                'json_mode': provider_config.supports_feature(Feature.JSON_MODE, target_model),
+                'parallel_calls': provider_config.supports_feature(Feature.PARALLEL_CALLS, target_model),
+            }
+        }
+    except Exception as e:
+        return {'error': str(e)}
 
 
 def validate_provider_setup(provider: str) -> Dict[str, Any]:
@@ -244,53 +290,94 @@ def validate_provider_setup(provider: str) -> Dict[str, Any]:
         provider: Provider name to validate
     
     Returns:
-        Validation results
+        Comprehensive validation results
     """
-    config_manager = get_config()
-    
     try:
+        config_manager = get_config()
         provider_config = config_manager.get_provider(provider)
-    except ValueError as e:
+    except Exception as e:
         return {
             'valid': False,
             'error': f"Provider not found: {e}",
         }
     
-    issues = []
+    # Validate provider config
+    is_valid, config_issues = ConfigValidator.validate_provider_config(provider_config)
+    
     warnings = []
     
-    # Check client class
-    if not provider_config.client_class:
-        issues.append("No client class configured")
-    else:
-        try:
-            _import_string(provider_config.client_class)
-        except Exception as e:
-            issues.append(f"Cannot import client class: {e}")
+    # Check client class import
+    client_import_ok = True
+    try:
+        _import_string(provider_config.client_class)
+    except Exception as e:
+        client_import_ok = False
+        config_issues.append(f"Cannot import client class: {e}")
     
     # Check API key
     api_key = config_manager.get_api_key(provider)
-    if not api_key:
-        if provider_config.api_key_env:
-            issues.append(f"API key not found in environment variable {provider_config.api_key_env}")
-        else:
-            warnings.append("No API key configuration")
+    has_api_key = bool(api_key)
     
-    # Check default model
-    if not provider_config.default_model:
-        warnings.append("No default model configured")
-    
-    # Check models list
+    # Check models
     if not provider_config.models:
         warnings.append("No models configured")
     
+    # Get model capabilities summary
+    model_capabilities = {}
+    for model in provider_config.models[:5]:  # Limit to first 5 for brevity
+        caps = provider_config.get_model_capabilities(model)
+        model_capabilities[model] = [f.value for f in caps.features]
+    
     return {
-        'valid': len(issues) == 0,
-        'issues': issues,
+        'valid': is_valid and client_import_ok,
+        'issues': config_issues,
         'warnings': warnings,
-        'has_api_key': bool(api_key),
+        'has_api_key': has_api_key,
+        'client_import_ok': client_import_ok,
         'default_model': provider_config.default_model,
         'models_count': len(provider_config.models),
         'aliases_count': len(provider_config.model_aliases),
-        'features': list(provider_config.features),
+        'baseline_features': [f.value for f in provider_config.features],
+        'model_capabilities_sample': model_capabilities,
+        'rate_limits': provider_config.rate_limits,
     }
+
+
+def find_best_provider_for_request(
+    required_features: Optional[list] = None,
+    model_pattern: Optional[str] = None,
+    exclude_providers: Optional[list] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Find the best provider for a request with specific requirements.
+    
+    Args:
+        required_features: List of required features (e.g., ['tools', 'vision'])
+        model_pattern: Regex pattern to match model names
+        exclude_providers: List of providers to exclude
+    
+    Returns:
+        Best provider info or None if no match found
+    """
+    from chuk_llm.configuration.unified_config import CapabilityChecker
+    
+    if required_features:
+        feature_set = {Feature.from_string(f) for f in required_features}
+        exclude_set = set(exclude_providers or [])
+        
+        best_provider = CapabilityChecker.get_best_provider_for_features(
+            feature_set, 
+            model_name=model_pattern,
+            exclude=exclude_set
+        )
+        
+        if best_provider:
+            return get_provider_info(best_provider)
+    
+    return None
+
+
+# Backward compatibility aliases
+_get_api_key_with_fallback = lambda config_manager, provider, provider_config=None: config_manager.get_api_key(provider)
+_import_class = _import_string
+_get_constructor_args = _constructor_kwargs

@@ -8,7 +8,7 @@ import time
 import asyncio
 from abc import ABC, abstractmethod
 
-from chuk_llm.configuration.config import get_config
+from chuk_llm.configuration.unified_config import get_config
 from chuk_llm.llm.core.base import BaseLLMClient
 from chuk_llm.llm.middleware import CachingMiddleware, LoggingMiddleware, MetricsMiddleware, MiddlewareStack, Middleware
 from chuk_llm.llm.core.errors import with_retry, ProviderErrorMapper

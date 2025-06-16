@@ -35,7 +35,7 @@ from utils.result_models import ProviderResult
 
 # chuk-llm imports
 try:
-    from chuk_llm.configuration.config import get_config
+    from chuk_llm.configuration.unified_config import get_config
     from chuk_llm.configuration.capabilities import PROVIDER_CAPABILITIES, CapabilityChecker
     from chuk_llm.llm.client import get_client
 except ImportError as e:

@@ -13,7 +13,7 @@ import logging
 import warnings
 from typing import Dict, Optional, List, AsyncIterator
 
-from chuk_llm.configuration.config import get_config
+from chuk_llm.configuration.unified_config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -270,7 +270,7 @@ def _create_utility_functions():
     
     def show_config():
         """Show current configuration status"""
-        from chuk_llm.configuration.config import get_config
+        from chuk_llm.configuration.unified_config import get_config
         config = get_config()
         
         print("🔧 ChukLLM Configuration")
@@ -341,3 +341,28 @@ except Exception as e:
         print("Create a providers.yaml file to use ChukLLM")
     
     globals()['show_config'] = show_config
+
+# Export all generated functions for external access
+def get_all_functions():
+    """Get all generated provider functions"""
+    return _all_functions.copy() if '_all_functions' in globals() else {}
+
+def list_provider_functions():
+    """List all available provider functions"""
+    if '_all_functions' not in globals():
+        return []
+    
+    functions = list(_all_functions.keys())
+    functions.sort()
+    return functions
+
+def has_function(name):
+    """Check if a provider function exists"""
+    return '_all_functions' in globals() and name in _all_functions
+
+# Make all generated functions available for getattr
+def __getattr__(name):
+    """Allow access to generated functions"""
+    if '_all_functions' in globals() and name in _all_functions:
+        return _all_functions[name]
+    raise AttributeError(f"module 'providers' has no attribute '{name}'")

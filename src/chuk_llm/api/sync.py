@@ -109,7 +109,7 @@ def compare_providers(question: str, providers: List[str] = None) -> Dict[str, s
         Dictionary mapping provider names to responses
     """
     if providers is None:
-        from chuk_llm.configuration.config import get_config
+        from chuk_llm.configuration import get_config
         config = get_config()
         all_providers = config.get_all_providers()
         providers = all_providers[:3] if len(all_providers) >= 3 else all_providers
@@ -136,9 +136,9 @@ def quick_question(question: str, provider: str = None) -> str:
         The response
     """
     if not provider:
-        from chuk_llm.configuration.config import get_config
+        from chuk_llm.configuration import get_config
         config = get_config()
-        settings = config.get_global_settings()
+        settings = config.global_settings
         provider = settings.get("active_provider", "openai")
     
     return ask_sync(question, provider=provider)

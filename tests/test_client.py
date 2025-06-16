@@ -8,7 +8,7 @@ import asyncio
 from unittest.mock import patch, MagicMock, AsyncMock
 
 from chuk_llm.llm.client import get_client, _import_string, _supports_param, _constructor_kwargs
-from chuk_llm.configuration.config import get_config
+from chuk_llm.configuration.unified_config import get_config
 from chuk_llm.llm.providers.openai_client import OpenAILLMClient
 from chuk_llm.llm.core.base import BaseLLMClient
 

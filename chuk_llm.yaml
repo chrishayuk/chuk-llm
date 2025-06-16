@@ -1,0 +1,762 @@
+# chuk_llm.yaml - Complete Configuration with Reasoning Capability
+# Unified configuration combining providers and capabilities
+
+##############################################################################
+# Global Configuration
+##############################################################################
+__global__:
+  # Default provider and model when none specified
+  active_provider: openai
+  active_model: gpt-4o-mini
+  # Runtime settings
+  default_timeout: 30
+  max_retries: 3
+
+##############################################################################
+# Global Model Aliases (cross-provider shortcuts)
+##############################################################################
+__global_aliases__:
+  # Ultra-short aliases for most popular models
+  gpt4: openai/gpt-4o
+  gpt4_mini: openai/gpt-4o-mini
+  
+  # Anthropic aliases
+  claude: anthropic/claude-sonnet-4-20250514
+  sonnet: anthropic/claude-sonnet-4-20250514
+  opus: claude-opus-4-20250514
+  
+  # Open source models
+  llama: groq/llama-3.3-70b-versatile
+  mixtral: groq/mixtral-8x7b-32768
+  
+  # Google models
+  gemini: gemini/gemini-2.0-flash
+  gemini_pro: gemini/gemini-1.5-pro
+  
+  # Specialized models
+  mistral: mistral/magistral-medium-2506
+  deepseek: deepseek/deepseek-chat
+  deepseek_reasoning: deepseek/deepseek-reasoner
+  
+  # Local models
+  qwen: ollama/qwen3
+  granite: ollama/granite3.3
+  phi: ollama/phi3
+  
+  # Enterprise models
+  watsonx: watsonx/meta-llama/llama-4-scout-17b-16e-instruct
+  perplexity: perplexity/sonar
+  
+  # Reasoning models
+  reasoning: mistral/magistral-medium-2506
+  reasoning_free: mistral/magistral-small-2506
+  reasoning_advanced: deepseek/deepseek-reasoner
+
+##############################################################################
+# Provider Configurations
+##############################################################################
+
+# OpenAI – most popular models
+openai:
+  client_class: "chuk_llm.llm.providers.openai_client.OpenAILLMClient"
+  api_key_env: "OPENAI_API_KEY"
+  default_model: "gpt-4o-mini"
+  
+  # Provider baseline features
+  features: [streaming, system_messages, json_mode]
+  max_context_length: 128000
+  max_output_tokens: 4096
+  rate_limits:
+    default: 3500
+    tier_1: 500
+  
+  models:
+    - "gpt-4.1"
+    - "gpt-4.1-mini"
+    - "gpt-4.1-nano"
+    - "gpt-4o"
+    - "gpt-4o-mini"
+    - "gpt-4-turbo"
+    - "gpt-4"
+    - "gpt-3.5-turbo"
+    - "o1"
+    - "o1-mini"
+    - "o3"
+    - "o3-mini"
+    - "o4-mini"
+  
+  model_aliases:
+    # Ultra-short aliases
+    gpt4o: "gpt-4o"
+    gpt4o_mini: "gpt-4o-mini"
+    gpt4_turbo: "gpt-4-turbo"
+    gpt4: "gpt-4"
+    gpt3_5: "gpt-3.5-turbo"
+    gpt4_1: "gpt-4.1"
+    # O-series aliases
+    o1_mini: "o1-mini"
+    o3_mini: "o3-mini"
+    o4_mini: "o4-mini"
+    # Version aliases
+    latest: "gpt-4.1"
+    mini: "gpt-4.1-mini"
+    nano: "gpt-4.1-nano"
+    turbo: "gpt-4-turbo"
+    # Reasoning aliases
+    reasoning: "o3"
+    reasoning_mini: "o3-mini"
+  
+  model_capabilities:
+    # O-series (reasoning models)
+    - pattern: "o[1-4].*"
+      features: [tools, reasoning]
+      max_context_length: 200000
+      max_output_tokens: 32768
+    
+    # GPT-4o (Omni family)
+    - pattern: "gpt-4o.*"
+      features: [tools, vision, parallel_calls, reasoning]
+      max_context_length: 128000
+      max_output_tokens: 8192
+    
+    # GPT-4.0/4.1/4-Turbo (advanced reasoning)
+    - pattern: "gpt-4\\.[01].*|gpt-4-(turbo|preview).*"
+      features: [tools, vision, parallel_calls, reasoning]
+      max_context_length: 128000
+      max_output_tokens: 8192
+    
+    # GPT-4 (reasoning)
+    - pattern: "gpt-4$"
+      features: [tools, vision, reasoning]
+      max_context_length: 8192
+      max_output_tokens: 4096
+    
+    # GPT-3.5-Turbo (basic reasoning)
+    - pattern: "gpt-3\\.5-turbo.*"
+      features: [tools, reasoning]
+      max_context_length: 16384
+      max_output_tokens: 4096
+
+# DeepSeek – reasoning specialist
+deepseek:
+  inherits: "openai"
+  client_class: "chuk_llm.llm.providers.openai_client.OpenAILLMClient"
+  api_key_env: "DEEPSEEK_API_KEY"
+  api_base: "https://api.deepseek.com"
+  default_model: "deepseek-reasoner"
+  
+  features: [streaming, tools, json_mode, system_messages, reasoning]
+  max_context_length: 65536
+  max_output_tokens: 8192
+  rate_limits:
+    default: 3000
+  
+  models:
+    - "deepseek-chat"
+    - "deepseek-reasoner"
+  
+  model_aliases:
+    chat: "deepseek-chat"
+    reasoner: "deepseek-reasoner"
+    reasoning: "deepseek-reasoner"
+    thinking: "deepseek-reasoner"
+    default: "deepseek-reasoner"
+  
+  model_capabilities:
+    - pattern: "deepseek-chat"
+      features: [tools, json_mode, reasoning]
+      max_context_length: 65536
+      max_output_tokens: 8192
+    
+    - pattern: "deepseek-reasoner"
+      features: [tools, json_mode, reasoning]
+      max_context_length: 65536
+      max_output_tokens: 8192
+
+# Anthropic – Claude models
+anthropic:
+  client_class: "chuk_llm.llm.providers.anthropic_client.AnthropicLLMClient"
+  api_key_env: "ANTHROPIC_API_KEY"
+  default_model: "claude-sonnet-4-20250514"
+  
+  features: [streaming, system_messages, reasoning]
+  max_context_length: 200000
+  max_output_tokens: 4096
+  rate_limits:
+    default: 4000
+  
+  models:
+    - "claude-opus-4-20250514"
+    - "claude-sonnet-4-20250514"
+    - "claude-3-7-sonnet-20250219"
+    - "claude-3-5-sonnet-20241022"
+    - "claude-3-5-haiku-20241022"
+    - "claude-3-sonnet-20240229"
+    - "claude-3-opus-20240229"
+    - "claude-3-haiku-20240307"
+  
+  model_aliases:
+    # Version aliases
+    sonnet4: "claude-sonnet-4-20250514"
+    opus4: "claude-opus-4-20250514"
+    sonnet37: "claude-3-7-sonnet-20250219"
+    haiku37: "claude-3-5-haiku-20241022"
+    sonnet35: "claude-3-5-sonnet-20241022"
+    haiku35: "claude-3-5-sonnet-20241022"
+    # Simple aliases
+    opus: "claude-opus-4-20250514"
+    sonnet: "claude-sonnet-4-20250514"
+    haiku: "claude-3-5-haiku-20241022"
+    latest: "claude-sonnet-4-20250514"
+    # Reasoning aliases
+    reasoning: "claude-opus-4-20250514"
+    thinking: "claude-sonnet-4-20250514"
+  
+  model_capabilities:
+    # Claude 4 models (advanced reasoning)
+    - pattern: "claude-(opus|sonnet)-4-.*"
+      features: [tools, vision, parallel_calls, reasoning]
+      max_context_length: 200000
+      max_output_tokens: 8192
+    
+    # Claude 3.7 models (advanced reasoning)
+    - pattern: "claude-3-7-.*"
+      features: [tools, vision, parallel_calls, reasoning]
+      max_context_length: 200000
+      max_output_tokens: 8192
+    
+    # Claude 3.5 models (reasoning)
+    - pattern: "claude-3-5-.*"
+      features: [tools, vision, parallel_calls, reasoning]
+      max_context_length: 200000
+      max_output_tokens: 4096
+    
+    # Other Claude 3 models (basic reasoning)
+    - pattern: "claude-3-.*"
+      features: [tools, vision, reasoning]
+      max_context_length: 200000
+      max_output_tokens: 4096
+
+# Groq – ultra-fast inference
+groq:
+  inherits: "openai"
+  client_class: "chuk_llm.llm.providers.groq_client.GroqAILLMClient"
+  api_key_env: "GROQ_API_KEY"
+  api_base: "https://api.groq.com"
+  default_model: "llama-3.3-70b-versatile"
+  
+  features: [streaming, tools, parallel_calls, reasoning]
+  max_context_length: 32768
+  max_output_tokens: 8192
+  rate_limits:
+    default: 30
+  
+  models:
+    - "llama-3.3-70b-versatile"
+    - "llama-3.1-8b-instant"
+    - "llama-3.1-70b-versatile"
+    - "mixtral-8x7b-32768"
+    - "gemma2-9b-it"
+  
+  model_aliases:
+    # Model aliases
+    llama: "llama-3.3-70b-versatile"
+    llama_fast: "llama-3.1-8b-instant"
+    mixtral: "mixtral-8x7b-32768"
+    # Speed aliases
+    latest: "llama-3.3-70b-versatile"
+    fast: "llama-3.1-8b-instant"
+    powerful: "llama-3.3-70b-versatile"
+  
+  model_capabilities:
+    # All Groq models have reasoning capabilities
+    - pattern: ".*"
+      features: [tools, reasoning]
+      max_context_length: 32768
+      max_output_tokens: 8192
+
+# Google Gemini
+gemini:
+  client_class: "chuk_llm.llm.providers.gemini_client.GeminiLLMClient"
+  api_key_env: "GOOGLE_API_KEY"
+  default_model: "gemini-2.0-flash"
+  
+  features: [streaming, tools, vision, json_mode, system_messages, reasoning]
+  max_context_length: 1000000
+  max_output_tokens: 8192
+  rate_limits:
+    default: 1500
+  
+  models:
+    - "gemini-2.0-flash"
+    - "gemini-1.5-pro"
+    - "gemini-1.5-flash"
+    - "gemini-1.5-flash-8b"
+  
+  model_aliases:
+    # Simple aliases
+    flash: "gemini-2.0-flash"
+    pro: "gemini-1.5-pro"
+    latest: "gemini-2.0-flash"
+    # Reasoning aliases
+    reasoning: "gemini-1.5-pro"
+    thinking: "gemini-2.0-flash"
+  
+  model_capabilities:
+    # All Gemini models have advanced reasoning
+    - pattern: "gemini-.*"
+      features: [tools, vision, json_mode, reasoning]
+      max_context_length: 1000000
+      max_output_tokens: 8192
+
+# Mistral AI – official cloud with Magistral reasoning
+mistral:
+  client_class: "chuk_llm.llm.providers.mistral_client.MistralLLMClient"
+  api_key_env: "MISTRAL_API_KEY"
+  default_model: "magistral-medium-2506"
+  
+  features: [streaming, tools, vision, system_messages, parallel_calls, reasoning]
+  max_context_length: 128000
+  max_output_tokens: 8192
+  rate_limits:
+    default: 1000
+    premium: 5000
+  
+  models:
+    # Premier models (June 2025)
+    - "magistral-medium-2506"                    # New reasoning model
+    - "magistral-small-2506"                     # Small reasoning model (free)
+    - "mistral-medium-2505"                      # Frontier multimodal model
+    - "codestral-2501"                           # Latest coding model
+    - "mistral-ocr-2505"                         # OCR service
+    - "mistral-saba-2502"                        # Middle East/South Asia languages
+    - "mistral-large-2411"                       # Top-tier reasoning model
+    - "pixtral-large-2411"                       # Frontier multimodal model
+    - "ministral-3b-2410"                        # Best edge model
+    - "ministral-8b-2410"                        # Powerful edge model
+    
+    # Free models
+    - "devstral-small-2505"                      # 24B code model (open source)
+    - "mistral-small-2503"                       # Small with vision (v3.1)
+    - "pixtral-12b-2409"                         # 12B vision model
+    
+    # Embedding/utility models
+    - "mistral-embed"                            # Text embeddings
+    - "codestral-embed"                          # Code embeddings
+    - "mistral-moderation-2411"                  # Moderation service
+  
+  model_aliases:
+    # Magistral (reasoning) aliases
+    magistral: "magistral-medium-2506"
+    magistral_medium: "magistral-medium-2506"
+    magistral_small: "magistral-small-2506"
+    reasoning: "magistral-medium-2506"
+    reasoning_small: "magistral-small-2506"
+    thinking: "magistral-medium-2506"
+    
+    # Size aliases (current generation)
+    large: "mistral-large-2411"
+    medium: "mistral-medium-2505"
+    small: "mistral-small-2503"
+    
+    # Edge model aliases
+    edge: "ministral-3b-2410"
+    edge_small: "ministral-3b-2410"
+    edge_large: "ministral-8b-2410"
+    ministral: "ministral-8b-2410"
+    
+    # Specialized aliases
+    pixtral: "pixtral-large-2411"
+    pixtral_small: "pixtral-12b-2409"
+    codestral: "codestral-2501"
+    devstral: "devstral-small-2505"
+    ocr: "mistral-ocr-2505"
+    saba: "mistral-saba-2502"
+    
+    # Vision aliases
+    vision: "pixtral-large-2411"
+    vision_small: "pixtral-12b-2409"
+    multimodal: "mistral-medium-2505"
+    
+    # Code aliases
+    code: "codestral-2501"
+    code_open: "devstral-small-2505"
+    coding: "codestral-2501"
+    
+    # Embedding aliases
+    embed: "mistral-embed"
+    embed_code: "codestral-embed"
+    
+    # Capability aliases
+    latest: "magistral-medium-2506"
+    free: "magistral-small-2506"
+    best: "magistral-medium-2506"
+    fastest: "ministral-3b-2410"
+    powerful: "mistral-large-2411"
+  
+  model_capabilities:
+    # Magistral (reasoning) models - primary reasoning capability
+    - pattern: "magistral-.*"
+      features: [tools, parallel_calls, reasoning]
+      max_context_length: 40960  # 40k tokens for reasoning
+      max_output_tokens: 8192
+    
+    # Mistral Large 2411 (top-tier reasoning)
+    - pattern: "mistral-large-2411"
+      features: [tools, parallel_calls, reasoning]
+      max_context_length: 131072  # 128k
+      max_output_tokens: 8192
+    
+    # Mistral Medium 2505 (frontier multimodal with reasoning)
+    - pattern: "mistral-medium-2505"
+      features: [tools, vision, multimodal, parallel_calls, reasoning]
+      max_context_length: 131072  # 128k
+      max_output_tokens: 8192
+    
+    # Mistral Small 2503 (with vision and reasoning)
+    - pattern: "mistral-small-2503"
+      features: [tools, vision, multimodal, reasoning]
+      max_context_length: 131072  # 128k
+      max_output_tokens: 4096
+    
+    # Pixtral models (vision with reasoning)
+    - pattern: "pixtral-.*"
+      features: [tools, vision, multimodal, parallel_calls, reasoning]
+      max_context_length: 131072  # 128k
+      max_output_tokens: 8192
+    
+    # Codestral models (coding with reasoning)
+    - pattern: "codestral-.*"
+      features: [tools, reasoning]
+      max_context_length: 262144  # 256k for code
+      max_output_tokens: 8192
+    
+    # Devstral (open source code model with reasoning)
+    - pattern: "devstral-.*"
+      features: [tools, reasoning]
+      max_context_length: 131072  # 128k
+      max_output_tokens: 8192
+    
+    # Ministral (edge models with reasoning)
+    - pattern: "ministral-.*"
+      features: [tools, reasoning]
+      max_context_length: 131072  # 128k
+      max_output_tokens: 4096
+    
+    # OCR model
+    - pattern: "mistral-ocr-.*"
+      features: [vision, multimodal]
+      max_context_length: 32768
+      max_output_tokens: 8192
+    
+    # Saba (Middle East/South Asia with reasoning)
+    - pattern: "mistral-saba-.*"
+      features: [tools, reasoning]
+      max_context_length: 32768
+      max_output_tokens: 4096
+    
+    # Embedding models
+    - pattern: ".*embed.*"
+      features: []
+      max_context_length: 8192
+      max_output_tokens: 0
+    
+    # Moderation model
+    - pattern: "mistral-moderation-.*"
+      features: []
+      max_context_length: 8192
+      max_output_tokens: 1024
+
+# Local Ollama daemon
+ollama:
+  client_class: "chuk_llm.llm.providers.ollama_client.OllamaLLMClient"
+  api_base: "http://localhost:11434"
+  default_model: "granite3.3"
+  
+  features: [streaming, system_messages, reasoning]
+  max_context_length: 8192
+  max_output_tokens: 4096
+  rate_limits: {}
+  
+  models:
+    - "llama3.3"
+    - "qwen3"
+    - "granite3.3"
+    - "mistral"
+    - "gemma3"
+    - "phi3"
+    - "codellama"
+  
+  model_aliases:
+    # Simple aliases
+    llama: "llama3.3"
+    qwen: "qwen3"
+    granite: "granite3.3"
+    mistral_local: "mistral"
+    code: "codellama"
+    phi: "phi3"
+    # Capability aliases
+    smart: "llama3.3"
+    fast: "llama3.3"
+    creative: "llama3.3"
+    programming: "codellama"
+    latest: "llama3.3"
+    default: "llama3.3"
+    reasoning: "llama3.3"
+  
+  model_capabilities:
+    # Gemma 3 models
+    - pattern: "gemma.*"
+      features: [tools, reasoning]
+      max_context_length: 8192
+      max_output_tokens: 4096
+    
+    # Llama 3.3/3.2 models (with reasoning)
+    - pattern: "llama3\\.[23].*"
+      features: [tools, reasoning]
+      max_context_length: 32768
+      max_output_tokens: 8192
+    
+    # Mistral local models (with reasoning)
+    - pattern: "mistral.*"
+      features: [tools, reasoning]
+      max_context_length: 32768
+      max_output_tokens: 8192
+    
+    # Qwen models (with reasoning)
+    - pattern: "qwen.*"
+      features: [tools, reasoning]
+      max_context_length: 32768
+      max_output_tokens: 8192
+    
+    # CodeLlama models (reasoning for code)
+    - pattern: ".*codellama.*|.*code.*"
+      features: [reasoning]  # No tools but has reasoning
+      max_context_length: 16384
+      max_output_tokens: 8192
+    
+    # Phi models (basic reasoning)
+    - pattern: "phi.*"
+      features: [reasoning]
+      max_context_length: 4096
+      max_output_tokens: 2048
+    
+    # Vision models
+    - pattern: "llama3\\.2.*vision.*"
+      features: [tools, vision, multimodal, reasoning]
+      max_context_length: 8192
+      max_output_tokens: 4096
+    
+    # Embedding models
+    - pattern: ".*embed.*|.*embedding.*"
+      features: []
+      max_context_length: 512
+    
+    # Granite models (with reasoning)
+    - pattern: "granite.*"
+      features: [tools, reasoning]
+      max_context_length: 8192
+      max_output_tokens: 4096
+
+# IBM watsonx.ai
+watsonx:
+  client_class: "chuk_llm.llm.providers.watsonx_client.WatsonXLLMClient"
+  api_key_env: "WATSONX_API_KEY"
+  api_key_fallback_env: "IBM_CLOUD_API_KEY"
+  watsonx_ai_url: "https://us-south.ml.cloud.ibm.com"
+  default_model: "meta-llama/llama-4-scout-17b-16e-instruct"
+  
+  features: [streaming, system_messages, reasoning]
+  max_context_length: 131072
+  max_output_tokens: 4096
+  rate_limits:
+    default: 500
+    enterprise: 2000
+  
+  models:
+    # IBM Granite models (current)
+    - "ibm/granite-3-3-8b-instruct"
+    - "ibm/granite-3-2-8b-instruct"
+    - "ibm/granite-3-8b-instruct"
+    - "ibm/granite-3-2b-instruct"
+    - "ibm/granite-vision-3-2-2b-instruct"
+    
+    # Meta Llama models (non-deprecated only)
+    - "meta-llama/llama-4-scout-17b-16e-instruct"        # New - Free preview
+    - "meta-llama/llama-4-maverick-17b-128e-instruct-fp8" # New - Paid
+    - "meta-llama/llama-3-3-70b-instruct"                # Current
+    - "meta-llama/llama-3-2-90b-vision-instruct"         # Vision model
+    - "meta-llama/llama-3-2-11b-vision-instruct"         # Vision model
+    - "meta-llama/llama-3-2-1b-instruct"                 # Small model
+    - "meta-llama/llama-3-2-3b-instruct"                 # Small model
+    - "meta-llama/llama-3-405b-instruct"                 # Large model
+    
+    # Mistral models (non-deprecated only)
+    - "mistralai/mistral-medium-2505"                    # New
+    - "mistralai/mistral-small-3-1-24b-instruct-2503"   # New
+    - "mistralai/pixtral-12b"                            # Vision model
+    - "mistralai/mistral-large-2"                        # Current large model
+  
+  model_aliases:
+    # Granite aliases
+    granite8b: "ibm/granite-3-3-8b-instruct"
+    granite2b: "ibm/granite-3-2b-instruct"
+    granite: "ibm/granite-3-3-8b-instruct"
+    granite_vision: "ibm/granite-vision-3-2-2b-instruct"
+    
+    # Llama 4 aliases (new models)
+    llama4_scout: "meta-llama/llama-4-scout-17b-16e-instruct"
+    llama4_maverick: "meta-llama/llama-4-maverick-17b-128e-instruct-fp8"
+    llama4: "meta-llama/llama-4-scout-17b-16e-instruct"
+    
+    # Llama 3.x aliases
+    llama3_3: "meta-llama/llama-3-3-70b-instruct"
+    llama3_3_70b: "meta-llama/llama-3-3-70b-instruct"
+    llama3_405b: "meta-llama/llama-3-405b-instruct"
+    llama3_2_90b_vision: "meta-llama/llama-3-2-90b-vision-instruct"
+    llama3_2_11b_vision: "meta-llama/llama-3-2-11b-vision-instruct"
+    llama3_2_1b: "meta-llama/llama-3-2-1b-instruct"
+    llama3_2_3b: "meta-llama/llama-3-2-3b-instruct"
+    
+    # Simple Llama aliases (Llama 4 as defaults)
+    llama: "meta-llama/llama-4-scout-17b-16e-instruct"
+    llama_vision: "meta-llama/llama-4-scout-17b-16e-instruct"
+    
+    # Mistral aliases
+    mistral_medium: "mistralai/mistral-medium-2505"
+    mistral_small: "mistralai/mistral-small-3-1-24b-instruct-2503"
+    mistral_large: "mistralai/mistral-large-2"
+    mistral: "mistralai/mistral-large-2"
+    pixtral: "mistralai/pixtral-12b"
+    mistral_vision: "mistralai/pixtral-12b"
+    
+    # Capability aliases
+    latest: "meta-llama/llama-4-scout-17b-16e-instruct"
+    vision: "ibm/granite-vision-3-2-2b-instruct"
+    reasoning: "meta-llama/llama-4-scout-17b-16e-instruct"
+    powerful: "meta-llama/llama-3-405b-instruct"
+    free: "meta-llama/llama-4-scout-17b-16e-instruct"
+  
+  extra:
+    project_id_env: "WATSONX_PROJECT_ID"
+    space_id_env: "WATSONX_SPACE_ID"
+  
+  model_capabilities:
+    # Llama 4 models (New - multimodal reasoning, long-context)
+    - pattern: "meta-llama/llama-4-.*"
+      features: [tools, multimodal, reasoning]
+      max_context_length: 131072  # 128k as specified
+      max_output_tokens: 4096
+    
+    # Llama 3.3 70B (Current generation with reasoning)
+    - pattern: "meta-llama/llama-3-3-70b-instruct"
+      features: [tools, reasoning]
+      max_context_length: 131072  # 128k
+      max_output_tokens: 4096
+    
+    # Llama 3.2 Vision models (with reasoning)
+    - pattern: "meta-llama/llama-3-2-.*vision-instruct"
+      features: [tools, vision, multimodal, reasoning]
+      max_context_length: 131072  # 128k
+      max_output_tokens: 4096
+    
+    # Llama 3.2 Small models (1B, 3B with reasoning)
+    - pattern: "meta-llama/llama-3-2-[13]b-instruct"
+      features: [tools, reasoning]
+      max_context_length: 131072  # 128k
+      max_output_tokens: 4096
+    
+    # Llama 3 405B (Large model with advanced reasoning)
+    - pattern: "meta-llama/llama-3-405b-instruct"
+      features: [tools, parallel_calls, reasoning]
+      max_context_length: 131072  # 128k
+      max_output_tokens: 4096
+    
+    # IBM Granite family (with reasoning)
+    - pattern: "ibm/granite-.*"
+      features: [tools, reasoning]
+      max_context_length: 131072
+      max_output_tokens: 4096
+    
+    # IBM Granite Vision (with reasoning)
+    - pattern: "ibm/granite-vision-.*"
+      features: [tools, vision, multimodal, reasoning]
+      max_context_length: 131072
+      max_output_tokens: 4096
+    
+    # Mistral Medium 2505 (New - with vision and reasoning)
+    - pattern: "mistralai/mistral-medium-2505"
+      features: [tools, vision, multimodal, parallel_calls, reasoning]
+      max_context_length: 131072  # 128k
+      max_output_tokens: 8192
+    
+    # Mistral Small 2503 (New - with vision and reasoning)
+    - pattern: "mistralai/mistral-small-3-1-24b-instruct-2503"
+      features: [tools, vision, multimodal, reasoning]
+      max_context_length: 131072  # 128k
+      max_output_tokens: 4096
+    
+    # Pixtral (Vision model with reasoning)
+    - pattern: "mistralai/pixtral-12b"
+      features: [tools, vision, multimodal, reasoning]
+      max_context_length: 131072  # 128k
+      max_output_tokens: 4096
+    
+    # Mistral Large 2 (with reasoning)
+    - pattern: "mistralai/mistral-large-2"
+      features: [tools, parallel_calls, reasoning]
+      max_context_length: 131072  # 128k
+      max_output_tokens: 8192
+      
+# Perplexity – search-augmented reasoning
+perplexity:
+  inherits: "openai"
+  client_class: "chuk_llm.llm.providers.openai_client.OpenAILLMClient"
+  api_key_env: "PERPLEXITY_API_KEY"
+  api_base: "https://api.perplexity.ai"
+  default_model: "sonar-reasoning-pro"
+  
+  features: [streaming, tools, system_messages, reasoning]
+  max_context_length: 128000
+  max_output_tokens: 8192
+  rate_limits:
+    default: 3000
+  
+  models:
+    - "sonar"
+    - "sonar-pro"
+    - "sonar-reasoning"
+    - "sonar-reasoning-pro"
+    - "sonar-deep-research"
+  
+  model_aliases:
+    # Simple aliases
+    pro: "sonar-pro"
+    reasoning: "sonar-reasoning-pro"
+    research: "sonar-deep-research"
+    latest: "sonar-reasoning-pro"
+    thinking: "sonar-reasoning"
+  
+  model_capabilities:
+    # General-purpose
+    - pattern: "sonar$"
+      features: [reasoning]
+      max_context_length: 200000
+      max_output_tokens: 8192
+
+    - pattern: "sonar-pro"
+      features: [reasoning]
+      max_context_length: 128000
+      max_output_tokens: 8192
+    
+    # Research-tuned (advanced reasoning)
+    - pattern: "sonar-deep-research"
+      features: [reasoning]
+      max_context_length: 128000
+      max_output_tokens: 8192
+    
+    # Reasoning-tuned (primary reasoning models)
+    - pattern: "sonar-reasoning.*"
+      features: [reasoning]
+      max_context_length: 200000
+      max_output_tokens: 8192

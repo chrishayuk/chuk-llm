@@ -1,15 +1,19 @@
 # chuk_llm/api/core.py
 """
-Core ask/stream functions - clean and simple
-============================================
+Core ask/stream functions with unified configuration
+==================================================
 
-Main API functions using dynamic configuration.
+Main API functions using the unified configuration system with enhanced validation.
 """
 
 from typing import List, Dict, Any, Optional, AsyncIterator
-from chuk_llm.configuration.config import get_config
+import logging
+
+from chuk_llm.configuration import get_config, ConfigValidator, Feature
 from chuk_llm.api.config import get_current_config
 from chuk_llm.llm.client import get_client
+
+logger = logging.getLogger(__name__)
 
 
 async def ask(
@@ -21,10 +25,11 @@ async def ask(
     temperature: float = None,
     max_tokens: int = None,
     tools: List[Dict[str, Any]] = None,
+    json_mode: bool = False,
     **kwargs
 ) -> str:
     """
-    Ask a question and get a response.
+    Ask a question and get a response with unified configuration.
     
     Args:
         prompt: The question/prompt to send
@@ -34,6 +39,7 @@ async def ask(
         temperature: Temperature override
         max_tokens: Max tokens override
         tools: Function tools for the LLM
+        json_mode: Enable JSON mode response
         **kwargs: Additional arguments
         
     Returns:
@@ -42,11 +48,11 @@ async def ask(
     # Get base configuration
     config = get_current_config()
     
-    # Determine effective provider (override or default)
+    # Determine effective provider and model
     effective_provider = provider or config["provider"]
     effective_model = model or config["model"]
     
-    # FIX: When provider is overridden, we MUST resolve API key and api_base for that provider
+    # Resolve provider-specific settings when provider is overridden
     config_manager = get_config()
     
     if provider is not None:
@@ -54,14 +60,15 @@ async def ask(
         try:
             provider_config = config_manager.get_provider(provider)
             effective_api_key = config_manager.get_api_key(provider)
-            effective_api_base = getattr(provider_config, 'api_base', None)
+            effective_api_base = provider_config.api_base
             
             # Resolve model if needed
             if model is None:
                 effective_model = provider_config.default_model
                 
-        except (ValueError, Exception):
-            # Fallback to cached config if provider lookup fails
+        except Exception as e:
+            logger.warning(f"Could not resolve provider '{provider}': {e}")
+            # Fallback to cached config
             effective_api_key = config["api_key"] 
             effective_api_base = config["api_base"]
     else:
@@ -74,7 +81,7 @@ async def ask(
             try:
                 provider_config = config_manager.get_provider(effective_provider)
                 effective_model = provider_config.default_model
-            except (ValueError, Exception):
+            except Exception:
                 pass
     
     # Build effective configuration
@@ -88,15 +95,21 @@ async def ask(
         "max_tokens": max_tokens if max_tokens is not None else config.get("max_tokens"),
     }
     
-    # Validate features if needed
-    if tools:
-        try:
-            if not config_manager.supports_feature(effective_provider, "tools"):
-                raise ValueError(f"Provider {effective_provider} doesn't support function calling")
-        except (ValueError, Exception):
-            pass  # Unknown provider, proceed anyway
+    # Validate request compatibility
+    is_valid, issues = ConfigValidator.validate_request_compatibility(
+        provider_name=effective_provider,
+        model=effective_model,
+        tools=tools,
+        stream=False,
+        **{"response_format": "json" if json_mode else None}
+    )
     
-    # Get client with CORRECT parameters
+    if not is_valid:
+        # Log warnings but don't fail - allow fallbacks
+        for issue in issues:
+            logger.warning(f"Request compatibility issue: {issue}")
+    
+    # Get client with correct parameters
     client = get_client(
         provider=effective_config["provider"],
         model=effective_config["model"],
@@ -104,58 +117,80 @@ async def ask(
         api_base=effective_config["api_base"]
     )
     
-    # Build messages
-    messages = []
-    
-    # Add system prompt
-    if effective_config.get("system_prompt"):
-        messages.append({"role": "system", "content": effective_config["system_prompt"]})
-    elif tools:
-        # Generate system prompt for tools
-        from chuk_llm.llm.system_prompt_generator import SystemPromptGenerator
-        generator = SystemPromptGenerator()
-        system_content = generator.generate_prompt(tools)
-        messages.append({"role": "system", "content": system_content})
-    else:
-        # Default system prompt
-        messages.append({
-            "role": "system", 
-            "content": "You are a helpful AI assistant. Provide clear, accurate, and concise responses."
-        })
-    
-    messages.append({"role": "user", "content": prompt})
+    # Build messages with intelligent system prompt handling
+    messages = _build_messages(
+        prompt=prompt,
+        system_prompt=effective_config.get("system_prompt"),
+        tools=tools,
+        provider=effective_provider,
+        model=effective_model
+    )
     
     # Prepare completion arguments
     completion_args = {"messages": messages}
     
+    # Add tools if supported
     if tools:
-        completion_args["tools"] = tools
+        try:
+            if config_manager.supports_feature(effective_provider, Feature.TOOLS, effective_model):
+                completion_args["tools"] = tools
+            else:
+                logger.warning(f"{effective_provider}/{effective_model} doesn't support tools, ignoring")
+        except Exception:
+            # Unknown provider, try anyway
+            completion_args["tools"] = tools
+    
+    # Add JSON mode if requested and supported
+    if json_mode:
+        try:
+            if config_manager.supports_feature(effective_provider, Feature.JSON_MODE, effective_model):
+                if effective_provider == "openai":
+                    completion_args["response_format"] = {"type": "json_object"}
+                elif effective_provider == "gemini":
+                    completion_args.setdefault("generation_config", {})["response_mime_type"] = "application/json"
+                # For other providers, we'll add instruction to system message
+            else:
+                logger.warning(f"{effective_provider}/{effective_model} doesn't support JSON mode")
+                # Add JSON instruction to system message
+                _add_json_instruction_to_messages(messages)
+        except Exception:
+            # Unknown provider, try anyway
+            if effective_provider == "openai":
+                completion_args["response_format"] = {"type": "json_object"}
+    
+    # Add temperature and max_tokens
     if effective_config.get("temperature") is not None:
         completion_args["temperature"] = effective_config["temperature"]
     if effective_config.get("max_tokens") is not None:
         completion_args["max_tokens"] = effective_config["max_tokens"]
     
+    # Add any additional kwargs
     completion_args.update(kwargs)
     
     # Make the request
-    response = await client.create_completion(**completion_args)
-    
-    # Extract response
-    if isinstance(response, dict):
-        if response.get("error"):
-            raise Exception(f"LLM Error: {response.get('error_message', 'Unknown error')}")
-        return response.get("response", "")
-    
-    return str(response)
+    try:
+        response = await client.create_completion(**completion_args)
+        
+        # Extract response
+        if isinstance(response, dict):
+            if response.get("error"):
+                raise Exception(f"LLM Error: {response.get('error_message', 'Unknown error')}")
+            return response.get("response", "")
+        
+        return str(response)
+        
+    except Exception as e:
+        logger.error(f"Request failed: {e}")
+        raise
 
 
 async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
     """
-    Stream a response token by token.
+    Stream a response token by token with unified configuration.
     
     Args:
         prompt: The question/prompt to send
-        **kwargs: Same arguments as ask()
+        **kwargs: Same arguments as ask() plus streaming-specific options
         
     Yields:
         str: Individual tokens/chunks from the LLM response
@@ -163,27 +198,28 @@ async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
     # Get base configuration
     config = get_current_config()
     
-    # Apply parameter overrides using same logic as ask()
+    # Extract parameters
     provider = kwargs.get('provider')
     model = kwargs.get('model')
     
-    # Determine effective provider and settings
+    # Determine effective provider and settings (same logic as ask())
     effective_provider = provider or config["provider"]
     effective_model = model or config["model"]
     
-    # FIX: Same API key resolution logic as ask()
+    # Resolve provider-specific settings
     config_manager = get_config()
     
     if provider is not None:
         try:
             provider_config = config_manager.get_provider(provider)
             effective_api_key = config_manager.get_api_key(provider)
-            effective_api_base = getattr(provider_config, 'api_base', None)
+            effective_api_base = provider_config.api_base
             
             if model is None:
                 effective_model = provider_config.default_model
                 
-        except (ValueError, Exception):
+        except Exception as e:
+            logger.warning(f"Could not resolve provider '{provider}': {e}")
             effective_api_key = config["api_key"]
             effective_api_base = config["api_base"]
     else:
@@ -194,7 +230,7 @@ async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
             try:
                 provider_config = config_manager.get_provider(effective_provider)
                 effective_model = provider_config.default_model
-            except (ValueError, Exception):
+            except Exception:
                 pass
     
     # Build effective configuration
@@ -210,12 +246,16 @@ async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
     
     # Validate streaming support
     try:
-        if not config_manager.supports_feature(effective_provider, "streaming"):
-            raise ValueError(f"Provider {effective_provider} doesn't support streaming")
-    except (ValueError, Exception):
+        if not config_manager.supports_feature(effective_provider, Feature.STREAMING, effective_model):
+            logger.warning(f"{effective_provider}/{effective_model} doesn't support streaming")
+            # Fall back to non-streaming
+            response = await ask(prompt, **kwargs)
+            yield response
+            return
+    except Exception:
         pass  # Unknown provider, proceed anyway
     
-    # Get client with CORRECT parameters
+    # Get client
     client = get_client(
         provider=effective_config["provider"],
         model=effective_config["model"],
@@ -223,29 +263,29 @@ async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
         api_base=effective_config["api_base"]
     )
     
-    # Build messages (same logic as ask())
-    messages = []
-    
-    if effective_config.get("system_prompt"):
-        messages.append({"role": "system", "content": effective_config["system_prompt"]})
-    elif kwargs.get("tools"):
-        from chuk_llm.llm.system_prompt_generator import SystemPromptGenerator
-        generator = SystemPromptGenerator()
-        system_content = generator.generate_prompt(kwargs.get("tools"))
-        messages.append({"role": "system", "content": system_content})
-    else:
-        messages.append({
-            "role": "system",
-            "content": "You are a helpful AI assistant. Provide clear, accurate, and concise responses."
-        })
-    
-    messages.append({"role": "user", "content": prompt})
+    # Build messages
+    messages = _build_messages(
+        prompt=prompt,
+        system_prompt=effective_config.get("system_prompt"),
+        tools=kwargs.get("tools"),
+        provider=effective_provider,
+        model=effective_model
+    )
     
     # Prepare streaming arguments
     completion_args = {
         "messages": messages,
         "stream": True,
     }
+    
+    # Add tools if supported
+    tools = kwargs.get("tools")
+    if tools:
+        try:
+            if config_manager.supports_feature(effective_provider, Feature.TOOLS, effective_model):
+                completion_args["tools"] = tools
+        except Exception:
+            completion_args["tools"] = tools
     
     # Add non-config kwargs
     non_config_kwargs = {k: v for k, v in kwargs.items() 
@@ -260,7 +300,7 @@ async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
     
     # Stream the response
     try:
-        response_stream = client.create_completion(**completion_args)
+        response_stream = await client.create_completion(**completion_args)
         
         if hasattr(response_stream, '__aiter__'):
             async for chunk in response_stream:
@@ -274,14 +314,150 @@ async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
                 else:
                     yield str(chunk)
         else:
-            awaited_response = await response_stream
-            if isinstance(awaited_response, dict):
-                if awaited_response.get("error"):
-                    yield f"[Error: {awaited_response.get('error_message', 'Unknown error')}]"
+            # Handle non-async response
+            if isinstance(response_stream, dict):
+                if response_stream.get("error"):
+                    yield f"[Error: {response_stream.get('error_message', 'Unknown error')}]"
                 else:
-                    yield awaited_response.get("response", "")
+                    yield response_stream.get("response", "")
             else:
-                yield str(awaited_response)
+                yield str(response_stream)
                 
     except Exception as e:
+        logger.error(f"Streaming failed: {e}")
         yield f"[Streaming Error: {str(e)}]"
+
+
+def _build_messages(
+    prompt: str, 
+    system_prompt: Optional[str], 
+    tools: Optional[List[Dict[str, Any]]], 
+    provider: str,
+    model: Optional[str]
+) -> List[Dict[str, Any]]:
+    """Build messages array with intelligent system prompt handling"""
+    messages = []
+    
+    # Determine system prompt
+    if system_prompt:
+        system_content = system_prompt
+    elif tools:
+        # Generate system prompt for tools
+        try:
+            from chuk_llm.llm.system_prompt_generator import SystemPromptGenerator
+            generator = SystemPromptGenerator()
+            system_content = generator.generate_prompt(tools)
+        except ImportError:
+            system_content = "You are a helpful AI assistant with access to function calling tools."
+    else:
+        # Default system prompt
+        system_content = "You are a helpful AI assistant. Provide clear, accurate, and concise responses."
+    
+    # Add system message if provider supports it
+    try:
+        config_manager = get_config()
+        if config_manager.supports_feature(provider, Feature.SYSTEM_MESSAGES, model):
+            messages.append({"role": "system", "content": system_content})
+        else:
+            # Prepend system content to user message for providers that don't support system messages
+            prompt = f"System: {system_content}\n\nUser: {prompt}"
+    except Exception:
+        # Unknown provider, assume it supports system messages
+        messages.append({"role": "system", "content": system_content})
+    
+    messages.append({"role": "user", "content": prompt})
+    return messages
+
+
+def _add_json_instruction_to_messages(messages: List[Dict[str, Any]]):
+    """Add JSON mode instruction to system message for providers without native support"""
+    json_instruction = "\n\nIMPORTANT: You must respond with valid JSON only. Do not include any text outside the JSON structure."
+    
+    # Find system message and add instruction
+    for message in messages:
+        if message.get("role") == "system":
+            message["content"] += json_instruction
+            return
+    
+    # No system message found, add one
+    messages.insert(0, {
+        "role": "system",
+        "content": f"You are a helpful AI assistant.{json_instruction}"
+    })
+
+
+# Enhanced convenience functions
+async def ask_with_tools(
+    prompt: str,
+    tools: List[Dict[str, Any]],
+    **kwargs
+) -> Dict[str, Any]:
+    """Ask with function calling tools and return structured response"""
+    response = await ask(prompt, tools=tools, **kwargs)
+    
+    return {
+        "response": response,
+        "tools_used": tools,
+        "provider": kwargs.get("provider") or get_current_config()["provider"],
+        "model": kwargs.get("model") or get_current_config()["model"]
+    }
+
+
+async def ask_json(prompt: str, **kwargs) -> str:
+    """Ask for a JSON response"""
+    return await ask(prompt, json_mode=True, **kwargs)
+
+
+async def quick_ask(prompt: str, provider: str = None) -> str:
+    """Quick ask with optional provider override"""
+    return await ask(prompt, provider=provider)
+
+
+async def multi_provider_ask(prompt: str, providers: List[str]) -> Dict[str, str]:
+    """Ask the same question to multiple providers"""
+    import asyncio
+    
+    async def ask_provider(provider: str) -> tuple[str, str]:
+        try:
+            response = await ask(prompt, provider=provider)
+            return provider, response
+        except Exception as e:
+            return provider, f"Error: {e}"
+    
+    tasks = [ask_provider(provider) for provider in providers]
+    results = await asyncio.gather(*tasks)
+    
+    return dict(results)
+
+
+# Validation helpers
+def validate_request(
+    prompt: str,
+    provider: str = None,
+    model: str = None,
+    tools: List[Dict[str, Any]] = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """Validate a request before sending"""
+    config = get_current_config()
+    effective_provider = provider or config["provider"]
+    effective_model = model or config["model"]
+    
+    # Build fake messages to check for vision content
+    messages = [{"role": "user", "content": prompt}]
+    
+    is_valid, issues = ConfigValidator.validate_request_compatibility(
+        provider_name=effective_provider,
+        model=effective_model,
+        messages=messages,
+        tools=tools,
+        stream=kwargs.get("stream", False),
+        **kwargs
+    )
+    
+    return {
+        "valid": is_valid,
+        "issues": issues,
+        "provider": effective_provider,
+        "model": effective_model
+    }

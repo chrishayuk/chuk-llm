@@ -4,7 +4,7 @@
 from typing import List, Dict, Any, Optional, AsyncIterator
 from contextlib import asynccontextmanager
 from chuk_llm.llm.system_prompt_generator import SystemPromptGenerator
-from chuk_llm.configuration.config import get_config
+from chuk_llm.configuration.unified_config import get_config
 from chuk_llm.llm.client import get_client
 
 

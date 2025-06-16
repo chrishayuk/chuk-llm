@@ -2,10 +2,12 @@
 """
 Test runners for specific LLM capabilities.
 FIXED: Streaming test issues and error handling.
+Updated with better error handling, model compatibility checks, and Gemma 3 support.
 """
 from __future__ import annotations
 
 import time
+import asyncio
 from typing import Any, Dict, Optional, Callable
 from .provider_configs import get_provider_config
 
@@ -16,7 +18,7 @@ class CapabilityTester:
         self.client_cache: Dict[tuple[str, str], Any] = {}
     
     async def get_client(self, provider: str, model: str):
-        """Get or create a cached client"""
+        """Get or create a cached client with better error handling"""
         key = (provider, model)
         if key not in self.client_cache:
             # Use the new chuk-llm client factory
@@ -45,8 +47,36 @@ class CapabilityTester:
         finally:
             result_obj.timings[key] = time.perf_counter() - start
     
+    def _check_provider_capability(self, provider: str, model: str, capability: str) -> bool:
+        """Check if provider/model supports a capability using the capability system"""
+        try:
+            from chuk_llm.configuration.capabilities import PROVIDER_CAPABILITIES, Feature
+            
+            if provider in PROVIDER_CAPABILITIES:
+                caps = PROVIDER_CAPABILITIES[provider].get_model_capabilities(model)
+                
+                capability_map = {
+                    "streaming": Feature.STREAMING,
+                    "tools": Feature.TOOLS,
+                    "vision": Feature.VISION,
+                    "json_mode": Feature.JSON_MODE,
+                    "parallel_calls": Feature.PARALLEL_CALLS,
+                    "system_messages": Feature.SYSTEM_MESSAGES,
+                    "multimodal": Feature.MULTIMODAL
+                }
+                
+                if capability in capability_map:
+                    return capability_map[capability] in caps.features
+                    
+        except ImportError:
+            # Fallback to provider config
+            provider_config = get_provider_config(provider)
+            return provider_config.supports_feature(capability)
+        
+        return True  # Default to assuming capability exists
+    
     async def test_text_completion(self, provider: str, model: str, result_obj, tick_fn: Callable):
-        """Test basic text completion"""
+        """Test basic text completion with improved error handling"""
         try:
             client = await self.get_client(provider, model)
             messages = [{"role": "user", "content": "Why is testing LLM providers important? (3–4 sentences)"}]
@@ -57,27 +87,50 @@ class CapabilityTester:
             )
             
             # Handle the standardized response format from chuk-llm
-            response_text = response.get("response", "")
-            success = bool(response_text.strip())
+            if isinstance(response, dict):
+                response_text = response.get("response", "")
+                success = bool(response_text and response_text.strip())
+            else:
+                success = False
             
             result_obj.record("text_completion", success)
             tick_fn("text", success)
             
         except Exception as exc:
-            result_obj.record("text_completion", False)
-            result_obj.errors["text"] = str(exc)
+            error_msg = str(exc).lower()
+            
+            # Check for common connection issues
+            if any(phrase in error_msg for phrase in [
+                "i/o operation on closed file",
+                "connection refused",
+                "connection failed",
+                "connection error",
+                "timeout"
+            ]):
+                result_obj.record("text_completion", False)
+                result_obj.errors["text"] = f"Connection error: {str(exc)[:100]}"
+            else:
+                result_obj.record("text_completion", False)
+                result_obj.errors["text"] = str(exc)
+            
             tick_fn("text", False)
     
     async def test_streaming(self, provider: str, model: str, result_obj, tick_fn: Callable):
-        """Test streaming capability"""
+        """Test streaming capability - FIXED: Don't await async generator"""
+        # Check if provider supports streaming
+        if not self._check_provider_capability(provider, model, "streaming"):
+            result_obj.record("streaming_text", None)
+            tick_fn("stream", None)
+            return
+        
         try:
             client = await self.get_client(provider, model)
             messages = [{"role": "user", "content": "Count from 1 to 3, one number per line."}]
             
             start_time = time.perf_counter()
             
-            # Get the stream and iterate through it properly
-            stream = await client.create_completion(messages, stream=True)
+            # FIXED: Don't await - get async generator directly
+            stream = client.create_completion(messages, stream=True)
             
             chunk_count = 0
             found_content = False
@@ -101,12 +154,32 @@ class CapabilityTester:
             tick_fn("stream", success)
             
         except Exception as exc:
-            result_obj.record("streaming_text", False)
-            result_obj.errors["stream"] = str(exc)
+            error_msg = str(exc).lower()
+            
+            # Check for connection issues
+            if any(phrase in error_msg for phrase in [
+                "i/o operation on closed file",
+                "connection refused",
+                "connection failed",
+                "connection error",
+                "timeout"
+            ]):
+                result_obj.record("streaming_text", False)
+                result_obj.errors["stream"] = f"Connection error: {str(exc)[:100]}"
+            else:
+                result_obj.record("streaming_text", False)
+                result_obj.errors["stream"] = str(exc)
+            
             tick_fn("stream", False)
     
     async def test_tools(self, provider: str, model: str, result_obj, tick_fn: Callable):
-        """Test function calling capability"""
+        """Test function calling capability with improved error detection"""
+        # Check if provider supports tools
+        if not self._check_provider_capability(provider, model, "tools"):
+            result_obj.record("function_call", None)
+            tick_fn("tools", None)
+            return
+        
         weather_tool = {
             "type": "function",
             "function": {
@@ -130,33 +203,55 @@ class CapabilityTester:
             )
             
             # Check for tool calls in the standardized format
-            tool_calls = response.get("tool_calls", [])
-            success = len(tool_calls) > 0 and any(
-                tc.get("function", {}).get("name") == "get_weather" 
-                for tc in tool_calls
-            )
+            if isinstance(response, dict):
+                tool_calls = response.get("tool_calls", [])
+                success = len(tool_calls) > 0 and any(
+                    tc.get("function", {}).get("name") == "get_weather" 
+                    for tc in tool_calls
+                )
+            else:
+                success = False
             
             result_obj.record("function_call", success)
             tick_fn("tools", success)
             
         except Exception as exc:
             error_msg = str(exc).lower()
+            
             # Check for known "unsupported" error patterns
             if any(phrase in error_msg for phrase in [
                 "does not support tools", 
                 "tool", 
                 "function calling not available",
-                "tools are not supported"
+                "tools are not supported",
+                "function calling is not supported"
             ]):
                 result_obj.record("function_call", None)
                 tick_fn("tools", None)
+            elif any(phrase in error_msg for phrase in [
+                "i/o operation on closed file",
+                "connection refused", 
+                "connection failed",
+                "connection error",
+                "timeout"
+            ]):
+                result_obj.record("function_call", False)
+                result_obj.errors["tools"] = f"Connection error: {str(exc)[:100]}"
+                tick_fn("tools", False)
             else:
                 result_obj.record("function_call", False)
                 result_obj.errors["tools"] = str(exc)
                 tick_fn("tools", False)
     
     async def test_streaming_tools(self, provider: str, model: str, result_obj, tick_fn: Callable):
-        """Test streaming with function calling"""
+        """Test streaming with function calling - FIXED: Don't await async generator"""
+        # Check if provider supports both streaming and tools
+        if not (self._check_provider_capability(provider, model, "streaming") and 
+                self._check_provider_capability(provider, model, "tools")):
+            result_obj.record("streaming_function_call", None)
+            tick_fn("stream_tools", None)
+            return
+        
         weather_tool = {
             "type": "function",
             "function": {
@@ -176,8 +271,8 @@ class CapabilityTester:
             
             start_time = time.perf_counter()
             
-            # Get the stream and iterate through it properly
-            stream = await client.create_completion(messages, tools=[weather_tool], stream=True)
+            # FIXED: Don't await - get async generator directly
+            stream = client.create_completion(messages, tools=[weather_tool], stream=True)
 
             found_tool_call = False
             chunk_count = 0
@@ -199,41 +294,43 @@ class CapabilityTester:
 
         except Exception as exc:
             error_msg = str(exc).lower()
+            
             # Check for known "unsupported" error patterns
             if any(phrase in error_msg for phrase in [
                 "does not support tools", 
                 "tool", 
                 "function calling not available",
-                "tools are not supported"
+                "tools are not supported",
+                "function calling is not supported"
             ]):
                 result_obj.record("streaming_function_call", None)
                 tick_fn("stream_tools", None)
+            elif any(phrase in error_msg for phrase in [
+                "i/o operation on closed file",
+                "connection refused",
+                "connection failed", 
+                "connection error",
+                "timeout"
+            ]):
+                result_obj.record("streaming_function_call", False)
+                result_obj.errors["stream_tools"] = f"Connection error: {str(exc)[:100]}"
+                tick_fn("stream_tools", False)
             else:
                 result_obj.record("streaming_function_call", False)
                 result_obj.errors["stream_tools"] = str(exc)
                 tick_fn("stream_tools", False)
     
     async def test_vision(self, provider: str, model: str, result_obj, tick_fn: Callable):
-        """Test vision/multimodal capability"""
+        """Test vision/multimodal capability with improved model-specific checks"""
+        # Check if provider supports vision
+        if not self._check_provider_capability(provider, model, "vision"):
+            result_obj.record("vision", None)
+            tick_fn("vision", None)
+            return
+        
         try:
             client = await self.get_client(provider, model)
             provider_config = get_provider_config(provider)
-            
-            # Check if provider supports vision using the new capability system
-            try:
-                from chuk_llm.configuration.capabilities import PROVIDER_CAPABILITIES, Feature
-                if provider in PROVIDER_CAPABILITIES:
-                    caps = PROVIDER_CAPABILITIES[provider].get_model_capabilities(model)
-                    if Feature.VISION not in caps.features:
-                        result_obj.record("vision", None)
-                        tick_fn("vision", None)
-                        return
-            except ImportError:
-                # Fallback to provider config
-                if not provider_config.supports_feature("vision"):
-                    result_obj.record("vision", None)
-                    tick_fn("vision", None)
-                    return
             
             vision_msg = provider_config.create_vision_message("Describe what you see in this image.")
             
@@ -243,8 +340,11 @@ class CapabilityTester:
             )
             
             # Check the standardized response format
-            response_text = response.get("response", "")
-            success = bool(response_text.strip())
+            if isinstance(response, dict):
+                response_text = response.get("response", "")
+                success = bool(response_text and response_text.strip())
+            else:
+                success = False
             
             result_obj.record("vision", success)
             tick_fn("vision", success)
@@ -271,13 +371,27 @@ class CapabilityTester:
                 "does not support vision",
                 "content must be a string",
                 "does not have the 'vision' capability",
-                "validation error for message"
+                "validation error for message",
+                "model which does not have the 'vision' capability"
+            ]
+            
+            # Check for connection issues
+            connection_patterns = [
+                "i/o operation on closed file",
+                "connection refused",
+                "connection failed",
+                "connection error", 
+                "timeout"
             ]
             
             if is_format_error or any(pattern in error_msg for pattern in unsupported_patterns):
                 # Vision capability doesn't exist or format is wrong - mark as unsupported
                 result_obj.record("vision", None)
                 tick_fn("vision", None)
+            elif any(pattern in error_msg for pattern in connection_patterns):
+                result_obj.record("vision", False)
+                result_obj.errors["vision"] = f"Connection error: {str(exc)[:100]}"
+                tick_fn("vision", False)
             else:
                 result_obj.record("vision", False)
                 result_obj.errors["vision"] = str(exc)

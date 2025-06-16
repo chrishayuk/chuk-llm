@@ -153,7 +153,7 @@ def test_inheritance_and_features():
     header("Configuration Inheritance & Features")
     
     section("Provider Inheritance")
-    from chuk_llm.configuration.config import get_config
+    from chuk_llm.configuration.unified_config import get_config
     config_manager = get_config()
     
     inheriting_providers = ["deepseek", "groq", "perplexity"]

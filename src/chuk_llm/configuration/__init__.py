@@ -1,12 +1,36 @@
 # chuk_llm/configuration/__init__.py
-"""Configuration module for ChukLLM."""
+"""
+Configuration module for ChukLLM - Clean Forward-Looking Version
+===============================================================
 
-from .config import get_config, reset_config, ConfigManager
-from .config_validator import ConfigValidator
+Unified configuration system - get_config now returns UnifiedConfigManager.
+"""
 
+from .unified_config import (
+    Feature,
+    ModelCapabilities,
+    ProviderConfig,
+    UnifiedConfigManager,
+    ConfigValidator,
+    CapabilityChecker,
+    get_config,
+    get_config,
+    reset_config,
+    reset_unified_config,
+    ConfigManager
+)
+
+# Clean exports
 __all__ = [
-    "get_config", 
+    "Feature",
+    "ModelCapabilities", 
+    "ProviderConfig",
+    "UnifiedConfigManager",
+    "ConfigValidator",
+    "CapabilityChecker",
+    "get_config",
+    "get_config",
     "reset_config", 
+    "reset_unified_config",
     "ConfigManager",
-    "ConfigValidator"
 ]

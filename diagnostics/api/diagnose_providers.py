@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import chuk_llm
-from chuk_llm.configuration.config import get_config
+from chuk_llm.configuration.unified_config import get_config
 
 def show_providers():
     """Display all configured providers with their details."""

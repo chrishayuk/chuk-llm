@@ -3,7 +3,7 @@
 
 from typing import Dict, Any, Optional, List
 import asyncio
-from chuk_llm.configuration.config import get_config
+from chuk_llm.configuration.unified_config import get_config
 from chuk_llm.api.config import get_current_config
 
 # Global cached client for compatibility with tests
