@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chuk-llm"
-version = "0.1.9"
+version = "0.2"
 description = "Add your description here"
 readme = "README.md"
 authors = [
@@ -32,15 +32,23 @@ where = ["src"]
 include = ["chuk_llm*"]
 
 [tool.pytest.ini_options]
-asyncio_mode = "strict"
+# Changed from strict to auto mode to avoid fixture warnings
+asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 asyncio_default_test_loop_scope = "function"
 testpaths = ["tests"]
 python_files = "test_*.py"
 markers = [
     "asyncio: mark a test as an async test",
+    "slow: mark test as slow",
+    "integration: mark test as integration test",
 ]
-addopts = "--cov=chuk_llm"
+addopts = [
+    "--cov=chuk_llm",
+    "--tb=short",
+    "-v",
+    "--disable-warnings",  # This will suppress most warnings
+]
 
 [dependency-groups]
 dev = [

@@ -354,14 +354,29 @@ class TestFunctionGenerationLogic:
         mock_config_manager = Mock()
         mock_config_manager.get_all_providers.return_value = ["openai", "anthropic"]
         
-        # Mock provider configs
+        # Import Feature enum for proper mocking
+        from chuk_llm.configuration.unified_config import Feature
+        
+        # Mock model capabilities
+        def create_mock_model_caps(features_set):
+            mock_caps = Mock()
+            mock_caps.features = features_set
+            return mock_caps
+        
+        # Mock provider configs with proper features as sets
         openai_config = Mock()
         openai_config.models = ["gpt-4o", "gpt-4o-mini"]
         openai_config.model_aliases = {"gpt4o": "gpt-4o", "mini": "gpt-4o-mini"}
+        openai_config.features = {Feature.TEXT, Feature.STREAMING, Feature.TOOLS, Feature.VISION}
+        # Mock get_model_capabilities method
+        openai_config.get_model_capabilities.return_value = create_mock_model_caps({Feature.TEXT, Feature.STREAMING, Feature.TOOLS, Feature.VISION})
         
         anthropic_config = Mock()
         anthropic_config.models = ["claude-3-sonnet"]
         anthropic_config.model_aliases = {"sonnet": "claude-3-sonnet"}
+        anthropic_config.features = {Feature.TEXT, Feature.STREAMING, Feature.TOOLS}
+        # Mock get_model_capabilities method
+        anthropic_config.get_model_capabilities.return_value = create_mock_model_caps({Feature.TEXT, Feature.STREAMING, Feature.TOOLS})
         
         mock_config_manager.get_provider.side_effect = lambda p: {
             "openai": openai_config,
@@ -401,7 +416,7 @@ class TestFunctionGenerationLogic:
         # Should have global alias functions
         assert "ask_gpt4" in functions
         assert "ask_claude" in functions
-
+        
     def test_function_naming_pattern(self):
         """Test function naming patterns."""
         provider = "openai"

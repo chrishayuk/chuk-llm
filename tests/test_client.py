@@ -195,10 +195,10 @@ class TestGetLLMClient:
         """Test that get_client raises error when client class is missing."""
         # Mock the config to return a provider with no client class
         mock_provider = MagicMock()
-        mock_provider.client_class = None
+        mock_provider.client_class = ""  # Empty string instead of None
         mock_provider.default_model = "test-model"
         mock_provider.api_base = None
-        mock_provider.api_key_env = "TEST_API_KEY"  # Set as string, not MagicMock
+        mock_provider.api_key_env = "TEST_API_KEY"
         mock_provider.api_key_fallback_env = None
         mock_provider.name = "test_provider"
         mock_provider.extra = {}
@@ -207,11 +207,13 @@ class TestGetLLMClient:
         with patch("chuk_llm.llm.client.get_config") as mock_get_config:
             mock_config = MagicMock()
             mock_config.get_provider.return_value = mock_provider
-            mock_config.get_api_key.return_value = None
+            mock_config.get_api_key.return_value = "fake-api-key"  # Provide API key to pass validation
             mock_get_config.return_value = mock_config
             
-            # Also patch os.getenv to avoid the TypeError
-            with patch("os.getenv", return_value=None):
+            # Mock ConfigValidator to pass validation
+            with patch("chuk_llm.llm.client.ConfigValidator") as mock_validator:
+                mock_validator.validate_provider_config.return_value = (True, [])
+                
                 with pytest.raises(ValueError, match="No client class configured"):
                     get_client(provider="test_provider")
 
@@ -222,7 +224,7 @@ class TestGetLLMClient:
         mock_provider.client_class = "chuk_llm.llm.providers.openai_client.OpenAILLMClient"
         mock_provider.default_model = "test-model"
         mock_provider.api_base = None
-        mock_provider.api_key_env = "OPENAI_API_KEY"  # Set as string
+        mock_provider.api_key_env = "OPENAI_API_KEY"
         mock_provider.api_key_fallback_env = None
         mock_provider.name = "openai"
         mock_provider.extra = {}
@@ -230,11 +232,13 @@ class TestGetLLMClient:
         with patch("chuk_llm.llm.client.get_config") as mock_get_config:
             mock_config = MagicMock()
             mock_config.get_provider.return_value = mock_provider
-            mock_config.get_api_key.return_value = None
+            mock_config.get_api_key.return_value = "fake-api-key"  # Provide API key to pass validation
             mock_get_config.return_value = mock_config
             
-            # Patch os.getenv to return None (no API key set)
-            with patch("os.getenv", return_value=None):
+            # Mock ConfigValidator to pass validation
+            with patch("chuk_llm.llm.client.ConfigValidator") as mock_validator:
+                mock_validator.validate_provider_config.return_value = (True, [])
+                
                 with patch("chuk_llm.llm.providers.openai_client.OpenAILLMClient") as mock_openai:
                     mock_openai.side_effect = Exception("Client init error")
                     
@@ -248,7 +252,7 @@ class TestGetLLMClient:
         mock_provider.client_class = "invalid.path:Class"
         mock_provider.default_model = "test-model"
         mock_provider.api_base = None
-        mock_provider.api_key_env = "TEST_API_KEY"  # Set as string
+        mock_provider.api_key_env = "TEST_API_KEY"
         mock_provider.api_key_fallback_env = None
         mock_provider.name = "test"
         mock_provider.extra = {}
@@ -257,14 +261,16 @@ class TestGetLLMClient:
         with patch("chuk_llm.llm.client.get_config") as mock_get_config:
             mock_config = MagicMock()
             mock_config.get_provider.return_value = mock_provider
-            mock_config.get_api_key.return_value = None
+            mock_config.get_api_key.return_value = "fake-api-key"  # Provide API key to pass validation
             mock_get_config.return_value = mock_config
             
-            # Patch os.getenv to avoid the TypeError
-            with patch("os.getenv", return_value=None):
+            # Mock ConfigValidator to pass validation
+            with patch("chuk_llm.llm.client.ConfigValidator") as mock_validator:
+                mock_validator.validate_provider_config.return_value = (True, [])
+                
                 with pytest.raises(ValueError, match="Failed to import client class"):
                     get_client(provider="test")
-
+                    
 
 class TestOpenAIStyleMixin:
     """Test the OpenAIStyleMixin functionality."""
