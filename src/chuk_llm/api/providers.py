@@ -11,9 +11,11 @@ import asyncio
 import re
 import logging
 import warnings
-from typing import Dict, Optional, List, AsyncIterator
+from typing import Dict, Optional, List, AsyncIterator, Union
+from pathlib import Path
+import base64
 
-from chuk_llm.configuration.unified_config import get_config
+from chuk_llm.configuration.unified_config import get_config, Feature
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +51,7 @@ def _run_sync(coro):
         
         # Use asyncio.run - each call gets a fresh loop and fresh client connections
         return asyncio.run(coro)
+
 
 def _sanitize_name(name: str) -> str:
     """Convert any name to valid Python identifier
@@ -104,71 +107,244 @@ def _sanitize_name(name: str) -> str:
     return result.strip('_')
 
 
-def _create_provider_function(provider_name: str, model_name: Optional[str] = None):
-    """Create async provider function"""
+def _prepare_vision_message(prompt: str, image: Union[str, Path, bytes], provider: str = None) -> Dict[str, any]:
+    """Prepare a vision message with text and image, handling provider-specific formats"""
+    
+    # First, get the image data and determine format
+    image_data = None
+    image_url = None
+    media_type = 'image/jpeg'  # default
+    
+    if isinstance(image, (str, Path)):
+        image_path = Path(image) if not isinstance(image, str) or not image.startswith(('http://', 'https://')) else None
+        
+        if image_path and image_path.exists():
+            # Local file
+            with open(image_path, "rb") as f:
+                image_data = base64.b64encode(f.read()).decode('utf-8')
+                # Determine media type from extension
+                suffix = image_path.suffix.lower()
+                media_type = {
+                    '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg',
+                    '.png': 'image/png',
+                    '.gif': 'image/gif',
+                    '.webp': 'image/webp'
+                }.get(suffix, 'image/jpeg')
+                image_url = f"data:{media_type};base64,{image_data}"
+                
+        elif isinstance(image, str) and image.startswith(('http://', 'https://')):
+            # URL - handle provider differences
+            image_url = image
+            
+            # For providers that need base64 (like Anthropic), download the image
+            if provider and 'anthropic' in provider.lower():
+                try:
+                    import urllib.request
+                    import urllib.parse
+                    from io import BytesIO
+                    
+                    # Download the image
+                    with urllib.request.urlopen(image) as response:
+                        image_bytes = response.read()
+                        
+                    # Try to determine media type from headers
+                    content_type = response.headers.get('Content-Type', 'image/jpeg')
+                    if 'image/' in content_type:
+                        media_type = content_type
+                    
+                    # Convert to base64
+                    image_data = base64.b64encode(image_bytes).decode('utf-8')
+                    
+                except Exception as e:
+                    raise ValueError(f"Failed to download image from URL for Anthropic: {e}")
+        else:
+            raise ValueError(f"Image file not found: {image}")
+            
+    elif isinstance(image, bytes):
+        # Raw bytes
+        image_data = base64.b64encode(image).decode('utf-8')
+        media_type = 'image/png'  # Default to PNG for bytes
+        image_url = f"data:{media_type};base64,{image_data}"
+    else:
+        raise TypeError(f"Unsupported image type: {type(image)}")
+    
+    # Now format based on provider
+    if provider and 'anthropic' in provider.lower():
+        # Anthropic format - always needs base64 data
+        if image_data is None and image_url:
+            # Extract base64 from data URL if needed
+            if image_url.startswith('data:'):
+                # Extract base64 part
+                base64_part = image_url.split(',')[1] if ',' in image_url else image_url
+                image_data = base64_part
+                # Extract media type
+                media_type_match = re.match(r'data:([^;]+);', image_url)
+                media_type = media_type_match.group(1) if media_type_match else 'image/jpeg'
+        
+        return {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": image_data
+                    }
+                }
+            ]
+        }
+    else:
+        # OpenAI/Gemini/others format - can use URLs directly
+        return {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": image_url}
+                }
+            ]
+        }
+    
+def _create_provider_function(provider_name: str, model_name: Optional[str] = None, supports_vision: bool = False):
+    """Create async provider function with optional vision support"""
     if model_name:
-        async def provider_model_func(prompt: str, **kwargs) -> str:
-            from .core import ask
-            return await ask(prompt, provider=provider_name, model=model_name, **kwargs)
+        if supports_vision:
+            async def provider_model_func(prompt: str, image: Optional[Union[str, Path, bytes]] = None, **kwargs) -> str:
+                from .core import ask
+                if image is not None:
+                    vision_message = _prepare_vision_message(prompt, image, provider_name)
+                    kwargs['messages'] = [vision_message]
+                return await ask(prompt, provider=provider_name, model=model_name, **kwargs)
+        else:
+            async def provider_model_func(prompt: str, **kwargs) -> str:
+                from .core import ask
+                return await ask(prompt, provider=provider_name, model=model_name, **kwargs)
         return provider_model_func
     else:
-        async def provider_func(prompt: str, model: Optional[str] = None, **kwargs) -> str:
-            from .core import ask
-            return await ask(prompt, provider=provider_name, model=model, **kwargs)
+        if supports_vision:
+            async def provider_func(prompt: str, image: Optional[Union[str, Path, bytes]] = None, model: Optional[str] = None, **kwargs) -> str:
+                from .core import ask
+                if image is not None:
+                    vision_message = _prepare_vision_message(prompt, image, provider_name)
+                    kwargs['messages'] = [vision_message]
+                return await ask(prompt, provider=provider_name, model=model, **kwargs)
+        else:
+            async def provider_func(prompt: str, model: Optional[str] = None, **kwargs) -> str:
+                from .core import ask
+                return await ask(prompt, provider=provider_name, model=model, **kwargs)
         return provider_func
 
 
-def _create_stream_function(provider_name: str, model_name: Optional[str] = None):
-    """Create async streaming function"""
+def _create_stream_function(provider_name: str, model_name: Optional[str] = None, supports_vision: bool = False):
+    """Create async streaming function with optional vision support"""
     if model_name:
-        async def stream_model_func(prompt: str, **kwargs) -> AsyncIterator[str]:
-            from .core import stream
-            async for chunk in stream(prompt, provider=provider_name, model=model_name, **kwargs):
-                yield chunk
+        if supports_vision:
+            async def stream_model_func(prompt: str, image: Optional[Union[str, Path, bytes]] = None, **kwargs) -> AsyncIterator[str]:
+                from .core import stream
+                if image is not None:
+                    vision_message = _prepare_vision_message(prompt, image, provider_name)
+                    kwargs['messages'] = [vision_message]
+                async for chunk in stream(prompt, provider=provider_name, model=model_name, **kwargs):
+                    yield chunk
+        else:
+            async def stream_model_func(prompt: str, **kwargs) -> AsyncIterator[str]:
+                from .core import stream
+                async for chunk in stream(prompt, provider=provider_name, model=model_name, **kwargs):
+                    yield chunk
         return stream_model_func
     else:
-        async def stream_func(prompt: str, model: Optional[str] = None, **kwargs) -> AsyncIterator[str]:
-            from .core import stream
-            async for chunk in stream(prompt, provider=provider_name, model=model, **kwargs):
-                yield chunk
+        if supports_vision:
+            async def stream_func(prompt: str, image: Optional[Union[str, Path, bytes]] = None, model: Optional[str] = None, **kwargs) -> AsyncIterator[str]:
+                from .core import stream
+                if image is not None:
+                    vision_message = _prepare_vision_message(prompt, image, provider_name)
+                    kwargs['messages'] = [vision_message]
+                async for chunk in stream(prompt, provider=provider_name, model=model, **kwargs):
+                    yield chunk
+        else:
+            async def stream_func(prompt: str, model: Optional[str] = None, **kwargs) -> AsyncIterator[str]:
+                from .core import stream
+                async for chunk in stream(prompt, provider=provider_name, model=model, **kwargs):
+                    yield chunk
         return stream_func
 
 
-def _create_sync_function(provider_name: str, model_name: Optional[str] = None):
-    """Create sync provider function"""
+def _create_sync_function(provider_name: str, model_name: Optional[str] = None, supports_vision: bool = False):
+    """Create sync provider function with optional vision support"""
     if model_name:
-        def sync_model_func(prompt: str, **kwargs) -> str:
-            from .core import ask
-            return _run_sync(ask(prompt, provider=provider_name, model=model_name, **kwargs))
+        if supports_vision:
+            def sync_model_func(prompt: str, image: Optional[Union[str, Path, bytes]] = None, **kwargs) -> str:
+                from .core import ask
+                if image is not None:
+                    vision_message = _prepare_vision_message(prompt, image, provider_name)
+                    kwargs['messages'] = [vision_message]
+                return _run_sync(ask(prompt, provider=provider_name, model=model_name, **kwargs))
+        else:
+            def sync_model_func(prompt: str, **kwargs) -> str:
+                from .core import ask
+                return _run_sync(ask(prompt, provider=provider_name, model=model_name, **kwargs))
         return sync_model_func
     else:
-        def sync_func(prompt: str, model: Optional[str] = None, **kwargs) -> str:
-            from .core import ask
-            if model is not None:
-                kwargs['model'] = model
-            return _run_sync(ask(prompt, provider=provider_name, **kwargs))
+        if supports_vision:
+            def sync_func(prompt: str, image: Optional[Union[str, Path, bytes]] = None, model: Optional[str] = None, **kwargs) -> str:
+                from .core import ask
+                if model is not None:
+                    kwargs['model'] = model
+                if image is not None:
+                    vision_message = _prepare_vision_message(prompt, image, provider_name)
+                    kwargs['messages'] = [vision_message]
+                return _run_sync(ask(prompt, provider=provider_name, **kwargs))
+        else:
+            def sync_func(prompt: str, model: Optional[str] = None, **kwargs) -> str:
+                from .core import ask
+                if model is not None:
+                    kwargs['model'] = model
+                return _run_sync(ask(prompt, provider=provider_name, **kwargs))
         return sync_func
 
 
-def _create_global_alias_function(alias_name: str, provider_model: str):
-    """Create global alias function"""
+def _create_global_alias_function(alias_name: str, provider_model: str, supports_vision: bool = False):
+    """Create global alias function with optional vision support"""
     if '/' not in provider_model:
         logger.warning(f"Invalid global alias: {provider_model} (expected 'provider/model')")
         return {}
     
     provider, model = provider_model.split('/', 1)
     
-    async def alias_func(prompt: str, **kwargs) -> str:
-        from .core import ask
-        return await ask(prompt, provider=provider, model=model, **kwargs)
-    
-    def alias_sync_func(prompt: str, **kwargs) -> str:
-        return _run_sync(alias_func(prompt, **kwargs))
-    
-    async def alias_stream_func(prompt: str, **kwargs) -> AsyncIterator[str]:
-        from .core import stream
-        async for chunk in stream(prompt, provider=provider, model=model, **kwargs):
-            yield chunk
+    if supports_vision:
+        async def alias_func(prompt: str, image: Optional[Union[str, Path, bytes]] = None, **kwargs) -> str:
+            from .core import ask
+            if image is not None:
+                vision_message = _prepare_vision_message(prompt, image, provider)
+                kwargs['messages'] = [vision_message]
+            return await ask(prompt, provider=provider, model=model, **kwargs)
+        
+        def alias_sync_func(prompt: str, image: Optional[Union[str, Path, bytes]] = None, **kwargs) -> str:
+            return _run_sync(alias_func(prompt, image=image, **kwargs))
+        
+        async def alias_stream_func(prompt: str, image: Optional[Union[str, Path, bytes]] = None, **kwargs) -> AsyncIterator[str]:
+            from .core import stream
+            if image is not None:
+                vision_message = _prepare_vision_message(prompt, image, provider)
+                kwargs['messages'] = [vision_message]
+            async for chunk in stream(prompt, provider=provider, model=model, **kwargs):
+                yield chunk
+    else:
+        async def alias_func(prompt: str, **kwargs) -> str:
+            from .core import ask
+            return await ask(prompt, provider=provider, model=model, **kwargs)
+        
+        def alias_sync_func(prompt: str, **kwargs) -> str:
+            return _run_sync(alias_func(prompt, **kwargs))
+        
+        async def alias_stream_func(prompt: str, **kwargs) -> AsyncIterator[str]:
+            from .core import stream
+            async for chunk in stream(prompt, provider=provider, model=model, **kwargs):
+                yield chunk
     
     return {
         f"ask_{alias_name}": alias_func,
@@ -193,46 +369,81 @@ def _generate_functions():
             logger.error(f"Error loading provider {provider_name}: {e}")
             continue
         
+        # Check if provider supports vision at all
+        provider_supports_vision = Feature.VISION in provider_config.features
+        
         # Base provider functions: ask_openai(), stream_openai(), ask_openai_sync()
-        functions[f"ask_{provider_name}"] = _create_provider_function(provider_name)
-        functions[f"stream_{provider_name}"] = _create_stream_function(provider_name)
-        functions[f"ask_{provider_name}_sync"] = _create_sync_function(provider_name)
+        functions[f"ask_{provider_name}"] = _create_provider_function(provider_name, supports_vision=provider_supports_vision)
+        functions[f"stream_{provider_name}"] = _create_stream_function(provider_name, supports_vision=provider_supports_vision)
+        functions[f"ask_{provider_name}_sync"] = _create_sync_function(provider_name, supports_vision=provider_supports_vision)
         
         # Model-specific functions from YAML models list
         for model in provider_config.models:
             model_suffix = _sanitize_name(model)
             if model_suffix:
-                functions[f"ask_{provider_name}_{model_suffix}"] = _create_provider_function(provider_name, model)
-                functions[f"stream_{provider_name}_{model_suffix}"] = _create_stream_function(provider_name, model)
-                functions[f"ask_{provider_name}_{model_suffix}_sync"] = _create_sync_function(provider_name, model)
+                # Check if this specific model supports vision
+                model_caps = provider_config.get_model_capabilities(model)
+                model_supports_vision = Feature.VISION in model_caps.features
+                
+                functions[f"ask_{provider_name}_{model_suffix}"] = _create_provider_function(provider_name, model, model_supports_vision)
+                functions[f"stream_{provider_name}_{model_suffix}"] = _create_stream_function(provider_name, model, model_supports_vision)
+                functions[f"ask_{provider_name}_{model_suffix}_sync"] = _create_sync_function(provider_name, model, model_supports_vision)
         
         # Alias functions from YAML model_aliases
         for alias, actual_model in provider_config.model_aliases.items():
             alias_suffix = _sanitize_name(alias)
             if alias_suffix:
-                functions[f"ask_{provider_name}_{alias_suffix}"] = _create_provider_function(provider_name, actual_model)
-                functions[f"stream_{provider_name}_{alias_suffix}"] = _create_stream_function(provider_name, actual_model)
-                functions[f"ask_{provider_name}_{alias_suffix}_sync"] = _create_sync_function(provider_name, actual_model)
+                # Check if the actual model supports vision
+                model_caps = provider_config.get_model_capabilities(actual_model)
+                model_supports_vision = Feature.VISION in model_caps.features
+                
+                functions[f"ask_{provider_name}_{alias_suffix}"] = _create_provider_function(provider_name, actual_model, model_supports_vision)
+                functions[f"stream_{provider_name}_{alias_suffix}"] = _create_stream_function(provider_name, actual_model, model_supports_vision)
+                functions[f"ask_{provider_name}_{alias_suffix}_sync"] = _create_sync_function(provider_name, actual_model, model_supports_vision)
     
     # Generate global alias functions from YAML
     global_aliases = config_manager.get_global_aliases()
     for alias_name, provider_model in global_aliases.items():
-        alias_functions = _create_global_alias_function(alias_name, provider_model)
+        # Check if the aliased model supports vision
+        if '/' in provider_model:
+            provider, model = provider_model.split('/', 1)
+            try:
+                provider_config = config_manager.get_provider(provider)
+                model_caps = provider_config.get_model_capabilities(model)
+                alias_supports_vision = Feature.VISION in model_caps.features
+            except:
+                alias_supports_vision = False
+        else:
+            alias_supports_vision = False
+            
+        alias_functions = _create_global_alias_function(alias_name, provider_model, alias_supports_vision)
         functions.update(alias_functions)
     
     # Set function names and docstrings
     for name, func in functions.items():
         func.__name__ = name
         
+        # Check if this is a vision-capable function
+        has_image_param = 'image' in func.__code__.co_varnames
+        
         if name.endswith("_sync"):
             base = name[:-5].replace("_", " ")
-            func.__doc__ = f"Synchronous {base} call."
+            if has_image_param:
+                func.__doc__ = f"Synchronous {base} call with optional image support."
+            else:
+                func.__doc__ = f"Synchronous {base} call."
         elif name.startswith("ask_"):
             base = name[4:].replace("_", " ")
-            func.__doc__ = f"Async {base} call."
+            if has_image_param:
+                func.__doc__ = f"Async {base} call with optional image support."
+            else:
+                func.__doc__ = f"Async {base} call."
         elif name.startswith("stream_"):
             base = name[7:].replace("_", " ")
-            func.__doc__ = f"Stream from {base}."
+            if has_image_param:
+                func.__doc__ = f"Stream from {base} with optional image support."
+            else:
+                func.__doc__ = f"Stream from {base}."
     
     logger.info(f"Generated {len(functions)} provider functions")
     return functions
