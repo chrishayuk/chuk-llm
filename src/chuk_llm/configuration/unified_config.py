@@ -178,25 +178,27 @@ class UnifiedConfigManager:
             logger.debug("No .env file found in standard locations")
     
     def _find_config_file(self) -> Optional[Path]:
-        """Find YAML configuration file"""
+        """Find YAML configuration file in correct priority order"""
         if self.config_path:
             path = Path(self.config_path)
             if path.exists():
                 return path
         
         candidates = [
-            # Environment variable
+            # 1. Environment variable with location of chuk_llm.yaml
             os.getenv("CHUK_LLM_CONFIG"),
-            # Current directory - unified names
+            
+            # 2. Working directory of consuming project
             "chuk_llm.yaml",
+            
+            # 3. ChukLLM hosted file in chuk_llm/chuk_llm.yaml
+            Path(__file__).parent.parent / "chuk_llm.yaml",
+            
+            # Additional fallbacks (keeping existing behavior)
             "providers.yaml", 
             "llm_config.yaml",
-            # Config directory
             "config/chuk_llm.yaml",
-            # Package root
-            Path(__file__).parent.parent / "chuk_llm.yaml",
             Path(__file__).parent.parent / "providers.yaml",
-            # User config
             Path.home() / ".chuk_llm" / "config.yaml",
         ]
         
@@ -204,10 +206,12 @@ class UnifiedConfigManager:
             if candidate:
                 path = Path(candidate).expanduser().resolve()
                 if path.exists():
+                    logger.info(f"Found config file: {path}")
                     return path
         
+        logger.warning("No configuration file found in any standard location")
         return None
-    
+
     def _parse_features(self, features_data: Any) -> Set[Feature]:
         """Parse features from YAML data"""
         if not features_data:

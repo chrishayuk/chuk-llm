@@ -1,6 +1,3 @@
-# Include configuration files
-include chuk_llm.yaml
-
 # Include documentation
 include README.md
 
