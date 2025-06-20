@@ -86,6 +86,110 @@ async def main():
 asyncio.run(main())
 ```
 
+### 🎭 Enhanced Conversations - NEW!
+
+ChukLLM now supports advanced conversation features for building sophisticated dialogue systems:
+
+#### 1. Conversation Branching
+Explore different conversation paths without affecting the main thread:
+
+```python
+async with conversation() as chat:
+    await chat.say("Let's plan a vacation")
+    
+    # Branch to explore Japan
+    async with chat.branch() as japan_branch:
+        await japan_branch.say("Tell me about visiting Japan")
+        await japan_branch.say("What about costs?")
+        # This conversation stays isolated
+    
+    # Branch to explore Italy
+    async with chat.branch() as italy_branch:
+        await italy_branch.say("Tell me about visiting Italy")
+        await italy_branch.say("Best time to visit?")
+    
+    # Main conversation doesn't know about branches
+    await chat.say("I've decided on Japan!")  # AI won't know why!
+```
+
+#### 2. Conversation Persistence
+Save and resume conversations across sessions:
+
+```python
+# Start a conversation
+async with conversation() as chat:
+    await chat.say("I'm learning Python")
+    await chat.say("I know JavaScript already")
+    
+    # Save for later
+    conversation_id = await chat.save()
+    print(f"Saved as: {conversation_id}")
+
+# Resume days later
+async with conversation(resume_from=conversation_id) as chat:
+    response = await chat.say("What should I learn next?")
+    # AI remembers your background!
+```
+
+#### 3. Multi-Modal Conversations
+Send images along with text (requires vision-capable models):
+
+```python
+async with conversation(model="gpt-4o") as chat:
+    # Send an image
+    await chat.say("What's in this diagram?", image="architecture.png")
+    
+    # Continue with context
+    await chat.say("Can you explain the database layer?")
+    # AI remembers the image context!
+```
+
+#### 4. Conversation Utilities
+Built-in tools for analysis and summarization:
+
+```python
+async with conversation() as chat:
+    # Have a detailed discussion
+    await chat.say("Let's discuss machine learning")
+    await chat.say("Explain neural networks")
+    await chat.say("What about transformers?")
+    await chat.say("How do they relate to LLMs?")
+    
+    # Get a summary
+    summary = await chat.summarize(max_length=200)
+    print(f"Summary: {summary}")
+    
+    # Extract key points
+    points = await chat.extract_key_points()
+    for point in points:
+        print(f"• {point}")
+    
+    # Get statistics
+    stats = await chat.get_session_stats()
+    print(f"Cost so far: ${stats['estimated_cost']:.6f}")
+```
+
+#### 5. Stateless Context
+Add context to one-off questions without maintaining conversation state:
+
+```python
+# Quick context for a single question
+response = await ask(
+    "What's the capital?",
+    context="We're discussing France and its major cities"
+)
+
+# Provide conversation history for context
+response = await ask(
+    "What should I do next?",
+    previous_messages=[
+        {"role": "user", "content": "I'm making a cake"},
+        {"role": "assistant", "content": "Great! First, preheat your oven to 350°F..."},
+        {"role": "user", "content": "Done, and I've mixed the dry ingredients"}
+    ]
+)
+```
+
 ### 103 Auto-Generated Functions
 
 ChukLLM automatically creates functions for every provider and model:
@@ -342,6 +446,7 @@ asyncio.run(performance_demo())
 ✅ **3-7x Performance Boost** - Concurrent requests vs sequential  
 ✅ **Real-time Streaming** - Token-by-token output as it's generated  
 ✅ **Memory Management** - Stateful conversations with context  
+✅ **Enhanced Conversations** - Branching, persistence, multi-modal support  
 ✅ **Automatic Session Tracking** - Zero-config usage analytics & cost monitoring  
 ✅ **Production Ready** - Error handling, retries, connection pooling  
 ✅ **Developer Friendly** - Simple sync for scripts, powerful async for apps  
@@ -377,6 +482,13 @@ asyncio.run(performance_demo())
 - **Capability Detection** - Automatic feature detection per provider
 - **Infinite Context** - Automatic conversation segmentation for long chats
 - **Conversation History** - Full audit trail of all interactions
+
+### Enhanced Conversation Features (NEW!)
+- **🌿 Conversation Branching** - Explore multiple paths without affecting main thread
+- **💾 Conversation Persistence** - Save and resume conversations across sessions
+- **🖼️ Multi-Modal Support** - Send images with text in conversations
+- **📊 Built-in Utilities** - Summarize, extract key points, get statistics
+- **🎯 Stateless Context** - Add context to one-off questions without state
 
 ## 📦 Installation
 
@@ -600,6 +712,53 @@ asyncio.run(low_level_example())
 ```
 
 ## 🛠️ Advanced Usage
+
+### Enhanced Conversation Examples
+
+```python
+import asyncio
+from chuk_llm import conversation
+
+async def advanced_conversation_demo():
+    # 1. Branching conversations
+    async with conversation() as chat:
+        await chat.say("Let's discuss AI")
+        
+        # Explore a tangent
+        async with chat.branch() as tangent:
+            await tangent.say("What about AI ethics?")
+            ethics_response = await tangent.say("Tell me more")
+        
+        # Main thread continues unaware
+        await chat.say("What are the main applications?")
+    
+    # 2. Persistent conversations
+    conversation_id = None
+    async with conversation() as chat:
+        await chat.say("I'm building a web app")
+        await chat.say("Using Python and React")
+        conversation_id = await chat.save()
+    
+    # Resume later
+    async with conversation(resume_from=conversation_id) as chat:
+        response = await chat.say("What database should I use?")
+        # AI remembers your tech stack!
+    
+    # 3. Multi-modal with utilities
+    async with conversation(model="gpt-4o") as chat:
+        await chat.say("Analyze this UI", image="screenshot.png")
+        await chat.say("How can I improve the layout?")
+        
+        # Get insights
+        summary = await chat.summarize()
+        key_points = await chat.extract_key_points()
+        
+        print(f"Summary: {summary}")
+        for point in key_points:
+            print(f"• {point}")
+
+asyncio.run(advanced_conversation_demo())
+```
 
 ### Session Analytics & Monitoring
 
@@ -910,6 +1069,7 @@ Perplexity offers specialized models optimized for real-time web search and reas
 - **`ConnectionPool`** - HTTP connection optimization
 - **`SystemPromptGenerator`** - Dynamic prompt generation
 - **`SessionManager`** - Automatic conversation tracking (via chuk-ai-session-manager)
+- **`ConversationContext`** - Advanced conversation state management
 
 ### Provider Implementations
 
@@ -1022,6 +1182,7 @@ newprovider:
 - [Configuration Guide](docs/configuration.md)
 - [Benchmarking Guide](docs/benchmarking.md)
 - [Session Tracking Guide](docs/sessions.md)
+- [Enhanced Conversations Guide](docs/conversations.md)
 
 ## 📄 License
 
@@ -1039,4 +1200,4 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ---
 
-**chuk_llm** - Unified LLM interface for production applications with automatic session tracking
+**chuk_llm** - Unified LLM interface for production applications with automatic session tracking and enhanced conversations

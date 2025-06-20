@@ -13,7 +13,7 @@ Requirements:
 
 Usage:
     python mistral_example.py
-    python mistral_example.py --model mistral-small-latest
+    python mistral_example.py --model mistral-medium-2505
     python mistral_example.py --skip-vision
 """
 
@@ -22,9 +22,10 @@ import argparse
 import os
 import sys
 import time
+import base64
 from typing import Dict, Any, List
 
-# dotenv
+# dotenv
 from dotenv import load_dotenv
 
 # load environment variables
@@ -37,18 +38,38 @@ if not os.getenv("MISTRAL_API_KEY"):
     sys.exit(1)
 
 try:
-    from chuk_llm.llm.client import get_client
-    from chuk_llm.configuration.capabilities import CapabilityChecker
+    from chuk_llm.llm.client import get_client, get_provider_info
+    from chuk_llm.configuration import get_config, Feature
 except ImportError as e:
     print(f"❌ Import error: {e}")
     print("   Please make sure you're running from the chuk-llm directory")
     sys.exit(1)
 
+def create_test_image(color: str = "red", size: int = 15) -> str:
+    """Create a test image as base64 - tries PIL first, fallback to hardcoded"""
+    try:
+        from PIL import Image
+        import io
+        
+        # Create a colored square
+        img = Image.new('RGB', (size, size), color)
+        
+        # Convert to base64
+        buffer = io.BytesIO()
+        img.save(buffer, format='PNG')
+        img_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
+        
+        return img_data
+    except ImportError:
+        print("⚠️  PIL not available, using fallback image")
+        # Fallback: 15x15 red square (valid PNG)
+        return "iVBORw0KGgoAAAANSUhEUgAAAA8AAAAPCAYAAAA71pVKAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAdgAAAHYBTnsmCAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAABYSURBVCiRY2RgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBgZGBgYGAAAgAANgAOAUUe1wAAAABJRU5ErkJggg=="
+
 # =============================================================================
 # Example 1: Basic Text Completion
 # =============================================================================
 
-async def basic_text_example(model: str = "mistral-large-latest"):
+async def basic_text_example(model: str = "mistral-medium-2505"):
     """Basic text completion example"""
     print(f"\n🤖 Basic Text Completion with {model}")
     print("=" * 60)
@@ -73,10 +94,16 @@ async def basic_text_example(model: str = "mistral-large-latest"):
 # Example 2: Streaming Response
 # =============================================================================
 
-async def streaming_example(model: str = "mistral-large-latest"):
+async def streaming_example(model: str = "mistral-medium-2505"):
     """Real-time streaming example"""
     print(f"\n⚡ Streaming Example with {model}")
     print("=" * 60)
+    
+    # Check streaming support
+    config = get_config()
+    if not config.supports_feature("mistral", Feature.STREAMING, model):
+        print(f"⚠️  Model {model} doesn't support streaming")
+        return None
     
     client = get_client("mistral", model=model)
     
@@ -105,18 +132,16 @@ async def streaming_example(model: str = "mistral-large-latest"):
 # Example 3: Function Calling
 # =============================================================================
 
-async def function_calling_example(model: str = "mistral-large-latest"):
+async def function_calling_example(model: str = "mistral-medium-2505"):
     """Function calling with tools"""
     print(f"\n🔧 Function Calling with {model}")
     print("=" * 60)
     
-    # Check if model supports tools first
-    can_handle, issues = CapabilityChecker.can_handle_request(
-        "mistral", model, has_tools=True
-    )
-    
-    if not can_handle:
-        print(f"⚠️  Skipping function calling: {', '.join(issues)}")
+    # Check if model supports tools
+    config = get_config()
+    if not config.supports_feature("mistral", Feature.TOOLS, model):
+        print(f"⚠️  Skipping function calling: Model {model} doesn't support tools")
+        print(f"💡 Try a tools-capable model like: mistral-medium-2505, mistral-large-2411, pixtral-large-2411")
         return None
     
     client = get_client("mistral", model=model)
@@ -223,24 +248,23 @@ async def function_calling_example(model: str = "mistral-large-latest"):
 # Example 4: Vision Capabilities
 # =============================================================================
 
-async def vision_example(model: str = "pixtral-12b-latest"):
+async def vision_example(model: str = "mistral-medium-2505"):
     """Vision capabilities with multimodal models"""
     print(f"\n👁️  Vision Example with {model}")
     print("=" * 60)
     
     # Check if model supports vision
-    can_handle, issues = CapabilityChecker.can_handle_request(
-        "mistral", model, has_vision=True
-    )
-    
-    if not can_handle:
-        print(f"⚠️  Skipping vision: {', '.join(issues)}")
+    config = get_config()
+    if not config.supports_feature("mistral", Feature.VISION, model):
+        print(f"⚠️  Skipping vision: Model {model} doesn't support vision")
+        print(f"💡 Try a vision-capable model like: mistral-medium-2505, pixtral-large-2411, pixtral-12b-2409")
         return None
     
     client = get_client("mistral", model=model)
     
-    # Simple test image (1x1 red pixel)
-    test_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+    # Create a proper test image
+    print("🖼️  Creating test image...")
+    test_image = create_test_image("blue", 20)
     
     messages = [
         {
@@ -248,18 +272,20 @@ async def vision_example(model: str = "pixtral-12b-latest"):
             "content": [
                 {
                     "type": "text",
-                    "text": "What do you see in this image? Describe it briefly."
+                    "text": "What color is this square? Answer with just the color name."
                 },
                 {
                     "type": "image_url",
-                    "image_url": f"data:image/png;base64,{test_image}"
+                    "image_url": {
+                        "url": f"data:image/png;base64,{test_image}"
+                    }
                 }
             ]
         }
     ]
     
     print("👀 Analyzing image...")
-    response = await client.create_completion(messages)
+    response = await client.create_completion(messages, max_tokens=50)
     
     print(f"✅ Vision response:")
     print(f"   {response['response']}")
@@ -267,7 +293,41 @@ async def vision_example(model: str = "pixtral-12b-latest"):
     return response
 
 # =============================================================================
-# Example 5: Model Comparison
+# Example 5: Reasoning Models Test
+# =============================================================================
+
+async def reasoning_example(model: str = "magistral-medium-2506"):
+    """Test reasoning capabilities with Magistral models"""
+    print(f"\n🧠 Reasoning Example with {model}")
+    print("=" * 60)
+    
+    # Check if model supports reasoning
+    config = get_config()
+    if not config.supports_feature("mistral", Feature.REASONING, model):
+        print(f"⚠️  Model {model} doesn't have enhanced reasoning")
+        return None
+    
+    client = get_client("mistral", model=model)
+    
+    messages = [
+        {
+            "role": "user", 
+            "content": "I have a 3-gallon jug and a 5-gallon jug. How can I measure exactly 4 gallons of water? Think step by step."
+        }
+    ]
+    
+    print("🧠 Processing reasoning task...")
+    start_time = time.time()
+    response = await client.create_completion(messages, max_tokens=500)
+    duration = time.time() - start_time
+    
+    print(f"✅ Reasoning response ({duration:.2f}s):")
+    print(f"   {response['response']}")
+    
+    return response
+
+# =============================================================================
+# Example 6: Model Comparison
 # =============================================================================
 
 async def model_comparison_example():
@@ -275,10 +335,13 @@ async def model_comparison_example():
     print(f"\n📊 Model Comparison")
     print("=" * 60)
     
+    # Updated model list based on config
     models = [
-        "mistral-large-latest",
-        "mistral-small-latest", 
-        "ministral-8b-latest"
+        "mistral-medium-2505",      # Flagship multimodal model
+        "mistral-large-2411",       # Top-tier reasoning
+        "magistral-medium-2506",    # Reasoning specialist
+        "codestral-2501",           # Latest coding model
+        "ministral-8b-2410"         # Edge model
     ]
     
     prompt = "What is machine learning? (One sentence)"
@@ -312,7 +375,8 @@ async def model_comparison_example():
     print("\n📈 Results:")
     for model, result in results.items():
         status = "✅" if result["success"] else "❌"
-        print(f"   {status} {model}:")
+        model_short = model.replace("mistral-", "").replace("-2505", "").replace("-2411", "").replace("-2506", "").replace("-2501", "").replace("-2410", "")
+        print(f"   {status} {model_short}:")
         print(f"      Time: {result['time']:.2f}s")
         print(f"      Length: {result['length']} chars")
         print(f"      Response: {result['response'][:80]}...")
@@ -321,48 +385,59 @@ async def model_comparison_example():
     return results
 
 # =============================================================================
-# Example 6: Multiple Models Test
+# Example 7: Feature Detection
 # =============================================================================
 
-async def multiple_models_example():
-    """Test multiple Mistral models"""
-    print(f"\n🔄 Multiple Models Test")
+async def feature_detection_example(model: str = "mistral-medium-2505"):
+    """Detect and display model features"""
+    print(f"\n🔬 Feature Detection for {model}")
     print("=" * 60)
     
-    models_to_test = [
-        "mistral-large-latest",
-        "mistral-small-latest",
-        "codestral-latest",
-        "ministral-8b-latest"
-    ]
+    # Get model info
+    try:
+        model_info = get_provider_info("mistral", model)
+        
+        print("📋 Model Information:")
+        print(f"   Provider: {model_info['provider']}")
+        print(f"   Model: {model_info['model']}")
+        print(f"   Max Context: {model_info['max_context_length']:,} tokens")
+        print(f"   Max Output: {model_info['max_output_tokens']:,} tokens")
+        
+        print("\n🎯 Supported Features:")
+        for feature, supported in model_info['supports'].items():
+            status = "✅" if supported else "❌"
+            print(f"   {status} {feature}")
+        
+        print("\n📊 Rate Limits:")
+        for tier, limit in model_info['rate_limits'].items():
+            print(f"   {tier}: {limit} requests/min")
+        
+    except Exception as e:
+        print(f"⚠️  Could not get model info: {e}")
     
-    prompt = "Write a one-line summary of machine learning."
+    # Test actual client info
+    try:
+        client = get_client("mistral", model=model)
+        client_info = client.get_model_info()
+        
+        print(f"\n🔧 Client Features:")
+        print(f"   Function Calling: {'✅' if client_info.get('supports_function_calling') else '❌'}")
+        print(f"   Vision: {'✅' if client_info.get('supports_vision') else '❌'}")
+        print(f"   Streaming: {'✅' if client_info.get('supports_streaming') else '❌'}")
+        print(f"   System Messages: {'✅' if client_info.get('supports_system_messages') else '❌'}")
+        
+    except Exception as e:
+        print(f"⚠️  Could not get client info: {e}")
     
-    for model in models_to_test:
-        try:
-            print(f"🔄 Testing {model}...")
-            client = get_client("mistral", model=model)
-            messages = [{"role": "user", "content": prompt}]
-            
-            start_time = time.time()
-            response = await client.create_completion(messages)
-            duration = time.time() - start_time
-            
-            print(f"✅ {model} ({duration:.2f}s):")
-            print(f"   {response['response'][:100]}...")
-            
-        except Exception as e:
-            print(f"❌ {model}: {str(e)}")
-    
-    return True
+    return model_info if 'model_info' in locals() else None
 
 # =============================================================================
-# Example 7: Simple Chat Interface
+# Example 8: Simple Chat Interface
 # =============================================================================
 
-async def simple_chat_example(model: str = "mistral-large-latest"):
+async def simple_chat_example(model: str = "mistral-medium-2505"):
     """Simple chat interface simulation"""
-    print(f"\n💬 Simple Chat Interface")
+    print(f"\n💬 Simple Chat Interface with {model}")
     print("=" * 60)
     
     client = get_client("mistral", model=model)
@@ -374,7 +449,9 @@ async def simple_chat_example(model: str = "mistral-large-latest"):
         "Can you write a simple Python function?"
     ]
     
-    messages = []
+    messages = [
+        {"role": "system", "content": "You are a helpful and friendly AI assistant."}
+    ]
     
     for user_input in conversation:
         print(f"👤 User: {user_input}")
@@ -383,7 +460,7 @@ async def simple_chat_example(model: str = "mistral-large-latest"):
         messages.append({"role": "user", "content": user_input})
         
         # Get response
-        response = await client.create_completion(messages)
+        response = await client.create_completion(messages, max_tokens=150)
         assistant_response = response.get("response", "No response")
         
         print(f"🤖 Assistant: {assistant_response}")
@@ -395,31 +472,100 @@ async def simple_chat_example(model: str = "mistral-large-latest"):
     return messages
 
 # =============================================================================
-# Example 8: Model Information
+# Example 9: Comprehensive Feature Test
 # =============================================================================
 
-async def model_info_example(model: str = "mistral-large-latest"):
-    """Get detailed model information"""
-    print(f"\n📋 Model Information for {model}")
+async def comprehensive_test(model: str = "mistral-medium-2505"):
+    """Test multiple features in one comprehensive example"""
+    print(f"\n🚀 Comprehensive Feature Test with {model}")
     print("=" * 60)
+    
+    # Check what features this model supports
+    config = get_config()
+    supports_tools = config.supports_feature("mistral", Feature.TOOLS, model)
+    supports_vision = config.supports_feature("mistral", Feature.VISION, model)
+    
+    print(f"Model capabilities: Tools={supports_tools}, Vision={supports_vision}")
+    
+    if not supports_tools and not supports_vision:
+        print("⚠️  Model doesn't support tools or vision - using text-only test")
+        return await simple_chat_example(model)
     
     client = get_client("mistral", model=model)
     
-    # Get model info from client
-    if hasattr(client, 'get_model_info'):
-        info = client.get_model_info()
-        print("🔍 Model details:")
-        for key, value in info.items():
-            print(f"   {key}: {value}")
+    # Define tools if supported
+    tools = None
+    if supports_tools:
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "analyze_content",
+                    "description": "Analyze and categorize content",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "content_type": {"type": "string"},
+                            "main_topics": {"type": "array", "items": {"type": "string"}},
+                            "complexity": {"type": "string", "enum": ["simple", "medium", "complex"]}
+                        },
+                        "required": ["content_type", "main_topics"]
+                    }
+                }
+            }
+        ]
     
-    # Get capability info
-    model_info = CapabilityChecker.get_model_info("mistral", model)
-    print(f"\n🎯 Capabilities:")
-    for key, value in model_info.items():
-        if key != "error":
-            print(f"   {key}: {value}")
+    # Create content based on capabilities
+    if supports_vision:
+        print("🖼️  Creating test image...")
+        test_image = create_test_image("green", 25)
+        
+        messages = [
+            {
+                "role": "system",
+                "content": "You are an expert content analyst. Use the provided function when analyzing content."
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Please analyze this image and the following text using the analyze_content function: 'This is a test of multimodal AI capabilities.'"
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{test_image}"
+                        }
+                    }
+                ]
+            }
+        ]
+    else:
+        messages = [
+            {
+                "role": "system",
+                "content": "You are an expert content analyst. Use the provided function when analyzing content."
+            },
+            {
+                "role": "user",
+                "content": "Please analyze this text using the analyze_content function: 'Artificial intelligence is transforming how we interact with technology through natural language processing and machine learning algorithms.'"
+            }
+        ]
     
-    return model_info
+    print("🔄 Testing comprehensive capabilities...")
+    
+    response = await client.create_completion(messages, tools=tools)
+    
+    if response.get("tool_calls"):
+        print(f"✅ Tool calls generated: {len(response['tool_calls'])}")
+        for tc in response["tool_calls"]:
+            print(f"   🔧 {tc['function']['name']}: {tc['function']['arguments'][:100]}...")
+    else:
+        print(f"ℹ️  Direct response: {response['response'][:150]}...")
+    
+    print("✅ Comprehensive test completed!")
+    return response
 
 # =============================================================================
 # Main Function
@@ -428,9 +574,10 @@ async def model_info_example(model: str = "mistral-large-latest"):
 async def main():
     """Run all examples"""
     parser = argparse.ArgumentParser(description="Mistral Provider Example Script")
-    parser.add_argument("--model", default="mistral-large-latest", help="Model to use")
+    parser.add_argument("--model", default="mistral-medium-2505", help="Model to use (default: mistral-medium-2505)")
     parser.add_argument("--skip-vision", action="store_true", help="Skip vision examples")
     parser.add_argument("--skip-functions", action="store_true", help="Skip function calling")
+    parser.add_argument("--test-reasoning", action="store_true", help="Test reasoning models")
     parser.add_argument("--quick", action="store_true", help="Run only basic examples")
     
     args = parser.parse_args()
@@ -440,10 +587,25 @@ async def main():
     print(f"Using model: {args.model}")
     print(f"API Key: {'✅ Set' if os.getenv('MISTRAL_API_KEY') else '❌ Missing'}")
     
+    # Show model capabilities
+    try:
+        config = get_config()
+        supports_tools = config.supports_feature("mistral", Feature.TOOLS, args.model)
+        supports_vision = config.supports_feature("mistral", Feature.VISION, args.model)
+        supports_reasoning = config.supports_feature("mistral", Feature.REASONING, args.model)
+        
+        print(f"Model capabilities:")
+        print(f"  Tools: {'✅' if supports_tools else '❌'}")
+        print(f"  Vision: {'✅' if supports_vision else '❌'}")
+        print(f"  Reasoning: {'✅' if supports_reasoning else '❌'}")
+        
+    except Exception as e:
+        print(f"⚠️  Could not check capabilities: {e}")
+    
     examples = [
+        ("Feature Detection", lambda: feature_detection_example(args.model)),
         ("Basic Text", lambda: basic_text_example(args.model)),
         ("Streaming", lambda: streaming_example(args.model)),
-        ("Model Info", lambda: model_info_example(args.model)),
     ]
     
     if not args.quick:
@@ -451,12 +613,15 @@ async def main():
             examples.append(("Function Calling", lambda: function_calling_example(args.model)))
         
         if not args.skip_vision:
-            examples.append(("Vision", lambda: vision_example("pixtral-12b-latest")))
+            examples.append(("Vision", lambda: vision_example(args.model)))
+        
+        if args.test_reasoning:
+            examples.append(("Reasoning", lambda: reasoning_example("magistral-medium-2506")))
         
         examples.extend([
             ("Model Comparison", model_comparison_example),
-            ("Multiple Models", multiple_models_example),
             ("Simple Chat", lambda: simple_chat_example(args.model)),
+            ("Comprehensive Test", lambda: comprehensive_test(args.model)),
         ])
     
     # Run examples
@@ -493,8 +658,16 @@ async def main():
     if successful == total:
         print(f"\n🎉 All examples completed successfully!")
         print(f"🔗 Mistral provider is working perfectly with chuk-llm!")
+        print(f"✨ Features tested: {args.model} capabilities")
     else:
         print(f"\n⚠️  Some examples failed. Check your API key and model access.")
+        
+        # Show model recommendations
+        print(f"\n💡 Model Recommendations:")
+        print(f"   • For tools + vision: mistral-medium-2505, pixtral-large-2411")
+        print(f"   • For reasoning: magistral-medium-2506, magistral-small-2506")
+        print(f"   • For coding: codestral-2501, devstral-small-2505")
+        print(f"   • For general use: mistral-large-2411")
 
 if __name__ == "__main__":
     try:

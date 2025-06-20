@@ -66,6 +66,8 @@ async def ask(
     max_tokens: int = None,
     tools: List[Dict[str, Any]] = None,
     json_mode: bool = False,
+    context: str = None,
+    previous_messages: List[Dict[str, str]] = None,
     **kwargs
 ) -> str:
     """
@@ -80,6 +82,8 @@ async def ask(
         max_tokens: Max tokens override
         tools: Function tools for the LLM
         json_mode: Enable JSON mode response
+        context: Additional context for the question (stateless)
+        previous_messages: Previous messages for context (stateless)
         **kwargs: Additional arguments
         
     Returns:
@@ -180,8 +184,15 @@ async def ask(
         system_prompt=effective_config.get("system_prompt"),
         tools=tools,
         provider=effective_provider,
-        model=effective_model
+        model=effective_model,
+        context=context,
+        previous_messages=previous_messages
     )
+    
+    # Remove context and previous_messages from kwargs if present
+    completion_kwargs = kwargs.copy()
+    completion_kwargs.pop('context', None)
+    completion_kwargs.pop('previous_messages', None)
     
     # Prepare completion arguments
     completion_args = {"messages": messages}
@@ -222,7 +233,7 @@ async def ask(
         completion_args["max_tokens"] = effective_config["max_tokens"]
     
     # Add any additional kwargs
-    completion_args.update(kwargs)
+    completion_args.update(completion_kwargs)
     
     # Make the request
     try:
@@ -263,12 +274,14 @@ async def ask(
         raise
 
 
-async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
+async def stream(prompt: str, context: str = None, previous_messages: List[Dict[str, str]] = None, **kwargs) -> AsyncIterator[str]:
     """
     Stream a response token by token with unified configuration and automatic session tracking.
     
     Args:
         prompt: The question/prompt to send
+        context: Additional context for the question (stateless)
+        previous_messages: Previous messages for context (stateless)
         **kwargs: Same arguments as ask() plus streaming-specific options
         
     Yields:
@@ -381,8 +394,15 @@ async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
         system_prompt=effective_config.get("system_prompt"),
         tools=kwargs.get("tools"),
         provider=effective_provider,
-        model=effective_model
+        model=effective_model,
+        context=context,
+        previous_messages=previous_messages
     )
+    
+    # Remove context and previous_messages from kwargs if present
+    completion_kwargs = kwargs.copy()
+    completion_kwargs.pop('context', None)
+    completion_kwargs.pop('previous_messages', None)
     
     # Prepare streaming arguments
     completion_args = {
@@ -400,7 +420,7 @@ async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
             completion_args["tools"] = tools
     
     # Add non-config kwargs
-    non_config_kwargs = {k: v for k, v in kwargs.items() 
+    non_config_kwargs = {k: v for k, v in completion_kwargs.items() 
                         if k not in ['provider', 'model', 'system_prompt', 'temperature', 'max_tokens']}
     completion_args.update(non_config_kwargs)
     
@@ -490,7 +510,9 @@ def _build_messages(
     system_prompt: Optional[str], 
     tools: Optional[List[Dict[str, Any]]], 
     provider: str,
-    model: Optional[str]
+    model: Optional[str],
+    context: Optional[str] = None,
+    previous_messages: Optional[List[Dict[str, str]]] = None
 ) -> List[Dict[str, Any]]:
     """Build messages array with intelligent system prompt handling"""
     messages = []
@@ -510,6 +532,10 @@ def _build_messages(
         # Default system prompt
         system_content = "You are a helpful AI assistant. Provide clear, accurate, and concise responses."
     
+    # Add context to system prompt if provided
+    if context:
+        system_content += f"\n\nContext: {context}"
+    
     # Add system message if provider supports it
     try:
         config_manager = get_config()
@@ -521,6 +547,10 @@ def _build_messages(
     except Exception:
         # Unknown provider, assume it supports system messages
         messages.append({"role": "system", "content": system_content})
+    
+    # Add previous messages if provided (for stateless context)
+    if previous_messages:
+        messages.extend(previous_messages)
     
     messages.append({"role": "user", "content": prompt})
     return messages

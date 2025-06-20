@@ -216,25 +216,25 @@ anthropic:
   model_capabilities:
     # Claude 4 models - text + advanced capabilities
     - pattern: "claude-(opus|sonnet)-4-.*"
-      features: [text, streaming, tools, vision, parallel_calls, reasoning]
+      features: [text, streaming, tools, vision, parallel_calls, reasoning, json_mode]
       max_context_length: 200000
       max_output_tokens: 8192
     
     # Claude 3.7 models - text + advanced capabilities
     - pattern: "claude-3-7-.*"
-      features: [text, streaming, tools, vision, parallel_calls, reasoning]
+      features: [text, streaming, tools, vision, parallel_calls, reasoning, json_mode]
       max_context_length: 200000
       max_output_tokens: 8192
     
     # Claude 3.5 models - text + capabilities
     - pattern: "claude-3-5-.*"
-      features: [text, streaming, tools, vision, parallel_calls]
+      features: [text, streaming, vision, tools, parallel_calls, json_mode]
       max_context_length: 200000
       max_output_tokens: 4096
     
     # Other Claude 3 models - text + basic capabilities
     - pattern: "claude-3-.*"
-      features: [text, streaming, tools, vision]
+      features: [text, streaming, vision, tools, parallel_calls, json_mode]
       max_context_length: 200000
       max_output_tokens: 4096
 
@@ -320,7 +320,7 @@ mistral:
   default_model: "mistral-medium-2505"  # CHANGED: Use tools-capable model as default
   
   # All Mistral models support text
-  features: [text, streaming, tools, vision, system_messages, parallel_calls, reasoning]
+  features: [text, streaming, tools, vision, system_messages, parallel_calls]
   max_context_length: 128000
   max_output_tokens: 8192
   rate_limits:
@@ -395,19 +395,19 @@ mistral:
     
     # Mistral Large 2411 - text + tools capabilities
     - pattern: "mistral-large-2411"
-      features: [text, streaming, tools, parallel_calls, reasoning]
+      features: [text, streaming, tools, parallel_calls, json_mode]
       max_context_length: 131072  # 128k
       max_output_tokens: 8192
     
     # Mistral Medium 2505 - text + multimodal + tools capabilities (FLAGSHIP)
     - pattern: "mistral-medium-2505"
-      features: [text, streaming, tools, vision, multimodal, parallel_calls, reasoning]
+      features: [text, streaming, tools, vision, multimodal, parallel_calls, json_mode]
       max_context_length: 131072  # 128k
       max_output_tokens: 8192
     
     # Mistral Small 2503 - text + vision + tools capabilities
     - pattern: "mistral-small-2503"
-      features: [text, streaming, tools, vision, multimodal, reasoning]
+      features: [text, streaming, tools, vision, multimodal, json_mode]
       max_context_length: 131072  # 128k
       max_output_tokens: 4096
     
@@ -419,25 +419,25 @@ mistral:
     
     # Codestral models - text + coding + tools capabilities
     - pattern: "codestral-.*"
-      features: [text, streaming, tools, reasoning]
+      features: [text, streaming, tools]
       max_context_length: 262144  # 256k for code
       max_output_tokens: 8192
     
     # Devstral - text + coding + tools capabilities
     - pattern: "devstral-.*"
-      features: [text, streaming, tools, reasoning]
+      features: [text, streaming, tools]
       max_context_length: 131072  # 128k
       max_output_tokens: 8192
     
     # Ministral - text + edge + tools capabilities
     - pattern: "ministral-.*"
-      features: [text, streaming, tools, reasoning]
+      features: [text, streaming, tools]
       max_context_length: 131072  # 128k
       max_output_tokens: 4096
     
     # Saba - text + multilingual + tools capabilities
     - pattern: "mistral-saba-.*"
-      features: [text, streaming, tools, reasoning]
+      features: [text, streaming, tools]
       max_context_length: 32768
       max_output_tokens: 4096
 
@@ -448,7 +448,7 @@ ollama:
   default_model: "granite3.3"
   
   # All Ollama models support text
-  features: [text, streaming, system_messages, reasoning]
+  features: [text, streaming, system_messages]
   max_context_length: 8192
   max_output_tokens: 4096
   rate_limits: {}

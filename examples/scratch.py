@@ -1,16 +1,8 @@
 #!/usr/bin/env python3
-# examples/simple_conversation.py
-"""
-Simple multi-turn conversation example with full dialogue
-"""
-
 import asyncio
 from chuk_llm import conversation
 
 async def main():
-    print("Multi-turn Conversation Demo")
-    print("=" * 40)
-    
     async with conversation(provider="openai") as chat:
         # First exchange
         print("\nUser: My name is Alice and I'm learning Python")

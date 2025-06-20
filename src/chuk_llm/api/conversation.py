@@ -3,11 +3,17 @@
 Conversation management with memory, context, and automatic session tracking
 ===========================================================================
 
-Conversations automatically track sessions when available.
+Enhanced with branching, persistence, multi-modal support, and utilities.
 """
 
-from typing import List, Dict, Any, Optional, AsyncIterator
+from typing import List, Dict, Any, Optional, AsyncIterator, Union
 from contextlib import asynccontextmanager
+from pathlib import Path
+import json
+import uuid
+from datetime import datetime
+import asyncio
+
 from chuk_llm.llm.system_prompt_generator import SystemPromptGenerator
 from chuk_llm.configuration.unified_config import get_config
 from chuk_llm.llm.client import get_client
@@ -28,9 +34,12 @@ logger = logging.getLogger(__name__)
 # Check if sessions should be disabled
 _SESSIONS_ENABLED = _SESSION_AVAILABLE and os.getenv("CHUK_LLM_DISABLE_SESSIONS", "").lower() not in ("true", "1", "yes")
 
+# Storage for saved conversations
+_CONVERSATION_STORE = {}
+
 
 class ConversationContext:
-    """Manages conversation state and history with automatic session tracking."""
+    """Enhanced conversation state manager with advanced features."""
     
     def __init__(
         self, 
@@ -46,6 +55,10 @@ class ConversationContext:
         self.model = model
         self.kwargs = kwargs
         self.messages = []
+        self._conversation_id = str(uuid.uuid4())
+        self._created_at = datetime.utcnow()
+        self._branches = []
+        self._parent = None
         
         # Initialize session tracking automatically if available
         if _SESSIONS_ENABLED:
@@ -94,7 +107,12 @@ class ConversationContext:
         """Check if session tracking is active."""
         return self.session_manager is not None
     
-    async def say(self, prompt: str, **kwargs) -> str:
+    @property
+    def conversation_id(self) -> str:
+        """Get unique conversation ID."""
+        return self._conversation_id
+    
+    async def say(self, prompt: str, image: Optional[Union[str, Path, bytes]] = None, **kwargs) -> str:
         """Send a message in the conversation and get a response."""
         # Track user message automatically
         if self.session_manager:
@@ -103,8 +121,15 @@ class ConversationContext:
             except Exception as e:
                 logger.debug(f"Session tracking error: {e}")
         
-        # Add user message to history
-        self.messages.append({"role": "user", "content": prompt})
+        # Handle multi-modal input
+        if image is not None:
+            # Import the vision message preparation function
+            from .providers import _prepare_vision_message
+            message = _prepare_vision_message(prompt, image, self.provider)
+            self.messages.append(message)
+        else:
+            # Add user message to history
+            self.messages.append({"role": "user", "content": prompt})
         
         # Prepare completion arguments
         completion_args = {"messages": self.messages.copy()}
@@ -157,7 +182,7 @@ class ConversationContext:
             
             return error_msg
     
-    async def stream_say(self, prompt: str, **kwargs) -> AsyncIterator[str]:
+    async def stream_say(self, prompt: str, image: Optional[Union[str, Path, bytes]] = None, **kwargs) -> AsyncIterator[str]:
         """Send a message and stream the response."""
         # Track user message automatically
         if self.session_manager:
@@ -166,8 +191,13 @@ class ConversationContext:
             except Exception as e:
                 logger.debug(f"Session tracking error: {e}")
         
-        # Add user message to history
-        self.messages.append({"role": "user", "content": prompt})
+        # Handle multi-modal input
+        if image is not None:
+            from .providers import _prepare_vision_message
+            message = _prepare_vision_message(prompt, image, self.provider)
+            self.messages.append(message)
+        else:
+            self.messages.append({"role": "user", "content": prompt})
         
         # Prepare streaming arguments
         completion_args = {
@@ -225,6 +255,115 @@ class ConversationContext:
                 except Exception as e:
                     logger.debug(f"Session tracking error: {e}")
     
+    @asynccontextmanager
+    async def branch(self):
+        """Create a branch of this conversation for exploring tangents."""
+        # Create a new context that shares history up to this point
+        branch_context = ConversationContext(
+            provider=self.provider,
+            model=self.model,
+            system_prompt=None,  # Will be set from messages
+            session_id=None,  # New session for branch
+            **self.kwargs
+        )
+        
+        # Copy current messages
+        branch_context.messages = self.messages.copy()
+        branch_context._parent = self
+        self._branches.append(branch_context)
+        
+        try:
+            yield branch_context
+        finally:
+            # Branch context is preserved but not merged back
+            pass
+    
+    async def save(self) -> str:
+        """Save conversation state and return ID for later resumption."""
+        conversation_data = {
+            "id": self._conversation_id,
+            "created_at": self._created_at.isoformat(),
+            "provider": self.provider,
+            "model": self.model,
+            "messages": self.messages,
+            "kwargs": self.kwargs,
+            "stats": self.get_stats()
+        }
+        
+        # Store in memory (you could extend this to use a database)
+        _CONVERSATION_STORE[self._conversation_id] = conversation_data
+        
+        return self._conversation_id
+    
+    @classmethod
+    async def load(cls, conversation_id: str) -> 'ConversationContext':
+        """Load a saved conversation."""
+        if conversation_id not in _CONVERSATION_STORE:
+            raise ValueError(f"Conversation {conversation_id} not found")
+        
+        data = _CONVERSATION_STORE[conversation_id]
+        
+        # Create new context
+        context = cls(
+            provider=data["provider"],
+            model=data["model"],
+            **data["kwargs"]
+        )
+        
+        # Restore messages
+        context.messages = data["messages"]
+        context._conversation_id = data["id"]
+        context._created_at = datetime.fromisoformat(data["created_at"])
+        
+        return context
+    
+    async def summarize(self, max_length: int = 500) -> str:
+        """Generate a summary of the conversation so far."""
+        if len(self.messages) <= 2:  # Only system prompt and maybe one exchange
+            return "Conversation just started, no summary available yet."
+        
+        # Create a summary request
+        summary_messages = self.messages.copy()
+        summary_messages.append({
+            "role": "user",
+            "content": f"Please provide a concise summary of our conversation so far in {max_length} characters or less. Focus on the main topics and key points discussed."
+        })
+        
+        # Get summary from LLM
+        try:
+            response = await self.client.create_completion(messages=summary_messages)
+            if isinstance(response, dict) and not response.get("error"):
+                return response.get("response", "")
+        except Exception as e:
+            logger.error(f"Failed to generate summary: {e}")
+        
+        return "Unable to generate summary."
+    
+    async def extract_key_points(self) -> List[str]:
+        """Extract key points from the conversation."""
+        if len(self.messages) <= 2:
+            return []
+        
+        # Create extraction request
+        extract_messages = self.messages.copy()
+        extract_messages.append({
+            "role": "user",
+            "content": "Please extract the 3-5 most important key points from our conversation. Format each as a brief bullet point starting with '- '."
+        })
+        
+        try:
+            response = await self.client.create_completion(messages=extract_messages)
+            if isinstance(response, dict) and not response.get("error"):
+                text = response.get("response", "")
+                # Extract bullet points
+                points = [line.strip()[2:] for line in text.split('\n') 
+                         if line.strip().startswith('- ')]
+                return points
+        except Exception as e:
+            logger.error(f"Failed to extract key points: {e}")
+        
+        return []
+    
     def clear(self):
         """Clear conversation history but keep system message."""
         system_msgs = [msg for msg in self.messages if msg["role"] == "system"]
@@ -264,6 +403,9 @@ class ConversationContext:
             "has_system_prompt": any(msg["role"] == "system" for msg in self.messages),
             "estimated_tokens": sum(len(msg["content"].split()) * 1.3 for msg in self.messages),
             "has_session": self.has_session,
+            "conversation_id": self._conversation_id,
+            "created_at": self._created_at.isoformat(),
+            "branch_count": len(self._branches),
         }
         
         # Add session ID if available
@@ -309,6 +451,7 @@ async def conversation(
     session_id: Optional[str] = None,
     infinite_context: bool = True,
     token_threshold: int = 4000,
+    resume_from: Optional[str] = None,
     **kwargs
 ):
     """
@@ -324,11 +467,18 @@ async def conversation(
         session_id: Optional existing session ID to continue
         infinite_context: Enable infinite context support (default: True)
         token_threshold: Token limit for infinite context segmentation
+        resume_from: Resume from a saved conversation ID
         **kwargs: Additional configuration options
         
     Yields:
         ConversationContext: Context manager for the conversation
     """
+    # Resume from saved conversation if specified
+    if resume_from:
+        ctx = await ConversationContext.load(resume_from)
+        yield ctx
+        return
+    
     # Get defaults from config if not specified
     if not provider:
         config_manager = get_config()
