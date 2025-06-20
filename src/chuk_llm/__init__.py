@@ -3,11 +3,11 @@
 ChukLLM - A clean, intuitive Python library for LLM interactions
 ================================================================
 
-Main package initialization with provider function exports.
+Main package initialization with automatic session tracking support.
 """
 
 # Version
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # Core API imports
 from .api import (
@@ -19,6 +19,14 @@ from .api import (
     quick_ask,
     multi_provider_ask,
     validate_request,
+    
+    # Session management
+    get_session_stats,
+    get_session_history,
+    get_current_session_id,
+    reset_session,
+    disable_sessions,
+    enable_sessions,
     
     # Sync wrappers
     ask_sync,
@@ -81,6 +89,15 @@ from .api.utils import (
     cleanup_sync,
 )
 
+# Show functions
+from .api.show_info import (
+    show_providers,
+    show_functions,
+    show_model_aliases,
+    show_capabilities,
+    show_config,
+)
+
 # Get all API exports including provider functions
 from .api import __all__ as api_exports
 
@@ -115,4 +132,11 @@ __all__ = [
     "print_diagnostics",
     "cleanup",
     "cleanup_sync",
+    
+    # Show functions
+    "show_providers",
+    "show_functions",
+    "show_model_aliases",
+    "show_capabilities",
+    "show_config",
 ]

@@ -3,7 +3,7 @@
 ChukLLM API Module - Clean Direct Imports
 =========================================
 
-Modern API interface using unified configuration system.
+Modern API interface with automatic session tracking when available.
 """
 
 # Core async API
@@ -14,7 +14,14 @@ from .core import (
     ask_json,
     quick_ask,
     multi_provider_ask,
-    validate_request
+    validate_request,
+    # Session management functions
+    get_session_stats,
+    get_session_history,
+    get_current_session_id,
+    reset_session,
+    disable_sessions,
+    enable_sessions,
 )
 
 # Configuration management
@@ -60,6 +67,14 @@ __all__ = [
     "quick_ask",
     "multi_provider_ask",
     "validate_request",
+    
+    # Session management
+    "get_session_stats",
+    "get_session_history",
+    "get_current_session_id",
+    "reset_session",
+    "disable_sessions",
+    "enable_sessions",
     
     # Sync wrappers
     "ask_sync",

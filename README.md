@@ -1,13 +1,13 @@
 # chuk_llm
 
-A unified, production-ready Python library for Large Language Model (LLM) providers with real-time streaming, function calling, middleware support, and comprehensive provider management.
+A unified, production-ready Python library for Large Language Model (LLM) providers with real-time streaming, function calling, middleware support, automatic session tracking, and comprehensive provider management.
 
 ## 🚀 QuickStart
 
 ### Installation
 
 ```bash
-pip install chuk_llm
+pip install chuk_llm chuk-ai-session-manager
 ```
 
 ### API Keys Setup
@@ -128,6 +128,184 @@ result = test_connection_sync("anthropic")
 print(f"✅ {result['provider']}: {result['duration']:.2f}s")
 ```
 
+### 🎯 Automatic Session Tracking (NEW!)
+
+ChukLLM now includes automatic session tracking powered by `chuk-ai-session-manager`. Every API call is automatically tracked for complete observability - no code changes needed!
+
+```python
+from chuk_llm import ask, conversation, get_session_stats, get_session_history
+
+# Example 1: ask() is stateless but still tracked
+await ask("What's the capital of France?")  # Response: "The capital of France is Paris"
+await ask("What's 2+2?")                    # Response: "2+2 equals 4"
+
+# These are independent calls, but both are tracked!
+stats = await get_session_stats()
+print(f"📊 Tracked {stats['total_messages']} messages")
+print(f"💰 Total cost: ${stats['estimated_cost']:.6f}")
+
+# Example 2: For contextual conversations, use conversation()
+async with conversation() as conv:
+    await conv.say("What's the capital of France?")
+    await conv.say("Tell me more about it")  # This WILL understand "it" = Paris
+    
+    # Session tracking happens automatically here too!
+    if conv.has_session:
+        stats = await conv.get_session_stats()
+        print(f"💬 Conversation cost: ${stats['estimated_cost']:.6f}")
+```
+
+**Key Points:**
+- ✅ `ask()` - Stateless calls, each independent, but ALL tracked
+- ✅ `conversation()` - Stateful dialogue, maintains context, also tracked
+- ✅ Both contribute to the same session for analytics
+
+**Automatic Features:**
+- ✅ **Zero Configuration** - Works out of the box
+- 📊 **Token Tracking** - Monitor usage in real-time
+- 💰 **Cost Estimation** - Track spending across providers
+- 🔄 **Infinite Context** - Automatic conversation segmentation
+- 📝 **Full History** - Complete audit trail
+- 🛠️ **Tool Tracking** - Function calls logged automatically
+
+**Session Analytics:**
+```python
+# After using ask() or conversation()
+stats = await get_session_stats()
+print(f"📊 Session {stats['session_id'][:8]}...")
+print(f"   Messages: {stats['total_messages']}")
+print(f"   Tokens: {stats['total_tokens']}")
+print(f"   Cost: ${stats['estimated_cost']:.6f}")
+
+# View the history (you'll see all calls)
+history = await get_session_history()
+for msg in history:
+    print(f"{msg['role']}: {msg['content'][:50]}...")
+```
+
+**Session Management:**
+```python
+from chuk_llm import (
+    get_current_session_id,  # Get current session ID
+    reset_session,           # Start a new session
+    disable_sessions,        # Turn off tracking
+    enable_sessions          # Turn on tracking
+)
+
+# Check current session
+session_id = get_current_session_id()
+print(f"Current session: {session_id}")
+
+# Start fresh
+reset_session()
+
+# Disable if needed (or set CHUK_LLM_DISABLE_SESSIONS=true)
+disable_sessions()
+```
+
+### 🌳 Hierarchical Sessions - Branched Conversations
+
+ChukLLM supports hierarchical sessions for complex conversation flows, A/B testing, and parallel exploration:
+
+```python
+from chuk_llm import conversation
+from chuk_ai_session_manager import SessionManager
+
+# Start main conversation
+async with conversation() as main_conv:
+    await main_conv.say("I need help planning a vacation")
+    main_session_id = main_conv.session_id
+    
+    # Branch 1: Explore Japan
+    japan_session = SessionManager(parent_session_id=main_session_id)
+    async with conversation(session_id=japan_session.session_id) as japan_conv:
+        await japan_conv.say("Tell me about visiting Japan")
+        japan_cost = (await japan_conv.get_session_stats())['estimated_cost']
+    
+    # Branch 2: Explore Italy  
+    italy_session = SessionManager(parent_session_id=main_session_id)
+    async with conversation(session_id=italy_session.session_id) as italy_conv:
+        await italy_conv.say("Tell me about visiting Italy")
+        italy_cost = (await italy_conv.get_session_stats())['estimated_cost']
+    
+    # Continue main thread with decision
+    await main_conv.say("I'll choose Japan! Plan a 10-day trip.")
+
+# Session hierarchy:
+# └── Main conversation (vacation planning)
+#     ├── Branch 1 (Japan exploration)
+#     └── Branch 2 (Italy exploration)
+```
+
+**Use Cases:**
+- **🔄 Branching Paths** - Explore different conversation directions
+- **🧪 A/B Testing** - Compare different AI approaches
+- **💾 Save Points** - Create restore points in conversations
+- **🔀 Parallel Exploration** - Investigate multiple options simultaneously
+- **📊 Comparative Analysis** - Track costs/tokens per branch
+- **🎯 Multi-level Projects** - Organize complex conversations hierarchically
+
+**Advanced Example - A/B Testing:**
+```python
+# Test different writing styles
+base_session = SessionManager()
+styles = ["formal", "casual", "creative"]
+
+results = {}
+for style in styles:
+    # Create child session for each style
+    test_session = SessionManager(parent_session_id=base_session.session_id)
+    
+    async with conversation(session_id=test_session.session_id) as conv:
+        response = await conv.say(f"Write a welcome email in {style} tone")
+        stats = await conv.get_session_stats()
+        
+        results[style] = {
+            "response": response,
+            "cost": stats['estimated_cost'],
+            "tokens": stats['total_tokens']
+        }
+
+# Compare results
+best = min(results.items(), key=lambda x: x[1]['cost'])
+print(f"Most efficient: {best[0]} style")
+```
+
+**Session Tree Visualization:**
+```python
+from chuk_llm.tools import SessionTreeVisualizer, SessionComparator
+
+# Visualize session hierarchy
+visualizer = SessionTreeVisualizer()
+tree = await visualizer.build_tree(main_session_id)
+visualizer.print_tree(tree)
+
+# Output:
+# └── Session 2214a9ba...
+#     ├─ Messages: 5
+#     ├─ Tokens: 342
+#     └─ Cost: $0.000651
+#     ├── Session 6f4463c6... (Japan branch)
+#     │   ├─ Messages: 3
+#     │   ├─ Tokens: 156
+#     │   └─ Cost: $0.000298
+#     └── Session 8a3b5f2d... (Italy branch)
+#         ├─ Messages: 3
+#         ├─ Tokens: 189
+#         └─ Cost: $0.000361
+
+# Compare branches
+comparator = SessionComparator()
+comparison = await comparator.compare_branches([japan_id, italy_id])
+comparator.print_comparison(comparison)
+
+# Export session data
+from chuk_llm.tools import SessionExporter
+exporter = SessionExporter()
+json_data = await exporter.export_to_json(session_id)
+markdown = await exporter.export_to_markdown(session_id)
+```
+
 ### Performance Demo
 
 ```python
@@ -164,6 +342,7 @@ asyncio.run(performance_demo())
 ✅ **3-7x Performance Boost** - Concurrent requests vs sequential  
 ✅ **Real-time Streaming** - Token-by-token output as it's generated  
 ✅ **Memory Management** - Stateful conversations with context  
+✅ **Automatic Session Tracking** - Zero-config usage analytics & cost monitoring  
 ✅ **Production Ready** - Error handling, retries, connection pooling  
 ✅ **Developer Friendly** - Simple sync for scripts, powerful async for apps  
 
@@ -180,8 +359,10 @@ asyncio.run(performance_demo())
 ### Core Capabilities
 - 🌊 **Real-time Streaming** - True streaming without buffering
 - 🛠️ **Function Calling** - Standardized tool/function execution
+- 📊 **Automatic Session Tracking** - Usage analytics with zero configuration
+- 💰 **Cost Monitoring** - Real-time spend tracking across all providers
 - 🔧 **Middleware Stack** - Logging, metrics, caching, retry logic
-- 📊 **Performance Monitoring** - Built-in benchmarking and metrics
+- 📈 **Performance Monitoring** - Built-in benchmarking and metrics
 - 🔄 **Error Handling** - Automatic retries with exponential backoff
 - 🎯 **Type Safety** - Full Pydantic validation and type hints
 - 🧩 **Extensible Architecture** - Easy to add new providers
@@ -194,6 +375,8 @@ asyncio.run(performance_demo())
 - **Connection Pooling** - Efficient HTTP connection management
 - **Configuration Management** - Environment-based provider setup
 - **Capability Detection** - Automatic feature detection per provider
+- **Infinite Context** - Automatic conversation segmentation for long chats
+- **Conversation History** - Full audit trail of all interactions
 
 ## 📦 Installation
 
@@ -201,10 +384,15 @@ asyncio.run(performance_demo())
 pip install chuk_llm
 ```
 
+### With Session Tracking (Recommended)
+```bash
+pip install chuk_llm chuk-ai-session-manager
+```
+
 ### Optional Dependencies
 ```bash
-# For all providers
-pip install chuk_llm[all]
+# For all providers with session tracking
+pip install chuk_llm[all] chuk-ai-session-manager
 
 # For specific providers
 pip install chuk_llm[openai]       # OpenAI support
@@ -349,6 +537,9 @@ export PERPLEXITY_API_KEY="your-perplexity-key"
 export OPENAI_API_BASE="https://api.openai.com/v1"
 export PERPLEXITY_API_BASE="https://api.perplexity.ai"
 export OLLAMA_API_BASE="http://localhost:11434"
+
+# Session tracking
+export CHUK_LLM_DISABLE_SESSIONS="false"  # Set to "true" to disable
 ```
 
 ### Simple API Configuration
@@ -409,6 +600,38 @@ asyncio.run(low_level_example())
 ```
 
 ## 🛠️ Advanced Usage
+
+### Session Analytics & Monitoring
+
+```python
+import asyncio
+from chuk_llm import ask, get_session_stats, get_session_history
+
+async def analytics_example():
+    # Use the API normally
+    await ask("Explain machine learning")
+    await ask("What are neural networks?")
+    await ask("How does backpropagation work?")
+    
+    # Get detailed analytics
+    stats = await get_session_stats()
+    print("📊 Session Analytics:")
+    print(f"   Session ID: {stats['session_id']}")
+    print(f"   Total messages: {stats['total_messages']}")
+    print(f"   Total tokens: {stats['total_tokens']}")
+    print(f"   Estimated cost: ${stats['estimated_cost']:.6f}")
+    print(f"   Average tokens/message: {stats['average_tokens_per_message']}")
+    
+    # Get conversation history
+    history = await get_session_history()
+    print("\n📜 Conversation History:")
+    for i, msg in enumerate(history[-6:]):  # Last 6 messages
+        role = msg['role']
+        content = msg['content'][:100] + '...' if len(msg['content']) > 100 else msg['content']
+        print(f"{i+1}. {role}: {content}")
+
+asyncio.run(analytics_example())
+```
 
 ### Low-Level API
 
@@ -686,6 +909,7 @@ Perplexity offers specialized models optimized for real-time web search and reas
 - **`ProviderConfig`** - Configuration management system
 - **`ConnectionPool`** - HTTP connection optimization
 - **`SystemPromptGenerator`** - Dynamic prompt generation
+- **`SessionManager`** - Automatic conversation tracking (via chuk-ai-session-manager)
 
 ### Provider Implementations
 
@@ -694,6 +918,7 @@ Each provider implements the `BaseLLMClient` interface with:
 - Real-time streaming support
 - Function calling normalization
 - Error handling and retries
+- Automatic session tracking
 
 ### Middleware System
 
@@ -760,6 +985,7 @@ Perplexity's Sonar models deliver blazing fast search results at 1200 tokens per
 - **Error handling** - No sensitive data leakage
 - **Rate limiting** - Built-in provider limit awareness
 - **Tool name sanitization** - Safe function calling
+- **Session data privacy** - All tracking data stays local
 
 ## 🤝 Contributing
 
@@ -795,6 +1021,7 @@ newprovider:
 - [Middleware Development](docs/middleware.md)
 - [Configuration Guide](docs/configuration.md)
 - [Benchmarking Guide](docs/benchmarking.md)
+- [Session Tracking Guide](docs/sessions.md)
 
 ## 📄 License
 
@@ -808,7 +1035,8 @@ MIT License - see [LICENSE](LICENSE) file for details.
 - Groq for ultra-fast inference
 - Perplexity for real-time web search and information retrieval
 - Ollama for local AI deployment
+- CHUK AI for session management and analytics
 
 ---
 
-**chuk_llm** - Unified LLM interface for production applications
+**chuk_llm** - Unified LLM interface for production applications with automatic session tracking

@@ -1,19 +1,59 @@
 # chuk_llm/api/core.py
 """
-Core ask/stream functions with unified configuration
-==================================================
+Core ask/stream functions with unified configuration and automatic session tracking
+==================================================================================
 
-Main API functions using the unified configuration system with enhanced validation.
+Main API functions using the unified configuration system with integrated session management.
 """
 
 from typing import List, Dict, Any, Optional, AsyncIterator
 import logging
+import os
 
 from chuk_llm.configuration import get_config, ConfigValidator, Feature
 from chuk_llm.api.config import get_current_config
 from chuk_llm.llm.client import get_client
 
+# Try to import session manager
+try:
+    from chuk_ai_session_manager import SessionManager
+    _SESSION_AVAILABLE = True
+except ImportError:
+    _SESSION_AVAILABLE = False
+    SessionManager = None
+
 logger = logging.getLogger(__name__)
+
+# Global session manager instance
+_global_session_manager = None
+
+# Check if sessions should be disabled via environment variable
+_SESSIONS_ENABLED = _SESSION_AVAILABLE and os.getenv("CHUK_LLM_DISABLE_SESSIONS", "").lower() not in ("true", "1", "yes")
+
+
+def _get_session_manager() -> Optional['SessionManager']:
+    """Get or create the global session manager."""
+    global _global_session_manager
+    
+    if not _SESSIONS_ENABLED:
+        return None
+    
+    if _global_session_manager is None:
+        try:
+            # Get system prompt from config if available
+            config = get_current_config()
+            system_prompt = config.get("system_prompt")
+            
+            _global_session_manager = SessionManager(
+                system_prompt=system_prompt,
+                infinite_context=True,  # Enable by default
+                token_threshold=4000    # Reasonable default
+            )
+        except Exception as e:
+            logger.debug(f"Could not create session manager: {e}")
+            return None
+    
+    return _global_session_manager
 
 
 async def ask(
@@ -29,7 +69,7 @@ async def ask(
     **kwargs
 ) -> str:
     """
-    Ask a question and get a response with unified configuration.
+    Ask a question and get a response with unified configuration and automatic session tracking.
     
     Args:
         prompt: The question/prompt to send
@@ -45,6 +85,16 @@ async def ask(
     Returns:
         The LLM's response as a string
     """
+    # Get session manager
+    session_manager = _get_session_manager()
+    
+    # Track user message if session is available
+    if session_manager:
+        try:
+            await session_manager.user_says(prompt)
+        except Exception as e:
+            logger.debug(f"Session tracking error (user): {e}")
+    
     # Get base configuration
     config = get_current_config()
     
@@ -83,6 +133,13 @@ async def ask(
                 effective_model = provider_config.default_model
             except Exception:
                 pass
+    
+    # Update session system prompt if provided
+    if system_prompt and session_manager:
+        try:
+            await session_manager.update_system_prompt(system_prompt)
+        except Exception as e:
+            logger.debug(f"Could not update session system prompt: {e}")
     
     # Build effective configuration
     effective_config = {
@@ -175,9 +232,31 @@ async def ask(
         if isinstance(response, dict):
             if response.get("error"):
                 raise Exception(f"LLM Error: {response.get('error_message', 'Unknown error')}")
-            return response.get("response", "")
+            response_text = response.get("response", "")
+        else:
+            response_text = str(response)
         
-        return str(response)
+        # Track AI response if session is available
+        if session_manager:
+            try:
+                await session_manager.ai_responds(
+                    response_text,
+                    model=effective_model,
+                    provider=effective_provider
+                )
+                
+                # Track tool usage if tools were provided
+                if tools and isinstance(response, dict) and "tool_calls" in response:
+                    for tool_call in response["tool_calls"]:
+                        await session_manager.tool_used(
+                            tool_name=tool_call.get("name", "unknown"),
+                            arguments=tool_call.get("arguments", {}),
+                            result=tool_call.get("result", {})
+                        )
+            except Exception as e:
+                logger.debug(f"Session tracking error (response): {e}")
+        
+        return response_text
         
     except Exception as e:
         logger.error(f"Request failed: {e}")
@@ -186,7 +265,7 @@ async def ask(
 
 async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
     """
-    Stream a response token by token with unified configuration.
+    Stream a response token by token with unified configuration and automatic session tracking.
     
     Args:
         prompt: The question/prompt to send
@@ -195,6 +274,19 @@ async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
     Yields:
         str: Individual tokens/chunks from the LLM response
     """
+    # Get session manager
+    session_manager = _get_session_manager()
+    
+    # Track user message if session is available
+    if session_manager:
+        try:
+            await session_manager.user_says(prompt)
+        except Exception as e:
+            logger.debug(f"Session tracking error (user): {e}")
+    
+    # Collect full response for session tracking
+    full_response = ""
+    
     # Get base configuration
     config = get_current_config()
     
@@ -233,13 +325,21 @@ async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
             except Exception:
                 pass
     
+    # Update session system prompt if provided
+    system_prompt = kwargs.get("system_prompt")
+    if system_prompt and session_manager:
+        try:
+            await session_manager.update_system_prompt(system_prompt)
+        except Exception as e:
+            logger.debug(f"Could not update session system prompt: {e}")
+    
     # Build effective configuration
     effective_config = {
         "provider": effective_provider,
         "model": effective_model,
         "api_key": effective_api_key,
         "api_base": effective_api_base,
-        "system_prompt": kwargs.get("system_prompt") or config.get("system_prompt"),
+        "system_prompt": system_prompt or config.get("system_prompt"),
         "temperature": kwargs.get("temperature") if "temperature" in kwargs else config.get("temperature"),
         "max_tokens": kwargs.get("max_tokens") if "max_tokens" in kwargs else config.get("max_tokens"),
     }
@@ -250,6 +350,18 @@ async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
             logger.warning(f"{effective_provider}/{effective_model} doesn't support streaming")
             # Fall back to non-streaming
             response = await ask(prompt, **kwargs)
+            
+            # Track the response if session is available
+            if session_manager:
+                try:
+                    await session_manager.ai_responds(
+                        response,
+                        model=effective_model,
+                        provider=effective_provider
+                    )
+                except Exception as e:
+                    logger.debug(f"Session tracking error (response): {e}")
+            
             yield response
             return
     except Exception:
@@ -308,13 +420,18 @@ async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
             async for chunk in response_stream:
                 if isinstance(chunk, dict):
                     if chunk.get("error"):
-                        yield f"[Error: {chunk.get('error_message', 'Unknown error')}]"
+                        error_msg = f"[Error: {chunk.get('error_message', 'Unknown error')}]"
+                        full_response += error_msg
+                        yield error_msg
                         return
                     content = chunk.get("response", "")
                     if content:
+                        full_response += content
                         yield content
                 else:
-                    yield str(chunk)
+                    chunk_str = str(chunk)
+                    full_response += chunk_str
+                    yield chunk_str
         else:
             # It might be a coroutine that needs awaiting
             result = await response_stream
@@ -324,22 +441,44 @@ async def stream(prompt: str, **kwargs) -> AsyncIterator[str]:
                 async for chunk in result:
                     if isinstance(chunk, dict):
                         if chunk.get("error"):
-                            yield f"[Error: {chunk.get('error_message', 'Unknown error')}]"
+                            error_msg = f"[Error: {chunk.get('error_message', 'Unknown error')}]"
+                            full_response += error_msg
+                            yield error_msg
                             return
                         content = chunk.get("response", "")
                         if content:
+                            full_response += content
                             yield content
                     else:
-                        yield str(chunk)
+                        chunk_str = str(chunk)
+                        full_response += chunk_str
+                        yield chunk_str
             else:
                 # Handle non-streaming response
                 if isinstance(result, dict):
                     if result.get("error"):
-                        yield f"[Error: {result.get('error_message', 'Unknown error')}]"
+                        error_msg = f"[Error: {result.get('error_message', 'Unknown error')}]"
+                        full_response = error_msg
+                        yield error_msg
                     else:
-                        yield result.get("response", "")
+                        content = result.get("response", "")
+                        full_response = content
+                        yield content
                 else:
-                    yield str(result)
+                    result_str = str(result)
+                    full_response = result_str
+                    yield result_str
+        
+        # Track complete response if session is available
+        if session_manager and full_response:
+            try:
+                await session_manager.ai_responds(
+                    full_response,
+                    model=effective_model,
+                    provider=effective_provider
+                )
+            except Exception as e:
+                logger.debug(f"Session tracking error (response): {e}")
                 
     except Exception as e:
         logger.error(f"Streaming failed: {e}")
@@ -404,6 +543,66 @@ def _add_json_instruction_to_messages(messages: List[Dict[str, Any]]):
     })
 
 
+# Session management functions
+async def get_session_stats(include_all_segments: bool = False) -> Dict[str, Any]:
+    """Get current session statistics."""
+    session_manager = _get_session_manager()
+    if session_manager:
+        try:
+            return await session_manager.get_stats(include_all_segments=include_all_segments)
+        except Exception as e:
+            logger.debug(f"Could not get session stats: {e}")
+    
+    return {
+        "sessions_enabled": _SESSIONS_ENABLED,
+        "session_available": False,
+        "message": "No active session"
+    }
+
+
+async def get_session_history(include_all_segments: bool = False) -> List[Dict[str, Any]]:
+    """Get current session conversation history."""
+    session_manager = _get_session_manager()
+    if session_manager:
+        try:
+            return await session_manager.get_conversation(include_all_segments=include_all_segments)
+        except Exception as e:
+            logger.debug(f"Could not get session history: {e}")
+    
+    return []
+
+
+def get_current_session_id() -> Optional[str]:
+    """Get the current session ID if available."""
+    session_manager = _get_session_manager()
+    return session_manager.session_id if session_manager else None
+
+
+def reset_session():
+    """Reset the current session (start a new one)."""
+    global _global_session_manager
+    _global_session_manager = None
+    logger.info("Session reset - new session will be created on next call")
+
+
+def disable_sessions():
+    """Disable session tracking for the current process."""
+    global _SESSIONS_ENABLED, _global_session_manager
+    _SESSIONS_ENABLED = False
+    _global_session_manager = None
+    logger.info("Session tracking disabled")
+
+
+def enable_sessions():
+    """Re-enable session tracking if available."""
+    global _SESSIONS_ENABLED
+    if _SESSION_AVAILABLE:
+        _SESSIONS_ENABLED = True
+        logger.info("Session tracking enabled")
+    else:
+        logger.warning("Cannot enable sessions - chuk-ai-session-manager not installed")
+
+
 # Enhanced convenience functions
 async def ask_with_tools(
     prompt: str,
@@ -417,7 +616,8 @@ async def ask_with_tools(
         "response": response,
         "tools_used": tools,
         "provider": kwargs.get("provider") or get_current_config()["provider"],
-        "model": kwargs.get("model") or get_current_config()["model"]
+        "model": kwargs.get("model") or get_current_config()["model"],
+        "session_id": get_current_session_id()
     }
 
 
