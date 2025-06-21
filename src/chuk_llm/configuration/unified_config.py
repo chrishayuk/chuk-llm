@@ -411,6 +411,12 @@ class UnifiedConfigManager:
         if provider.api_key_fallback_env:
             return os.getenv(provider.api_key_fallback_env)
         
+        # Special case for Docker Model Runner: use fake API key if none set
+        if provider_name == "docker_model_runner":
+            fake_key = provider.extra.get("fake_api_key", "docker-model-runner")
+            logger.debug(f"Using default API key for Docker Model Runner: {fake_key}")
+            return fake_key
+        
         return None
     
     def supports_feature(self, provider_name: str, feature: Union[str, Feature], 
@@ -461,8 +467,8 @@ class ConfigValidator:
         if not provider.client_class:
             issues.append(f"Missing 'client_class' for provider {provider.name}")
         
-        # Check API key for non-local providers
-        if provider.name not in ["ollama", "local"]:
+        # Check API key for non-local providers (excluding Docker Model Runner which uses fake keys)
+        if provider.name not in ["ollama", "local", "docker_model_runner"]:
             if provider.api_key_env and not os.getenv(provider.api_key_env):
                 if not provider.api_key_fallback_env or not os.getenv(provider.api_key_fallback_env):
                     issues.append(f"Missing API key: {provider.api_key_env} environment variable not set")
