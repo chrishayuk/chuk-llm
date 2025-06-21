@@ -1,9 +1,10 @@
 # chuk_llm/llm/client.py
 """
-Clean LLM client factory with unified configuration
-==================================================
+Enhanced LLM client factory with transparent discovery support
+============================================================
 
-Simple client factory using the new unified configuration system.
+Simple client factory using the unified configuration system with seamless discovery.
+API remains identical - discovery happens automatically when needed.
 """
 
 import importlib
@@ -89,7 +90,10 @@ def get_client(
     **kwargs
 ) -> BaseLLMClient:
     """
-    Get LLM client for provider using unified configuration.
+    Enhanced client factory with transparent discovery support.
+    
+    API remains identical to before - discovery happens automatically.
+    All provider/model information comes from config, nothing hardcoded.
     
     Args:
         provider: Provider name (from YAML config)
@@ -107,8 +111,26 @@ def get_client(
     except Exception as e:
         raise ValueError(f"Failed to get provider '{provider}': {e}")
     
-    # Determine the model to use
+    # Determine the model to use (with transparent discovery)
     target_model = model or provider_config.default_model
+    if target_model:
+        # Try to ensure model is available (triggers discovery if needed)
+        resolved_model = config_manager._ensure_model_available(provider, target_model)
+        if resolved_model:
+            target_model = resolved_model
+        elif target_model not in provider_config.models:
+            # Check if it's an alias
+            resolved_model = provider_config.model_aliases.get(target_model)
+            if resolved_model and resolved_model in provider_config.models:
+                target_model = resolved_model
+            else:
+                # Model not found after discovery attempt
+                available = provider_config.models[:5]  # Show first 5
+                raise ValueError(
+                    f"Model '{target_model}' not available for provider '{provider}'. "
+                    f"Available: {available}{'...' if len(provider_config.models) > 5 else ''}"
+                )
+    
     if not target_model:
         raise ValueError(f"No model specified and no default model for provider '{provider}'")
     
@@ -201,7 +223,7 @@ def validate_request_compatibility(
 
 def list_available_providers() -> Dict[str, Dict[str, Any]]:
     """
-    List all available providers and their info.
+    List all available providers and their info including discovered models.
     
     Returns:
         Dictionary with provider info including model-level capabilities
@@ -224,6 +246,22 @@ def list_available_providers() -> Dict[str, Dict[str, Any]]:
                     'max_output_tokens': model_caps.max_output_tokens
                 }
             
+            # Check if discovery is enabled
+            discovery_enabled = False
+            discovery_stats = {}
+            discovery_data = provider_config.extra.get('dynamic_discovery')
+            if discovery_data and discovery_data.get('enabled'):
+                discovery_enabled = True
+                # Get discovery stats if available
+                cached_data = config_manager._discovery_cache.get(provider_name)
+                if cached_data:
+                    discovery_stats = {
+                        'total_models': len(provider_config.models),
+                        'discovered_count': cached_data.get('discovered_count', 0),
+                        'new_count': cached_data.get('new_count', 0),
+                        'cache_age_seconds': int(time.time() - cached_data['timestamp']),
+                    }
+            
             providers[provider_name] = {
                 'default_model': provider_config.default_model,
                 'models': provider_config.models,
@@ -232,7 +270,9 @@ def list_available_providers() -> Dict[str, Dict[str, Any]]:
                 'model_capabilities': model_info,
                 'has_api_key': has_api_key,
                 'api_base': provider_config.api_base,
-                'rate_limits': provider_config.rate_limits
+                'rate_limits': provider_config.rate_limits,
+                'discovery_enabled': discovery_enabled,
+                'discovery_stats': discovery_stats,
             }
         except Exception as e:
             providers[provider_name] = {'error': str(e)}
@@ -258,6 +298,26 @@ def get_provider_info(provider: str, model: Optional[str] = None) -> Dict[str, A
         target_model = model or provider_config.default_model
         model_caps = provider_config.get_model_capabilities(target_model)
         
+        # Check if model was discovered dynamically
+        is_discovered = False
+        discovery_info = {}
+        cached_data = config_manager._discovery_cache.get(provider)
+        if cached_data and target_model in cached_data.get('models', []):
+            # Check if this model was added by discovery
+            static_models = set()
+            for cap in provider_config.model_capabilities:
+                if cap.pattern.startswith('^') and cap.pattern.endswith('$'):
+                    # Extract exact model name from pattern
+                    static_name = cap.pattern[1:-1].replace('\\', '')
+                    static_models.add(static_name)
+            
+            if target_model not in static_models:
+                is_discovered = True
+                discovery_info = {
+                    'discovered_at': cached_data['timestamp'],
+                    'discovery_session': True,
+                }
+        
         return {
             'provider': provider,
             'model': target_model,
@@ -270,6 +330,8 @@ def get_provider_info(provider: str, model: Optional[str] = None) -> Dict[str, A
             'rate_limits': provider_config.rate_limits,
             'available_models': provider_config.models,
             'model_aliases': provider_config.model_aliases,
+            'is_discovered': is_discovered,
+            'discovery_info': discovery_info,
             'supports': {
                 'streaming': provider_config.supports_feature(Feature.STREAMING, target_model),
                 'tools': provider_config.supports_feature(Feature.TOOLS, target_model),
@@ -284,7 +346,7 @@ def get_provider_info(provider: str, model: Optional[str] = None) -> Dict[str, A
 
 def validate_provider_setup(provider: str) -> Dict[str, Any]:
     """
-    Validate provider setup and configuration.
+    Validate provider setup and configuration including discovery status.
     
     Args:
         provider: Provider name to validate
@@ -322,6 +384,22 @@ def validate_provider_setup(provider: str) -> Dict[str, Any]:
     if not provider_config.models:
         warnings.append("No models configured")
     
+    # Check discovery status
+    discovery_enabled = False
+    discovery_stats = {}
+    discovery_data = provider_config.extra.get('dynamic_discovery')
+    if discovery_data and discovery_data.get('enabled'):
+        discovery_enabled = True
+        cached_data = config_manager._discovery_cache.get(provider)
+        if cached_data:
+            discovery_stats = {
+                'total_models': len(provider_config.models),
+                'discovered_count': cached_data.get('discovered_count', 0),
+                'new_count': cached_data.get('new_count', 0),
+                'last_discovery': cached_data['timestamp'],
+                'cache_age_seconds': int(time.time() - cached_data['timestamp']),
+            }
+    
     # Get model capabilities summary
     model_capabilities = {}
     for model in provider_config.models[:5]:  # Limit to first 5 for brevity
@@ -340,6 +418,8 @@ def validate_provider_setup(provider: str) -> Dict[str, Any]:
         'baseline_features': [f.value for f in provider_config.features],
         'model_capabilities_sample': model_capabilities,
         'rate_limits': provider_config.rate_limits,
+        'discovery_enabled': discovery_enabled,
+        'discovery_stats': discovery_stats,
     }
 
 
@@ -376,6 +456,9 @@ def find_best_provider_for_request(
     
     return None
 
+
+# Import time at module level for discovery stats
+import time
 
 # Backward compatibility aliases
 _get_api_key_with_fallback = lambda config_manager, provider, provider_config=None: config_manager.get_api_key(provider)

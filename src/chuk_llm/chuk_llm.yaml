@@ -1,8 +1,7 @@
-# chuk_llm/chuk_llm.yaml - Complete Configuration with TEXT feature added
-# Unified configuration combining providers and capabilities
+# chuk_llm.yaml - Enhanced with Universal Dynamic Discovery
 
 ##############################################################################
-# Global Configuration
+# Global Configuration with Discovery Settings
 ##############################################################################
 __global__:
   # Default provider and model when none specified
@@ -11,6 +10,13 @@ __global__:
   # Runtime settings
   default_timeout: 30
   max_retries: 3
+  
+  # Dynamic discovery global settings
+  dynamic_discovery:
+    enabled: true
+    cache_timeout: 300  # 5 minutes
+    auto_update_on_startup: false
+    preferred_discoverers: [ollama, openai, huggingface]
 
 ##############################################################################
 # Global Model Aliases (cross-provider shortcuts)
@@ -52,10 +58,10 @@ __global_aliases__:
   reasoning_advanced: deepseek/deepseek-reasoner
 
 ##############################################################################
-# Provider Configurations
+# Provider Configurations - Enhanced with Discovery Support
 ##############################################################################
 
-# OpenAI – most popular models
+# OpenAI – most popular models (enhanced with discovery)
 openai:
   client_class: "chuk_llm.llm.providers.openai_client.OpenAILLMClient"
   api_key_env: "OPENAI_API_KEY"
@@ -135,8 +141,51 @@ openai:
       features: [text, streaming]
       max_context_length: 16384
       max_output_tokens: 4096
+  
+  # DYNAMIC DISCOVERY CONFIGURATION
+  extra:
+    # Enable dynamic discovery for OpenAI
+    dynamic_discovery:
+      enabled: true
+      discoverer_type: "openai"
+      cache_timeout: 600  # 10 minutes for API-based discovery
+      
+      # Inference configuration for discovered models
+      inference_config:
+        default_features: [text, streaming, system_messages, json_mode]
+        default_context_length: 128000
+        default_max_output_tokens: 4096
+        
+        family_rules:
+          gpt4_series:
+            patterns: ["gpt-4", "gpt-4o", "gpt-4.1"]
+            features: [text, streaming, tools, vision, parallel_calls, json_mode, system_messages]
+            base_context_length: 128000
+            base_max_output_tokens: 8192
+          
+          o_series:
+            patterns: ["o[1-4]"]
+            features: [text, streaming, tools, vision, reasoning, parallel_calls]
+            base_context_length: 200000
+            base_max_output_tokens: 32768
+          
+          gpt3_series:
+            patterns: ["gpt-3.5"]
+            features: [text, streaming, tools, json_mode, system_messages]
+            base_context_length: 16384
+            base_max_output_tokens: 4096
+        
+        pattern_rules:
+          preview_models:
+            patterns: [".*preview.*", ".*beta.*"]
+            add_features: [reasoning]
+          
+          mini_models:
+            patterns: [".*mini.*", ".*nano.*"]
+            context_length: 128000
+            max_output_tokens: 16384
 
-# DeepSeek – reasoning specialist
+# DeepSeek – reasoning specialist (enhanced with discovery)
 deepseek:
   inherits: "openai"
   client_class: "chuk_llm.llm.providers.openai_client.OpenAILLMClient"
@@ -172,8 +221,26 @@ deepseek:
       features: [text, streaming, json_mode, reasoning]
       max_context_length: 65536
       max_output_tokens: 8192
+  
+  extra:
+    dynamic_discovery:
+      enabled: true
+      discoverer_type: "deepseek"
+      
+      inference_config:
+        default_features: [text, streaming, json_mode, system_messages]
+        default_context_length: 65536
+        
+        family_rules:
+          chat_models:
+            patterns: [".*chat.*"]
+            features: [text, streaming, json_mode, system_messages]
+          
+          reasoning_models:
+            patterns: [".*reasoner.*", ".*reasoning.*"]
+            features: [text, streaming, json_mode, reasoning, system_messages]
 
-# Anthropic – Claude models
+# Anthropic – Claude models (enhanced with discovery)
 anthropic:
   client_class: "chuk_llm.llm.providers.anthropic_client.AnthropicLLMClient"
   api_key_env: "ANTHROPIC_API_KEY"
@@ -237,8 +304,42 @@ anthropic:
       features: [text, streaming, vision, tools, parallel_calls, json_mode]
       max_context_length: 200000
       max_output_tokens: 4096
+  
+  extra:
+    dynamic_discovery:
+      enabled: true
+      discoverer_type: "anthropic"  # Uses known models list
+      
+      inference_config:
+        default_features: [text, streaming, system_messages, reasoning]
+        default_context_length: 200000
+        
+        family_rules:
+          claude4:
+            patterns: ["claude-.*-4-"]
+            features: [text, streaming, tools, vision, parallel_calls, reasoning, json_mode]
+            base_context_length: 200000
+            base_max_output_tokens: 8192
+          
+          claude3_7:
+            patterns: ["claude-3-7-"]
+            features: [text, streaming, tools, vision, parallel_calls, reasoning, json_mode]
+            base_context_length: 200000
+            base_max_output_tokens: 8192
+          
+          claude3_5:
+            patterns: ["claude-3-5-"]
+            features: [text, streaming, tools, vision, parallel_calls, json_mode]
+            base_context_length: 200000
+            base_max_output_tokens: 4096
+          
+          claude3:
+            patterns: ["claude-3-"]
+            features: [text, streaming, tools, vision, parallel_calls, json_mode]
+            base_context_length: 200000
+            base_max_output_tokens: 4096
 
-# Groq – ultra-fast inference
+# Groq – ultra-fast inference (enhanced with discovery)
 groq:
   inherits: "openai"
   client_class: "chuk_llm.llm.providers.groq_client.GroqAILLMClient"
@@ -276,8 +377,34 @@ groq:
       features: [text, streaming, tools]
       max_context_length: 32768
       max_output_tokens: 8192
+  
+  extra:
+    # Dynamic discovery for Groq
+    dynamic_discovery:
+      enabled: true
+      discoverer_type: "groq"  # Uses OpenAI-compatible discoverer
+      
+      inference_config:
+        default_features: [text, streaming, tools]
+        default_context_length: 32768
+        
+        family_rules:
+          llama_series:
+            patterns: ["llama"]
+            features: [text, streaming, tools, system_messages]
+            base_context_length: 32768
+          
+          mixtral_series:
+            patterns: ["mixtral"]
+            features: [text, streaming, tools, system_messages]
+            base_context_length: 32768
+          
+          gemma_series:
+            patterns: ["gemma"]
+            features: [text, streaming, tools, system_messages]
+            base_context_length: 8192
 
-# Google Gemini
+# Google Gemini (enhanced with discovery)
 gemini:
   client_class: "chuk_llm.llm.providers.gemini_client.GeminiLLMClient"
   api_key_env: "GEMINI_API_KEY"
@@ -311,9 +438,28 @@ gemini:
       features: [text, streaming, tools, parallel_calls, vision, json_mode, reasoning]
       max_context_length: 1000000
       max_output_tokens: 8192
+  
+  extra:
+    dynamic_discovery:
+      enabled: false  # Google doesn't have public models API
+      discoverer_type: "gemini"
+      
+      inference_config:
+        default_features: [text, streaming, tools, parallel_calls, vision, json_mode, system_messages, reasoning]
+        default_context_length: 1000000
+        
+        family_rules:
+          gemini2:
+            patterns: ["gemini-2"]
+            features: [text, streaming, tools, parallel_calls, vision, json_mode, reasoning]
+            base_context_length: 1000000
+          
+          gemini1_5:
+            patterns: ["gemini-1.5"]
+            features: [text, streaming, tools, parallel_calls, vision, json_mode, reasoning]
+            base_context_length: 1000000
 
-# Mistral AI – official cloud with Magistral reasoning
-# Mistral AI – fixed to use correct models for tools
+# Mistral AI – official cloud with Magistral reasoning (enhanced with discovery)
 mistral:
   client_class: "chuk_llm.llm.providers.mistral_client.MistralLLMClient"
   api_key_env: "MISTRAL_API_KEY"
@@ -440,19 +586,50 @@ mistral:
       features: [text, streaming, tools]
       max_context_length: 32768
       max_output_tokens: 4096
+  
+  extra:
+    dynamic_discovery:
+      enabled: false  # Mistral doesn't have public models API currently
+      discoverer_type: "mistral"
+      
+      inference_config:
+        default_features: [text, streaming, system_messages, parallel_calls]
+        default_context_length: 128000
+        
+        family_rules:
+          magistral:
+            patterns: ["magistral"]
+            features: [text, streaming, reasoning]
+            base_context_length: 40960
+          
+          mistral_large:
+            patterns: ["mistral-large", "mistral-medium"]
+            features: [text, streaming, tools, parallel_calls, json_mode]
+            base_context_length: 131072
+          
+          pixtral:
+            patterns: ["pixtral"]
+            features: [text, streaming, tools, vision, multimodal, parallel_calls]
+            base_context_length: 131072
+          
+          codestral:
+            patterns: ["codestral", "devstral"]
+            features: [text, streaming, tools]
+            base_context_length: 131072
 
-# Local Ollama daemon
+# Local Ollama daemon (enhanced with full dynamic discovery)
 ollama:
   client_class: "chuk_llm.llm.providers.ollama_client.OllamaLLMClient"
   api_base: "http://localhost:11434"
-  default_model: "granite3.3"
+  default_model: "granite3.3"  # Fallback if discovery fails
   
-  # All Ollama models support text
+  # Baseline features for all Ollama models
   features: [text, streaming, system_messages]
   max_context_length: 8192
   max_output_tokens: 4096
   rate_limits: {}
   
+  # Static model list (fallback for when discovery is disabled)
   models:
     - "llama3.3"
     - "qwen3"
@@ -532,8 +709,113 @@ ollama:
       features: [text, streaming, tools, reasoning]
       max_context_length: 8192
       max_output_tokens: 4096
+  
+  # ENHANCED DYNAMIC DISCOVERY CONFIGURATION
+  extra:
+    # Primary dynamic discovery settings
+    dynamic_discovery:
+      enabled: true
+      discoverer_type: "ollama"
+      cache_timeout: 300  # 5 minutes
+      auto_update_models: true  # Automatically update model list
+      
+      # Full inference configuration for Ollama
+      inference_config:
+        default_features: [text, streaming]
+        default_context_length: 8192
+        
+        # Comprehensive family rules
+        family_rules:
+          llama:
+            patterns: ["llama", "yi-coder"]
+            features: [text, streaming, system_messages]
+            base_context_length: 8192
+            context_rules:
+              "llama-?3\\.[23]": 128000
+              "llama-?3\\.1": 128000
+              "llama-?3": 8192
+              "llama-?2": 4096
+          
+          qwen:
+            patterns: ["qwen", "codeqwen"]
+            features: [text, streaming, tools, reasoning, system_messages]
+            base_context_length: 32768
+            context_rules:
+              "qwen2\\.5": 32768
+              "qwen2": 32768
+              "qwen": 8192
+          
+          mistral:
+            patterns: ["mistral", "mixtral"]
+            features: [text, streaming, tools, system_messages]
+            base_context_length: 32768
+          
+          gemma:
+            patterns: ["gemma"]
+            features: [text, streaming, tools, system_messages]
+            base_context_length: 8192
+          
+          phi:
+            patterns: ["phi"]
+            features: [text, streaming, system_messages]
+            base_context_length: 4096
+            context_rules:
+              "phi-?3": 128000
+          
+          granite:
+            patterns: ["granite"]
+            features: [text, streaming, tools, reasoning, system_messages]
+            base_context_length: 8192
+          
+          code:
+            patterns: ["codellama", "starcoder", "deepseek-coder", "codegemma"]
+            features: [text, streaming, system_messages]
+            base_context_length: 16384
+          
+          vision:
+            patterns: [".*vision.*", ".*llava.*", ".*moondream.*"]
+            features: [text, streaming, vision, multimodal, system_messages]
+            base_context_length: 8192
+          
+          embedding:
+            patterns: [".*embed.*", "nomic-embed", "mxbai-embed"]
+            features: []  # No text completion
+            base_context_length: 512
+        
+        # Pattern-based rules (applied after family rules)
+        pattern_rules:
+          instruct_tuned:
+            patterns: [".*instruct.*", ".*chat.*"]
+            add_features: [system_messages]
+          
+          vision_capable:
+            patterns: [".*vision.*", ".*llava.*"]
+            add_features: [vision, multimodal]
+          
+          tool_capable:
+            patterns: [".*qwen.*", ".*gemma.*", ".*mistral.*", ".*granite.*"]
+            add_features: [tools]
+          
+          reasoning_capable:
+            patterns: [".*qwen.*", ".*granite.*", ".*llama-?3\\.[12].*"]
+            add_features: [reasoning]
+        
+        # Size-based inference rules
+        size_rules:
+          large_model:
+            min_size_bytes: 1000000000  # 1GB
+            add_features: [reasoning]
+          
+          very_large_model:
+            min_size_bytes: 10000000000  # 10GB
+            add_features: [parallel_calls]
+        
+        # Parameter extraction patterns
+        parameter_patterns:
+          - "(\\d+(?:\\.\\d+)?)b"
+          - "(\\d+(?:\\.\\d+)?)B"
 
-# IBM watsonx.ai
+# IBM watsonx.ai (enhanced with discovery)
 watsonx:
   client_class: "chuk_llm.llm.providers.watsonx_client.WatsonXLLMClient"
   api_key_env: "WATSONX_API_KEY"
@@ -614,6 +896,40 @@ watsonx:
   extra:
     project_id_env: "WATSONX_PROJECT_ID"
     space_id_env: "WATSONX_SPACE_ID"
+    
+    dynamic_discovery:
+      enabled: false  # WatsonX doesn't have public models API
+      discoverer_type: "watsonx"
+      
+      inference_config:
+        default_features: [text, streaming, system_messages, reasoning]
+        default_context_length: 131072
+        
+        family_rules:
+          granite:
+            patterns: ["ibm/granite"]
+            features: [text, streaming, tools, reasoning, system_messages]
+            base_context_length: 131072
+          
+          granite_vision:
+            patterns: ["ibm/granite-vision"]
+            features: [text, streaming, tools, vision, multimodal, system_messages]
+            base_context_length: 131072
+          
+          llama4:
+            patterns: ["meta-llama/llama-4"]
+            features: [text, streaming, tools, multimodal, system_messages]
+            base_context_length: 131072
+          
+          llama3_vision:
+            patterns: ["meta-llama/llama-3-.*vision"]
+            features: [text, streaming, tools, vision, multimodal, system_messages]
+            base_context_length: 131072
+          
+          mistral_watsonx:
+            patterns: ["mistralai/mistral"]
+            features: [text, streaming, tools, parallel_calls, system_messages]
+            base_context_length: 131072
   
   model_capabilities:
     # Llama 4 models - text + multimodal capabilities
@@ -682,7 +998,7 @@ watsonx:
       max_context_length: 131072  # 128k
       max_output_tokens: 8192
 
-# Perplexity AI - OpenAI-compatible with search capabilities
+# Perplexity AI - OpenAI-compatible with search capabilities (enhanced with discovery)
 perplexity:
   inherits: "openai"
   client_class: "chuk_llm.llm.providers.openai_client.OpenAILLMClient"
@@ -783,3 +1099,81 @@ perplexity:
       "sonar-reasoning": "Standard reasoning with full beta features"
       "sonar-pro": "Professional search with full beta features"
       "sonar": "Standard search with full beta features"
+    
+    dynamic_discovery:
+      enabled: true
+      discoverer_type: "perplexity"  # Uses OpenAI-compatible discoverer
+      
+      inference_config:
+        default_features: [text, streaming, json_mode, system_messages]
+        default_context_length: 127072
+        
+        family_rules:
+          sonar_models:
+            patterns: ["sonar"]
+            features: [text, streaming, json_mode, system_messages, vision]
+            base_context_length: 127072
+          
+          research_models:
+            patterns: [".*research.*", ".*reasoning.*"]
+            features: [text, streaming, json_mode, system_messages, reasoning]
+            base_context_length: 127072
+          
+          offline_models:
+            patterns: ["r1-"]
+            features: [text, streaming, json_mode, system_messages]
+            base_context_length: 127072
+
+##############################################################################
+# Universal Discovery Configuration (for future providers)
+##############################################################################
+__discovery_defaults__:
+  # Default inference rules applied to all providers unless overridden
+  universal_patterns:
+    embedding_models:
+      patterns: [".*embed.*", ".*embedding.*"]
+      remove_features: [text, streaming, tools, vision, reasoning]
+      context_length: 512
+      family: embedding
+    
+    vision_models:
+      patterns: [".*vision.*", ".*multimodal.*", ".*vlm.*"]
+      add_features: [vision, multimodal]
+    
+    code_models:
+      patterns: [".*code.*", "starcoder", "codellama", "deepseek-coder"]
+      add_features: [system_messages]
+    
+    instruct_models:
+      patterns: [".*instruct.*", ".*chat.*"]
+      add_features: [system_messages]
+    
+    reasoning_models:
+      patterns: [".*70b.*", ".*72b.*", ".*405b.*", ".*reasoning.*", "o[1-4].*", "magistral.*"]
+      add_features: [reasoning]
+  
+  universal_size_rules:
+    large_model:
+      min_size_bytes: 1000000000  # 1GB
+      add_features: [reasoning]
+    
+    very_large_model:
+      min_size_bytes: 10000000000  # 10GB
+      add_features: [parallel_calls]
+    
+    huge_model:
+      min_size_bytes: 50000000000  # 50GB
+      add_features: [parallel_calls, reasoning, json_mode]
+  
+  parameter_patterns:
+    - "(?:(\\d+(?:\\.\\d+)?)b)"
+    - "(?:(\\d+(?:\\.\\d+)?)B)"
+    - "(?:(\\d+)\\s*billion)"
+  
+  feature_dependencies:
+    vision:
+      requires: [multimodal]
+    parallel_calls:
+      requires: [tools]
+    json_mode:
+      requires: [text]

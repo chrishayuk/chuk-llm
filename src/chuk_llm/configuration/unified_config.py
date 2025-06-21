@@ -1,19 +1,17 @@
 # chuk_llm/configuration/unified_config.py
 """
-Unified Configuration System for ChukLLM
-========================================
+Clean Unified Configuration System with Transparent Discovery
+===========================================================
 
 Single source of truth for all provider configuration, capabilities, and validation.
 Everything comes from one YAML file with intelligent merging and inheritance.
+Discovery is completely transparent - no API changes needed.
 """
 
 import os
-import re
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Any, Tuple, Union
-from dataclasses import dataclass, field
-from enum import Enum
 
 try:
     import yaml
@@ -26,123 +24,24 @@ try:
 except ImportError:
     _dotenv_available = False
 
+from .models import Feature, ModelCapabilities, ProviderConfig
+from .discovery import ConfigDiscoveryMixin
+from .validator import ConfigValidator
+
 logger = logging.getLogger(__name__)
 
 
-# ──────────────────────────── Feature Definitions ─────────────────────────────
-class Feature(str, Enum):
-    """Supported LLM features"""
-    TEXT = "text"                          # Basic text completion capability
-    STREAMING = "streaming"                # Streaming response capability
-    TOOLS = "tools"                        # Function calling/tools
-    VISION = "vision"                      # Image/visual input processing
-    JSON_MODE = "json_mode"                # Structured JSON output
-    PARALLEL_CALLS = "parallel_calls"      # Multiple simultaneous function calls
-    SYSTEM_MESSAGES = "system_messages"    # System message support
-    MULTIMODAL = "multimodal"              # Multiple input modalities
-    REASONING = "reasoning"                # Advanced reasoning capabilities
-
-    @classmethod
-    def from_string(cls, value: str) -> "Feature":
-        """Convert string to Feature enum"""
-        try:
-            return cls(value.lower())
-        except ValueError as exc:
-            raise ValueError(f"Unknown feature: {value}") from exc
-
-
-# ──────────────────────────── Data Classes ─────────────────────────────
-@dataclass
-class ModelCapabilities:
-    """Model-specific capabilities with inheritance from provider"""
-    pattern: str
-    features: Set[Feature] = field(default_factory=set)
-    max_context_length: Optional[int] = None
-    max_output_tokens: Optional[int] = None
+class UnifiedConfigManager(ConfigDiscoveryMixin):
+    """
+    Unified configuration manager with transparent dynamic discovery.
     
-    def matches(self, model_name: str) -> bool:
-        """Check if this capability applies to the given model"""
-        return bool(re.match(self.pattern, model_name, flags=re.IGNORECASE))
-    
-    def get_effective_features(self, provider_features: Set[Feature]) -> Set[Feature]:
-        """Get effective features by inheriting from provider and adding model-specific"""
-        return provider_features.union(self.features)
-
-
-@dataclass 
-class ProviderConfig:
-    """Complete unified provider configuration"""
-    name: str
-    
-    # Client configuration
-    client_class: str = ""
-    api_key_env: Optional[str] = None
-    api_key_fallback_env: Optional[str] = None
-    api_base: Optional[str] = None
-    
-    # Model configuration
-    default_model: str = ""
-    models: List[str] = field(default_factory=list)
-    model_aliases: Dict[str, str] = field(default_factory=dict)
-    
-    # Provider-level capabilities (baseline for all models)
-    features: Set[Feature] = field(default_factory=set)
-    max_context_length: Optional[int] = None
-    max_output_tokens: Optional[int] = None
-    rate_limits: Dict[str, int] = field(default_factory=dict)
-    
-    # Model-specific capability overrides
-    model_capabilities: List[ModelCapabilities] = field(default_factory=list)
-    
-    # Inheritance and extras
-    inherits: Optional[str] = None
-    extra: Dict[str, Any] = field(default_factory=dict)
-    
-    def supports_feature(self, feature: Union[str, Feature], model: Optional[str] = None) -> bool:
-        """Check if provider/model supports a feature"""
-        if isinstance(feature, str):
-            feature = Feature.from_string(feature)
-        
-        if model:
-            # Check model-specific capabilities
-            model_caps = self.get_model_capabilities(model)
-            effective_features = model_caps.get_effective_features(self.features)
-            return feature in effective_features
-        else:
-            # Check provider baseline
-            return feature in self.features
-    
-    def get_model_capabilities(self, model: Optional[str] = None) -> ModelCapabilities:
-        """Get capabilities for specific model"""
-        if model and self.model_capabilities:
-            for mc in self.model_capabilities:
-                if mc.matches(model):
-                    # Return model-specific caps with proper inheritance
-                    return ModelCapabilities(
-                        pattern=mc.pattern,
-                        features=mc.get_effective_features(self.features),
-                        max_context_length=mc.max_context_length or self.max_context_length,
-                        max_output_tokens=mc.max_output_tokens or self.max_output_tokens
-                    )
-        
-        # Return provider defaults
-        return ModelCapabilities(
-            pattern=".*",
-            features=self.features.copy(),
-            max_context_length=self.max_context_length,
-            max_output_tokens=self.max_output_tokens
-        )
-    
-    def get_rate_limit(self, tier: str = "default") -> Optional[int]:
-        """Get rate limit for tier"""
-        return self.rate_limits.get(tier)
-
-
-# ──────────────────────────── Configuration Manager ─────────────────────────────
-class UnifiedConfigManager:
-    """Unified configuration manager with validation and capabilities"""
+    Discovery is completely seamless - existing APIs work unchanged.
+    All configuration comes from YAML, nothing hardcoded.
+    """
     
     def __init__(self, config_path: Optional[str] = None):
+        super().__init__()  # Initialize discovery mixin
+        
         self.config_path = config_path
         self.providers: Dict[str, ProviderConfig] = {}
         self.global_aliases: Dict[str, str] = {}
@@ -151,8 +50,6 @@ class UnifiedConfigManager:
         
         # Load environment variables first
         self._load_environment()
-        
-        # No built-in defaults - everything comes from config files
     
     def _load_environment(self):
         """Load environment variables from .env file"""
@@ -375,7 +272,7 @@ class UnifiedConfigManager:
             
             if not changes:
                 break
-            
+    
     def load(self):
         """Load configuration"""
         if self._loaded:
@@ -387,11 +284,13 @@ class UnifiedConfigManager:
         self._loaded = True
     
     def get_provider(self, name: str) -> ProviderConfig:
-        """Get provider configuration"""
+        """Get provider configuration (with transparent discovery)"""
         self.load()
+        
         if name not in self.providers:
             available = ", ".join(self.providers.keys())
             raise ValueError(f"Unknown provider: {name}. Available: {available}")
+        
         return self.providers[name]
     
     def get_all_providers(self) -> List[str]:
@@ -445,109 +344,8 @@ class UnifiedConfigManager:
         self.providers.clear()
         self.global_aliases.clear()
         self.global_settings.clear()
+        super().reload()  # Clear discovery state
         self.load()
-
-
-# ──────────────────────────── Validation ─────────────────────────────
-class ConfigValidator:
-    """Validates configurations and requests"""
-    
-    @staticmethod
-    def validate_provider_config(provider: ProviderConfig, strict: bool = False) -> Tuple[bool, List[str]]:
-        """Validate provider configuration"""
-        issues = []
-        
-        # Check required fields
-        if not provider.client_class:
-            issues.append(f"Missing 'client_class' for provider {provider.name}")
-        
-        # Check API key for non-local providers
-        if provider.name not in ["ollama", "local"]:
-            if provider.api_key_env and not os.getenv(provider.api_key_env):
-                if not provider.api_key_fallback_env or not os.getenv(provider.api_key_fallback_env):
-                    issues.append(f"Missing API key: {provider.api_key_env} environment variable not set")
-        
-        # Validate API base URL
-        if provider.api_base and not ConfigValidator._is_valid_url(provider.api_base):
-            issues.append(f"Invalid API base URL: {provider.api_base}")
-        
-        # Check default model
-        if not provider.default_model:
-            issues.append(f"Missing 'default_model' for provider {provider.name}")
-        
-        return len(issues) == 0, issues
-    
-    @staticmethod
-    def validate_request_compatibility(
-        provider_name: str,
-        model: Optional[str] = None,
-        messages: Optional[List[Dict[str, Any]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        stream: bool = False,
-        **kwargs
-    ) -> Tuple[bool, List[str]]:
-        """Validate if request is compatible with provider/model"""
-        issues = []
-        
-        try:
-            config_manager = get_config()
-            provider = config_manager.get_provider(provider_name)
-            
-            # Check streaming support
-            if stream and not provider.supports_feature(Feature.STREAMING, model):
-                issues.append(f"{provider_name}/{model or 'default'} doesn't support streaming")
-            
-            # Check tools support
-            if tools and not provider.supports_feature(Feature.TOOLS, model):
-                issues.append(f"{provider_name}/{model or 'default'} doesn't support function calling")
-            
-            # Check vision support
-            if messages and ConfigValidator._has_vision_content(messages):
-                if not provider.supports_feature(Feature.VISION, model):
-                    issues.append(f"{provider_name}/{model or 'default'} doesn't support vision/image inputs")
-            
-            # Check JSON mode
-            if kwargs.get("response_format") == "json":
-                if not provider.supports_feature(Feature.JSON_MODE, model):
-                    issues.append(f"{provider_name}/{model or 'default'} doesn't support JSON mode")
-            
-        except Exception as exc:
-            issues.append(f"Configuration error: {exc}")
-        
-        return len(issues) == 0, issues
-    
-    @staticmethod
-    def _is_valid_url(url: str) -> bool:
-        """Basic URL validation"""
-        if not url:
-            return False
-        
-        url_pattern = re.compile(
-            r'^https?://'
-            r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|'
-            r'localhost|'
-            r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
-            r'(?::\d+)?'
-            r'(?:/?|[/?]\S+)$',
-            re.IGNORECASE
-        )
-        return url_pattern.match(url) is not None
-    
-    @staticmethod
-    def _has_vision_content(messages: List[Dict[str, Any]]) -> bool:
-        """Check if messages contain vision/image content"""
-        if not messages:
-            return False
-        
-        for message in messages:
-            if not message:
-                continue
-            content = message.get("content", "")
-            if isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") in ["image", "image_url"]:
-                        return True
-        return False
 
 
 # ──────────────────────────── Capability Checker ─────────────────────────────
