@@ -319,11 +319,11 @@ deepseek:
 gemini:
   api_key_env: GEMINI_API_KEY
   client_class: chuk_llm.llm.providers.gemini_client.GeminiLLMClient
-  default_model: gemini-2.0-flash
+  default_model: gemini-2.5-flash
   extra:
     dynamic_discovery:
       discoverer_type: gemini
-      enabled: false
+      enabled: true
       inference_config:
         default_context_length: 1000000
         default_features:
@@ -338,28 +338,45 @@ gemini:
         family_rules:
           gemini1_5:
             base_context_length: 1000000
+            base_max_output_tokens: 8192
             features:
             - text
             - streaming
             - tools
-            - parallel_calls
             - vision
+            - parallel_calls
             - json_mode
-            - reasoning
+            - system_messages
             patterns:
-            - gemini-1.5
-          gemini2:
+            - gemini-1.5-
+          gemini2_0:
             base_context_length: 1000000
+            base_max_output_tokens: 8192
             features:
             - text
             - streaming
             - tools
-            - parallel_calls
             - vision
+            - parallel_calls
             - json_mode
+            - system_messages
             - reasoning
             patterns:
-            - gemini-2
+            - gemini-2.0-
+          gemini2_5:
+            base_context_length: 2000000
+            base_max_output_tokens: 64000
+            features:
+            - text
+            - streaming
+            - tools
+            - vision
+            - parallel_calls
+            - json_mode
+            - system_messages
+            - reasoning
+            patterns:
+            - gemini-2.5-
   features:
   - text
   - streaming
@@ -369,33 +386,94 @@ gemini:
   - json_mode
   - system_messages
   - reasoning
-  max_context_length: 1000000
-  max_output_tokens: 8192
+  max_context_length: 2000000
+  max_output_tokens: 64000
   model_aliases:
-    flash: gemini-2.0-flash
-    latest: gemini-2.0-flash
-    pro: gemini-1.5-pro
-    reasoning: gemini-1.5-pro
-    thinking: gemini-2.0-flash
+    flash: gemini-2.5-flash
+    pro: gemini-2.5-pro
+    latest: gemini-2.5-flash
+    reasoning: gemini-2.5-pro
+    thinking: gemini-2.5-pro
+    vision: gemini-2.5-flash
+    legacy_pro: gemini-1.5-pro
+    legacy_flash: gemini-1.5-flash
+    budget: gemini-1.5-flash-8b
+    multimodal: gemini-2.5-flash
   model_capabilities:
+  # Gemini 2.5 series - Enhanced reasoning and thinking capabilities
+  - features:
+    - text
+    - streaming
+    - tools
+    - vision
+    - parallel_calls
+    - json_mode
+    - system_messages
+    - reasoning
+    max_context_length: 2000000
+    max_output_tokens: 64000
+    pattern: gemini-2\.5-.*
+  # Gemini 2.0 series - Next-gen features
+  - features:
+    - text
+    - streaming
+    - tools
+    - vision
+    - parallel_calls
+    - json_mode
+    - system_messages
+    - reasoning
+    max_context_length: 1000000
+    max_output_tokens: 8192
+    pattern: gemini-2\.0-.*
+  # Gemini 1.5 series - Production ready
+  - features:
+    - text
+    - streaming
+    - vision
+    - tools
+    - parallel_calls
+    - json_mode
+    - system_messages
+    max_context_length: 1000000
+    max_output_tokens: 8192
+    pattern: gemini-1\.5-pro.*
+  - features:
+    - text
+    - streaming
+    - vision
+    - tools
+    - parallel_calls
+    - json_mode
+    - system_messages
+    max_context_length: 1000000
+    max_output_tokens: 8192
+    pattern: gemini-1\.5-flash$
   - features:
     - text
     - streaming
     - tools
     - parallel_calls
-    - vision
     - json_mode
-    - reasoning
+    - system_messages
     max_context_length: 1000000
     max_output_tokens: 8192
-    pattern: gemini-.*
+    pattern: gemini-1\.5-flash-8b
   models:
+  # Gemini 2.5 series (Latest - Enhanced reasoning)
+  - gemini-2.5-pro
+  - gemini-2.5-flash
+  # Gemini 2.0 series (Next-gen features)
   - gemini-2.0-flash
+  - gemini-2.0-flash-lite
+  # Gemini 1.5 series (Production ready)
   - gemini-1.5-pro
   - gemini-1.5-flash
   - gemini-1.5-flash-8b
   rate_limits:
     default: 1500
+    tier_1: 1000
+    tier_2: 2000
 groq:
   api_base: https://api.groq.com
   api_key_env: GROQ_API_KEY

@@ -33,7 +33,7 @@ class CompatibilityReportGenerator:
         self.test_providers = {
             "openai": {"models": ["gpt-4o-mini", "gpt-4o"], "has_env": self._check_env("OPENAI_API_KEY")},
             "anthropic": {"models": ["claude-sonnet-4-20250514"], "has_env": self._check_env("ANTHROPIC_API_KEY")},
-            "gemini": {"models": ["gemini-2.0-flash-exp"], "has_env": self._check_env("GEMINI_API_KEY")},
+            "gemini": {"models": ["gemini-2.0-flash"], "has_env": self._check_env("GEMINI_API_KEY")},
             "mistral": {"models": ["mistral-medium-2505"], "has_env": self._check_env("MISTRAL_API_KEY")},
             "deepseek": {"models": ["deepseek-chat"], "has_env": self._check_env("DEEPSEEK_API_KEY")},
             "perplexity": {"models": ["sonar-pro"], "has_env": self._check_env("PERPLEXITY_API_KEY")},

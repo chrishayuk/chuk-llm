@@ -1,202 +1,180 @@
 #!/usr/bin/env python3
 """
-Test Discovery Actually Working
+Function Existence Only Test
 
-Simple test to verify discovery works end-to-end with your actual models.
+ZERO RISK test - only checks if functions exist, never calls them.
+No model downloads, no API calls, no inference.
 """
 
-import asyncio
-
-async def test_discovery_models():
-    """Test discovery with your actual models"""
+def safe_function_existence_check():
+    """Check function existence without calling anything"""
     
-    print("🎯 Testing Discovery End-to-End")
+    print("🔍 ChukLLM Function Existence Check")
     print("=" * 40)
+    print("🛡️  ZERO RISK - No function calls, no downloads")
+    print()
     
-    # Test 1: Direct discovery
-    print("1️⃣ Testing Direct Discovery...")
+    print("1️⃣ Import Test...")
     
     try:
-        from chuk_llm.api.discovery import discover_models
+        import chuk_llm
+        print("   ✅ chuk_llm imported successfully")
         
-        models = await discover_models("ollama", force_refresh=True)
+        # Count total attributes
+        all_attrs = dir(chuk_llm)
+        print(f"   📊 Total attributes: {len(all_attrs)}")
         
-        print(f"   ✅ Discovery successful!")
-        print(f"   📊 Found {len(models)} models")
-        
-        # Find your specific models
-        your_models = {
-            "devstral:latest": None,
-            "qwen3:32b": None, 
-            "llama3.2-vision:latest": None,
-            "phi4-reasoning:latest": None,
-            "granite3.3:latest": None
-        }
-        
-        discovered_names = [m['name'] for m in models]
-        
-        for test_model in your_models.keys():
-            base_name = test_model.replace(':latest', '')
-            
-            if test_model in discovered_names:
-                model_data = next(m for m in models if m['name'] == test_model)
-                your_models[test_model] = model_data
-                print(f"   ✅ {test_model} - Found ({model_data.get('family', 'unknown')})")
-            elif base_name in discovered_names:
-                model_data = next(m for m in models if m['name'] == base_name)
-                your_models[base_name] = model_data
-                print(f"   ✅ {test_model} - Found as {base_name} ({model_data.get('family', 'unknown')})")
-            else:
-                print(f"   ❌ {test_model} - Not found")
-        
+    except ImportError as e:
+        print(f"   ❌ chuk_llm import failed: {e}")
+        return
     except Exception as e:
-        print(f"   ❌ Discovery failed: {e}")
-        return False
+        print(f"   ❌ Unexpected import error: {e}")
+        return
     
-    # Test 2: Client creation with discovered models
-    print(f"\n2️⃣ Testing Client Creation...")
+    print("\n2️⃣ Ollama Function Detection...")
     
-    try:
-        from chuk_llm.llm.client import get_client
+    # Check for ollama functions (based on your known models)
+    expected_functions = [
+        # Base model functions (without :latest)
+        "ask_ollama_granite3_3",
+        "ask_ollama_qwen3",
+        "ask_ollama_devstral", 
+        "ask_ollama_mistral",
+        "ask_ollama_gemma3",
+        "ask_ollama_phi4_reasoning",
+        "ask_ollama_llama3_2_vision",
         
-        # Test with a few different models
-        test_models = ["devstral", "qwen3", "granite3.3"]
+        # With :latest variants
+        "ask_ollama_granite3_3_latest",
+        "ask_ollama_devstral_latest",
+        "ask_ollama_phi4_reasoning_latest",
         
-        for test_model in test_models:
-            try:
-                client = get_client("ollama", model=test_model)
-                model_info = client.get_model_info()
-                features = model_info.get('features', [])
-                
-                print(f"   ✅ {test_model} - Client created")
-                print(f"      Features: {', '.join(features[:4])}")
-                
-                break  # Success with first working model
-                
-            except Exception as model_error:
-                print(f"   ⚠️  {test_model} - {str(model_error)[:50]}...")
-                continue
-        
-    except Exception as e:
-        print(f"   ❌ Client creation failed: {e}")
-        return False
+        # Specific variants
+        "ask_ollama_qwen3_32b",
+        "ask_ollama_llama3_2_vision_latest"
+    ]
     
-    # Test 3: Actual LLM completion
-    print(f"\n3️⃣ Testing LLM Completion...")
+    found_functions = []
+    missing_functions = []
     
-    try:
-        from chuk_llm import ask
-        
-        # Try with a model that should work
-        working_models = ["granite3.3", "qwen3", "llama3.3"]
-        
-        for test_model in working_models:
-            try:
-                print(f"   🧪 Testing completion with {test_model}...")
-                
-                response = await ask(
-                    "What is 2+2? Answer with just the number.",
-                    provider="ollama",
-                    model=test_model,
-                    max_tokens=5
-                )
-                
-                print(f"   ✅ Success! Response: '{response.strip()}'")
-                break
-                
-            except Exception as model_error:
-                print(f"   ⚠️  {test_model} failed: {str(model_error)[:50]}...")
-                continue
-        
-        return True
-        
-    except Exception as e:
-        print(f"   ❌ LLM completion failed: {e}")
-        return False
-
-async def test_specific_discovered_models():
-    """Test with models that should be discovered"""
-    
-    print(f"\n4️⃣ Testing Specific Discovered Models...")
-    
-    # These should be discovered and work
-    discovered_models = ["devstral:latest", "qwen3:32b"]
-    
-    try:
-        from chuk_llm import ask
-        
-        for model in discovered_models:
-            try:
-                print(f"   🧪 Testing {model}...")
-                
-                # Try to use the model directly
-                response = await ask(
-                    "Say 'working' if you can respond.",
-                    provider="ollama", 
-                    model=model,
-                    max_tokens=5
-                )
-                
-                print(f"   ✅ {model} - Response: '{response.strip()}'")
-                
-            except Exception as e:
-                error_msg = str(e)
-                if "not available" in error_msg.lower():
-                    print(f"   ❌ {model} - Model not available (discovery integration issue)")
-                else:
-                    print(f"   ⚠️  {model} - Error: {error_msg[:50]}...")
-    
-    except Exception as e:
-        print(f"   ❌ Discovered model test failed: {e}")
-
-def show_discovery_status():
-    """Show current discovery status"""
-    
-    print(f"\n📊 Discovery Status Summary...")
-    
-    try:
-        from chuk_llm.configuration import get_config
-        
-        manager = get_config()
-        provider = manager.get_provider('ollama')
-        
-        discovery_config = provider.extra.get('dynamic_discovery', {})
-        
-        print(f"   🔧 Discovery enabled: {discovery_config.get('enabled', False)}")
-        print(f"   📋 Static models: {len(provider.models)}")
-        print(f"   🏷️  Model aliases: {len(provider.model_aliases)}")
-        print(f"   ⚙️  Default model: {provider.default_model}")
-        
-        if discovery_config.get('enabled'):
-            print(f"   ✅ Discovery is properly configured!")
+    for func_name in expected_functions:
+        if hasattr(chuk_llm, func_name):
+            found_functions.append(func_name)
+            print(f"   ✅ {func_name}")
         else:
-            print(f"   ❌ Discovery is disabled")
+            missing_functions.append(func_name)
+            print(f"   ❌ {func_name}")
     
-    except Exception as e:
-        print(f"   ❌ Status check failed: {e}")
-
-async def main():
-    """Main test function"""
+    print(f"\n   📊 Results:")
+    print(f"      Found: {len(found_functions)}")
+    print(f"      Missing: {len(missing_functions)}")
     
-    # Show status first
-    show_discovery_status()
+    print("\n3️⃣ Function Type Analysis...")
     
-    # Run tests
-    success = await test_discovery_models()
+    # Count different types of functions
+    ask_functions = [attr for attr in all_attrs if attr.startswith('ask_ollama_') and not attr.endswith('_sync')]
+    stream_functions = [attr for attr in all_attrs if attr.startswith('stream_ollama_')]
+    sync_functions = [attr for attr in all_attrs if attr.startswith('ask_ollama_') and attr.endswith('_sync')]
     
-    if success:
-        await test_specific_discovered_models()
+    print(f"   📋 Async functions: {len(ask_functions)}")
+    print(f"   📋 Stream functions: {len(stream_functions)}")
+    print(f"   📋 Sync functions: {len(sync_functions)}")
+    
+    # Show some examples
+    if ask_functions:
+        print(f"\n   📝 Sample async functions:")
+        for func in sorted(ask_functions)[:5]:
+            print(f"      • {func}")
+        if len(ask_functions) > 5:
+            print(f"      ... and {len(ask_functions) - 5} more")
+    
+    print("\n4️⃣ Core Function Check...")
+    
+    core_functions = ["ask", "stream", "show_config"]
+    
+    for func_name in core_functions:
+        if hasattr(chuk_llm, func_name):
+            print(f"   ✅ chuk_llm.{func_name}")
+        else:
+            print(f"   ❌ chuk_llm.{func_name}")
+    
+    print("\n5️⃣ Provider Function Detection...")
+    
+    # Look for other provider functions
+    providers = ["openai", "anthropic", "gemini"]
+    
+    for provider in providers:
+        provider_funcs = [attr for attr in all_attrs if f"ask_{provider}" in attr and not attr.endswith('_sync')]
+        if provider_funcs:
+            print(f"   📦 {provider}: {len(provider_funcs)} functions")
+        else:
+            print(f"   📦 {provider}: No functions found")
+    
+    print("\n6️⃣ Function Inspection (Safe)...")
+    
+    # Look at function properties without calling them
+    if found_functions:
+        sample_func_name = found_functions[0]
+        sample_func = getattr(chuk_llm, sample_func_name)
         
-        print(f"\n🎉 Discovery Test Complete!")
-        print(f"💡 Your 48 Ollama models are now accessible through ChukLLM")
-        print(f"📋 You can use models like: devstral:latest, qwen3:32b, etc.")
-    else:
-        print(f"\n💥 Some tests failed - check the output above")
+        print(f"   🔍 Inspecting: {sample_func_name}")
+        print(f"      Type: {type(sample_func)}")
+        print(f"      Callable: {callable(sample_func)}")
+        
+        # Check if it has docstring
+        if hasattr(sample_func, '__doc__') and sample_func.__doc__:
+            doc = sample_func.__doc__.strip()
+            print(f"      Docstring: {doc[:50]}{'...' if len(doc) > 50 else ''}")
+        else:
+            print(f"      Docstring: None")
+        
+        # Check signature without calling
+        try:
+            import inspect
+            sig = inspect.signature(sample_func)
+            params = list(sig.parameters.keys())
+            print(f"      Parameters: {params[:3]}{'...' if len(params) > 3 else ''}")
+        except Exception:
+            print(f"      Parameters: Cannot inspect")
     
-    print(f"\n📖 Usage Examples:")
-    print(f"   await chuk_llm.ask('Hello', provider='ollama', model='qwen3:32b')")
-    print(f"   await chuk_llm.ask('Code review', provider='ollama', model='devstral')")
-    print(f"   await chuk_llm.ask('Analyze image', provider='ollama', model='llama3.2-vision')")
+    # Final summary
+    print(f"\n🎯 Summary")
+    print("=" * 30)
+    
+    if found_functions:
+        print(f"✅ ChukLLM is working!")
+        print(f"📊 Found {len(found_functions)} expected Ollama functions")
+        print(f"🚀 Total Ollama functions: {len(ask_functions)} async + {len(sync_functions)} sync + {len(stream_functions)} stream")
+        
+        print(f"\n💡 Ready to use (examples):")
+        for func in found_functions[:3]:
+            print(f"   await chuk_llm.{func}('your prompt')")
+        
+        if len(found_functions) > 3:
+            print(f"   ... and {len(found_functions) - 3} more functions")
+    else:
+        print(f"⚠️  No expected functions found")
+        print(f"💡 Total ollama functions available: {len(ask_functions)}")
+        if ask_functions:
+            print(f"   Available: {', '.join(ask_functions[:3])}")
+    
+    print(f"\n🛡️  Safety Confirmation:")
+    print("   ✅ No functions called")
+    print("   ✅ No API requests made") 
+    print("   ✅ No models downloaded")
+    print("   ✅ Only existence checked")
+
+def main():
+    """Main safe check"""
+    try:
+        safe_function_existence_check()
+    except KeyboardInterrupt:
+        print(f"\n\n⏹️  Check interrupted by user")
+    except Exception as e:
+        print(f"\n\n💥 Check failed with error: {e}")
+        import traceback
+        print("Traceback:")
+        traceback.print_exc()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

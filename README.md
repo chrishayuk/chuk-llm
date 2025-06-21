@@ -1028,7 +1028,7 @@ print(f"✅ {result['provider']}: {result['duration']:.2f}s")
 - **Claude 3** - claude-3-opus-20240229, claude-3-sonnet-20240229
 
 ### Google Gemini
-- **Gemini 2.0** - gemini-2.0-flash-exp
+- **Gemini 2.0** - gemini-2.0-flash
 - **Gemini 1.5** - gemini-1.5-pro, gemini-1.5-flash
 
 ### Groq

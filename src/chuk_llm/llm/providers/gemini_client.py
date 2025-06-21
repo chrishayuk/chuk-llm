@@ -4,11 +4,14 @@
 Google Gemini chat-completion adapter with unified configuration integration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Configuration-driven capabilities with complete warning suppression and proper parameter handling.
+UPDATED: Fixed to match Anthropic client patterns - proper system instruction support, 
+universal vision format, and robust response handling.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 from contextlib import contextmanager
 import json
 import logging
@@ -95,103 +98,166 @@ def apply_complete_warning_suppression():
 # Apply suppression immediately when module loads
 apply_complete_warning_suppression()
 
-# ───────────────────────────────────────────────────────── helpers ──────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# MODEL AVAILABILITY MAPPING
+# ═══════════════════════════════════════════════════════════════════════════════
 
-def _convert_messages_for_chat(messages: List[Dict[str, Any]]) -> Tuple[Optional[str], str]:
-    """Convert ChatML messages to Gemini chat format.
+# Current available Gemini models
+AVAILABLE_GEMINI_MODELS = {
+    # Gemini 2.5 series (latest and most powerful)
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    
+    # Gemini 2.0 series (stable)
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    
+    # Gemini 1.5 series (production-ready)
+    "gemini-1.5-pro",
+    "gemini-1.5-flash", 
+    "gemini-1.5-flash-8b"
+}
 
-    Returns
-    -------
-    system_instruction : Optional[str]
-    user_message      : str
-    """
-    system_txt: Optional[str] = None
-    user_message: str = "Hello"  # Default fallback
+def validate_and_map_model(requested_model: str) -> str:
+    """Validate model name against available models"""
+    if requested_model in AVAILABLE_GEMINI_MODELS:
+        return requested_model
+    
+    # If not found, raise an error with available models
+    available_list = ", ".join(sorted(AVAILABLE_GEMINI_MODELS))
+    raise ValueError(
+        f"Model '{requested_model}' not available for provider 'gemini'. "
+        f"Available: [{available_list}]"
+    )
 
-    for i, msg in enumerate(messages):
-        role = msg.get("role")
-        content = msg.get("content")
-        log.debug("↻ msg[%d] role=%s keys=%s", i, role, list(msg.keys()))
+# ───────────────────────────────────────────────────── helpers ──────────
 
-        # ---------------- system -----------------------------------------
-        if role == "system":
-            if system_txt is None:
-                system_txt = content if isinstance(content, str) else str(content)
-            continue
+def _safe_get(obj: Any, key: str, default: Any = None) -> Any:
+    """Get *key* from dict **or** attribute-style object; fallback to *default*."""
+    return obj.get(key, default) if isinstance(obj, dict) else getattr(obj, key, default)
 
-        # ---------------- tool response ----------------------------------
-        if role == "tool":
-            # Convert tool response to user message for chat API
-            fn_name = msg.get("name") or "tool"
-            user_message = f"Tool {fn_name} result: {content}"
-            continue
-
-        # ---------------- assistant function-calls ------------------------
-        if role == "assistant" and msg.get("tool_calls"):
-            # Convert tool calls to assistant message
-            tool_text = "I need to use tools: "
-            for tc in msg["tool_calls"]:
-                fn = tc.get("function", {})
-                name = fn.get("name")
-                args_raw = fn.get("arguments", "{}")
-                tool_text += f"{name}({args_raw}) "
-            # This becomes part of the conversation context
-            continue
-
-        # ---------------- normal messages --------------------------------
-        if role in {"user", "assistant"}:
-            if isinstance(content, str):
-                if role == "user":
-                    user_message = content
-            elif isinstance(content, list):
-                # Handle multimodal content - convert to text for chat API
-                text_content = ""
-                for item in content:
-                    if isinstance(item, dict):
-                        if item.get("type") == "text":
-                            text_content += item.get("text", "")
-                        elif item.get("type") == "image_url":
-                            text_content += "[Image content]"
+def _parse_gemini_response(resp) -> Dict[str, Any]:
+    """Convert Gemini response → standard `{response, tool_calls}` dict."""
+    tool_calls: List[Dict[str, Any]] = []
+    response_text = ""
+    
+    try:
+        # Method 1: Direct text access
+        if hasattr(resp, 'text') and resp.text:
+            response_text = resp.text
+        
+        # Method 2: Check candidates structure  
+        elif hasattr(resp, 'candidates') and resp.candidates:
+            cand = resp.candidates[0]
+            if hasattr(cand, 'content') and cand.content:
+                # Check if content has parts
+                if hasattr(cand.content, 'parts') and cand.content.parts:
+                    text_parts = []
+                    for part in cand.content.parts:
+                        if hasattr(part, 'text') and part.text:
+                            text_parts.append(part.text)
+                        elif hasattr(part, 'function_call'):
+                            # Extract function call
+                            fc = part.function_call
+                            tool_calls.append({
+                                "id": f"call_{uuid.uuid4().hex[:8]}",
+                                "type": "function",
+                                "function": {
+                                    "name": getattr(fc, "name", "unknown"),
+                                    "arguments": json.dumps(dict(getattr(fc, "args", {})))
+                                }
+                            })
+                    
+                    if text_parts:
+                        response_text = "".join(text_parts)
                 
-                if text_content and role == "user":
-                    user_message = text_content
-            elif content is not None and role == "user":
-                user_message = str(content)
+                # Fallback: try to get text directly from content
+                elif hasattr(cand.content, 'text') and cand.content.text:
+                    response_text = cand.content.text
+        
+        # Method 3: If no text found but response has candidates, it might be a thinking response
+        if not response_text and hasattr(resp, 'candidates') and resp.candidates:
+            # Check if this is a thinking response with no output (MAX_TOKENS reached)
+            cand = resp.candidates[0]
+            if hasattr(cand, 'finish_reason') and str(cand.finish_reason) == 'FinishReason.MAX_TOKENS':
+                # For thinking models that hit token limits, provide a helpful message
+                response_text = "[Response was cut off due to thinking token limit. The model was processing but ran out of output tokens.]"
+            elif hasattr(cand, 'content') and cand.content is None:
+                # Content is None, likely thinking response
+                response_text = "[No text response generated - this may be a thinking response that exceeded token limits.]"
+    
+    except Exception as e:
+        log.debug(f"Error parsing Gemini response: {e}")
+        # Fallback: try to extract any meaningful text from the raw response
+        if hasattr(resp, 'candidates') and resp.candidates:
+            try:
+                # Try to get some meaningful info from the response
+                cand = resp.candidates[0]
+                if hasattr(cand, 'finish_reason'):
+                    reason = str(cand.finish_reason)
+                    if 'MAX_TOKENS' in reason:
+                        response_text = "[Response exceeded token limit during processing.]"
+                    else:
+                        response_text = f"[Response processing completed with status: {reason}]"
+                else:
+                    response_text = "[Unable to parse response - no text content available.]"
+            except:
+                response_text = "[Error: Could not parse response.]"
         else:
-            log.debug("Skipping unsupported message: %s", msg)
-
-    log.debug("System-instruction: %s", system_txt)
-    log.debug("User message: %s", user_message[:100] + "..." if len(user_message) > 100 else user_message)
-    return system_txt, user_message
-
+            response_text = str(resp) if resp else "[No response received.]"
+    
+    # Handle JSON mode duplication
+    if response_text and response_text.count('{"') > 1:
+        json_parts = response_text.split('{"')
+        if len(json_parts) > 1:
+            first_json = '{"' + json_parts[1].split('}')[0] + '}'
+            try:
+                json.loads(first_json)
+                response_text = first_json
+            except json.JSONDecodeError:
+                pass
+    
+    if tool_calls:
+        return {"response": response_text if response_text else "", "tool_calls": tool_calls}
+    
+    return {"response": response_text, "tool_calls": []}
 
 def _convert_tools_to_gemini_format(tools: Optional[List[Dict[str, Any]]]) -> Optional[List[gtypes.Tool]]:
     """Convert OpenAI-style tools to Gemini format"""
     if not tools:
         return None
     
-    gemini_tools = []
-    function_declarations = []
+    try:
+        function_declarations = []
+        
+        for tool in tools:
+            if tool.get("type") == "function":
+                func = tool.get("function", {})
+                
+                func_name = func.get("name", "")
+                if not func_name or func_name == "unknown_function":
+                    log.warning(f"Skipping tool with invalid name: {tool}")
+                    continue
+                
+                func_decl = {
+                    "name": func_name,
+                    "description": func.get("description", ""),
+                    "parameters": func.get("parameters", {})
+                }
+                function_declarations.append(func_decl)
+        
+        if function_declarations:
+            try:
+                gemini_tool = gtypes.Tool(function_declarations=function_declarations)
+                return [gemini_tool]
+            except Exception as e:
+                log.warning(f"Failed to create Gemini Tool: {e}")
+                return None
     
-    for tool in tools:
-        if tool.get("type") == "function":
-            func = tool.get("function", {})
-            
-            # Convert to Gemini function declaration format
-            function_decl = {
-                "name": func.get("name"),
-                "description": func.get("description", ""),
-                "parameters": func.get("parameters", {})
-            }
-            function_declarations.append(function_decl)
+    except Exception as e:
+        log.error(f"Error converting tools to Gemini format: {e}")
     
-    if function_declarations:
-        # Create Gemini Tool object
-        gemini_tool = gtypes.Tool(function_declarations=function_declarations)
-        gemini_tools.append(gemini_tool)
-    
-    return gemini_tools if gemini_tools else None
-
+    return None
 
 # ─────────────────────────────────────────────────── enhanced context managers ───────────
 
@@ -248,16 +314,19 @@ def suppress_warnings():
 
 class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
     """
-    Configuration-aware `google-genai` wrapper that gets all capabilities from
-    unified YAML configuration with complete warning suppression.
+    Configuration-aware `google-genai` wrapper following Anthropic client patterns.
+    UPDATED: Proper system instruction support, universal vision format, robust response handling.
     """
 
-    def __init__(self, model: str = "gemini-2.0-flash", *, api_key: Optional[str] = None) -> None:
+    def __init__(self, model: str = "gemini-2.5-flash", *, api_key: Optional[str] = None) -> None:
         # Apply nuclear warning suppression during initialization
         apply_complete_warning_suppression()
         
+        # Validate model
+        safe_model = validate_and_map_model(model)
+        
         # Initialize the configuration mixin FIRST
-        ConfigAwareProviderMixin.__init__(self, "gemini", model)
+        ConfigAwareProviderMixin.__init__(self, "gemini", safe_model)
         
         # load environment
         load_dotenv()
@@ -271,47 +340,17 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         
         # Initialize with complete suppression
         with SuppressAllOutput():
-            self.model = model
+            self.model = safe_model
             self.client = genai.Client(api_key=api_key)
 
-        log.info("GeminiLLMClient initialised with model '%s'", model)
-
-    def get_model_info(self) -> Dict[str, Any]:
-        """
-        Get model info using configuration, with Gemini-specific additions.
-        """
-        # Get base info from configuration
-        info = super().get_model_info()
-        
-        # Add Gemini-specific metadata only if no error occurred
-        if not info.get("error"):
-            info.update({
-                "gemini_specific": {
-                    "context_length": "2M tokens" if "2.0" in self.model else "1M tokens",
-                    "model_family": self._detect_model_family(),
-                    "experimental_features": "2.0" in self.model,
-                    "warning_suppression": "complete",
-                },
-                "parameter_mapping": {
-                    "max_tokens": "max_output_tokens",
-                    "stop": "stop_sequences",
-                    "temperature": "temperature",
-                    "top_p": "top_p",
-                    "top_k": "top_k",
-                    "candidate_count": "candidate_count"
-                },
-                "unsupported_parameters": [
-                    "frequency_penalty", "presence_penalty", "logit_bias",
-                    "user", "n", "best_of", "seed"
-                ]
-            })
-        
-        return info
+        log.info("GeminiLLMClient initialised with model '%s'", safe_model)
 
     def _detect_model_family(self) -> str:
         """Detect Gemini model family for optimizations"""
         model_lower = self.model.lower()
-        if "2.0" in model_lower:
+        if "2.5" in model_lower:
+            return "gemini-2.5"
+        elif "2.0" in model_lower:
             return "gemini-2.0"
         elif "1.5" in model_lower:
             return "gemini-1.5"
@@ -322,282 +361,429 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         else:
             return "unknown"
 
-    def _validate_request_with_config(
-        self, 
-        messages: List[Dict[str, Any]], 
-        tools: Optional[List[Dict[str, Any]]] = None,
-        stream: bool = False,
-        **kwargs
-    ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]], bool, Dict[str, Any]]:
-        """
-        Validate request against configuration before processing.
-        """
-        validated_messages = messages
-        validated_tools = tools
-        validated_stream = stream
-        validated_kwargs = kwargs.copy()
+    def get_model_info(self) -> Dict[str, Any]:
+        """Get model info using configuration, with Gemini-specific additions."""
+        # Get base info from configuration
+        info = super().get_model_info()
         
-        # Check streaming support
-        if stream and not self.supports_feature("streaming"):
-            log.warning(f"Streaming requested but {self.model} doesn't support streaming according to configuration")
-            validated_stream = False
+        # Add Gemini-specific metadata only if no error occurred
+        if not info.get("error"):
+            info.update({
+                "supports_function_calling": self.supports_feature("tools"),
+                "supports_streaming": self.supports_feature("streaming"),
+                "supports_vision": self.supports_feature("vision"),
+                "supports_json_mode": self.supports_feature("json_mode"),
+                "supports_system_messages": self.supports_feature("system_messages"),
+                "gemini_specific": {
+                    "context_length": "2M tokens" if "2.5" in self.model else ("2M tokens" if "2.0" in self.model else "1M tokens"),
+                    "model_family": self._detect_model_family(),
+                    "experimental_features": "2.0" in self.model or "2.5" in self.model,
+                    "warning_suppression": "complete",
+                    "enhanced_reasoning": "2.5" in self.model,
+                    "supports_function_calling": self.supports_feature("tools"),
+                },
+                "vision_format": "universal_image_url",
+                "supported_parameters": ["temperature", "max_tokens", "top_p", "top_k", "stream", "system"],
+                "unsupported_parameters": [
+                    "frequency_penalty", "presence_penalty", "logit_bias",
+                    "user", "n", "best_of", "seed", "stop"
+                ],
+                "parameter_mapping": {
+                    "max_tokens": "max_output_tokens",
+                    "stop": "stop_sequences", 
+                    "system": "system_instruction_in_config",
+                    "temperature": "temperature",
+                    "top_p": "top_p",
+                    "top_k": "top_k",
+                    "candidate_count": "candidate_count"
+                }
+            })
         
-        # Check tool support
-        if tools and not self.supports_feature("tools"):
-            log.warning(f"Tools provided but {self.model} doesn't support tools according to configuration")
-            validated_tools = None
-        
-        # Check vision support
-        has_vision = any(
-            isinstance(msg.get("content"), list) and 
-            any(isinstance(item, dict) and item.get("type") == "image_url" for item in msg.get("content", []))
-            for msg in messages
-        )
-        if has_vision and not self.supports_feature("vision"):
-            log.warning(f"Vision content detected but {self.model} doesn't support vision according to configuration")
-        
-        # Check system message support (will be handled in message conversion)
-        has_system = any(msg.get("role") == "system" for msg in messages)
-        if has_system and not self.supports_feature("system_messages"):
-            log.info(f"System messages will be converted - {self.model} has limited system message support")
-        
-        # Validate parameters using configuration
-        validated_kwargs = self.validate_parameters(**validated_kwargs)
-        
-        # Remove unsupported parameters for Gemini
-        unsupported = ["frequency_penalty", "presence_penalty", "logit_bias", 
-                      "user", "n", "best_of", "seed"]
-        for param in unsupported:
-            if param in validated_kwargs:
-                log.debug(f"Removing unsupported parameter for Gemini: {param}")
-                validated_kwargs.pop(param)
-        
-        return validated_messages, validated_tools, validated_stream, validated_kwargs
+        return info
 
-    def _prepare_gemini_config(self, tools: Optional[List[Dict[str, Any]]] = None, **kwargs) -> Tuple[Optional[gtypes.GenerateContentConfig], Dict[str, Any]]:
-        """
-        Prepare proper GenerateContentConfig for Gemini with configuration-aware parameter mapping.
+    def _filter_gemini_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Filter parameters using configuration limits"""
+        filtered = {}
         
-        Returns:
-            Tuple of (config_object, remaining_direct_params)
-        """
-        config_params = {}
-        direct_params = {}
-        
-        # Handle parameter mapping from OpenAI-style to Gemini-style
+        # Parameter mapping
         parameter_mapping = {
             "max_tokens": "max_output_tokens",
             "stop": "stop_sequences",
-            # Direct mappings (no change needed)
             "temperature": "temperature",
-            "top_p": "top_p", 
-            "frequency_penalty": "frequency_penalty",
-            "presence_penalty": "presence_penalty",
+            "top_p": "top_p",
             "top_k": "top_k",
             "candidate_count": "candidate_count"
         }
         
-        # Handle system instruction separately (direct parameter)
-        if "system" in kwargs:
-            direct_params["system_instruction"] = kwargs.pop("system")
+        # Supported parameters
+        supported_params = {"temperature", "max_tokens", "top_p", "top_k", "candidate_count", "stop_sequences", "max_output_tokens"}
+        unsupported_params = {
+            "frequency_penalty", "presence_penalty", "logit_bias",
+            "user", "n", "best_of", "seed", "stop", "response_format"
+        }
         
-        # Process parameters
-        for param, value in kwargs.items():
-            if param in parameter_mapping:
-                # Map to Gemini parameter name
-                gemini_param = parameter_mapping[param]
-                config_params[gemini_param] = value
-                log.debug(f"Mapped parameter {param} -> {gemini_param} = {value}")
-            elif param in ["temperature", "top_p", "frequency_penalty", "presence_penalty", 
-                          "top_k", "candidate_count", "max_output_tokens", "stop_sequences"]:
-                # Already in Gemini format
-                config_params[param] = value
+        for key, value in params.items():
+            mapped_key = parameter_mapping.get(key, key)
+            
+            if mapped_key in supported_params:
+                if key == "temperature":
+                    # Gemini temperature range validation
+                    if value > 2.0:
+                        filtered[mapped_key] = 2.0
+                        log.debug(f"Capped temperature from {value} to 2.0 for Gemini")
+                    else:
+                        filtered[mapped_key] = value
+                elif key == "max_tokens":
+                    # Use configuration to validate max_tokens
+                    limit = self.get_max_tokens_limit()
+                    if limit and value > limit:
+                        filtered[mapped_key] = limit
+                        log.debug(f"Capped max_tokens from {value} to {limit} for Gemini")
+                    else:
+                        filtered[mapped_key] = value
+                else:
+                    filtered[mapped_key] = value
+            elif key in unsupported_params:
+                log.debug(f"Filtered out unsupported parameter for Gemini: {key}={value}")
             else:
-                # Unknown parameter - log and skip
-                log.warning(f"Unknown parameter for Gemini: {param} = {value}")
+                log.warning(f"Unknown parameter for Gemini: {key}={value}")
         
-        # Add tools if provided and supported
-        if tools and self.supports_feature("tools"):
-            gemini_tools = _convert_tools_to_gemini_format(tools)
-            if gemini_tools:
-                config_params["tools"] = gemini_tools
-                # Disable automatic function calling to maintain control
-                config_params["automatic_function_calling"] = gtypes.AutomaticFunctionCallingConfig(disable=True)
-        elif tools:
-            log.warning(f"Tools provided but {self.model} doesn't support tools according to configuration")
+        return filtered
+
+    def _check_json_mode(self, kwargs: Dict[str, Any]) -> Optional[str]:
+        """Check if JSON mode is requested and return appropriate system instruction"""
+        # Only proceed if the model supports JSON mode according to config
+        if not self.supports_feature("json_mode"):
+            log.debug(f"Model {self.model} does not support JSON mode according to configuration")
+            return None
         
-        # Create config object if we have parameters
-        config = None
-        if config_params:
-            try:
-                config = gtypes.GenerateContentConfig(**config_params)
-                log.debug(f"Created GenerateContentConfig with: {list(config_params.keys())}")
-            except Exception as e:
-                log.error(f"Error creating GenerateContentConfig: {e}")
-                log.debug(f"Failed config_params: {config_params}")
-                # Fallback to basic config with just tools if provided and supported
-                if tools and self.supports_feature("tools"):
-                    gemini_tools = _convert_tools_to_gemini_format(tools)
-                    if gemini_tools:
-                        config = gtypes.GenerateContentConfig(
-                            tools=gemini_tools,
-                            automatic_function_calling=gtypes.AutomaticFunctionCallingConfig(disable=True)
-                        )
+        # Check for OpenAI-style response_format
+        response_format = kwargs.get("response_format")
+        if isinstance(response_format, dict) and response_format.get("type") == "json_object":
+            return "You must respond with valid JSON only. No markdown code blocks, no explanations, no text before or after. Just pure, valid JSON."
         
-        return config, direct_params
+        # Check for _json_mode_instruction from provider adapter
+        json_instruction = kwargs.get("_json_mode_instruction")
+        if json_instruction:
+            return json_instruction
+        
+        return None
+
+    @staticmethod
+    async def _download_image_to_base64(url: str) -> tuple[str, str]:
+        """Download image from URL and convert to base64"""
+        try:
+            import httpx
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                
+                # Get content type from headers
+                content_type = response.headers.get('content-type', 'image/png')
+                if not content_type.startswith('image/'):
+                    content_type = 'image/png'  # Default fallback
+                
+                # Convert to base64
+                image_data = base64.b64encode(response.content).decode('utf-8')
+                
+                return content_type, image_data
+                
+        except Exception as e:
+            log.warning(f"Failed to download image from {url}: {e}")
+            raise ValueError(f"Could not download image: {e}")
+
+    @staticmethod
+    async def _convert_universal_vision_to_gemini_async(content_item: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert universal image_url format to Gemini format with URL downloading"""
+        if content_item.get("type") == "image_url":
+            image_url = content_item.get("image_url", {})
+            
+            # Handle both string and dict formats
+            if isinstance(image_url, str):
+                url = image_url
+            else:
+                url = image_url.get("url", "")
+            
+            # Convert data URL to Gemini format
+            if url.startswith("data:"):
+                # Extract media type and data
+                try:
+                    header, data = url.split(",", 1)
+                    # Parse the header: data:image/png;base64
+                    media_type_part = header.split(";")[0].replace("data:", "")
+                    
+                    # Validate media type
+                    if not media_type_part.startswith("image/"):
+                        media_type_part = "image/png"  # Default fallback
+                    
+                    # Gemini expects inline data format
+                    return {
+                        "inline_data": {
+                            "mime_type": media_type_part,
+                            "data": data.strip()
+                        }
+                    }
+                except (ValueError, IndexError) as e:
+                    log.warning(f"Invalid data URL format: {url[:50]}... Error: {e}")
+                    return {"text": "[Invalid image format]"}
+            else:
+                # For external URLs, download and convert to base64
+                try:
+                    media_type, image_data = await GeminiLLMClient._download_image_to_base64(url)
+                    
+                    return {
+                        "inline_data": {
+                            "mime_type": media_type,
+                            "data": image_data
+                        }
+                    }
+                except Exception as e:
+                    log.warning(f"Failed to process external image URL {url}: {e}")
+                    return {"text": f"[Could not load image: {e}]"}
+        
+        return content_item
+
+    async def _split_for_gemini_async(
+        self,
+        messages: List[Dict[str, Any]]
+    ) -> tuple[str, List[str]]:
+        """
+        Separate system text & convert ChatML list to Gemini format with async vision support.
+        Uses configuration to validate vision support.
+        """
+        sys_txt: List[str] = []
+        contents: List[str] = []
+
+        for msg in messages:
+            role = msg.get("role")
+
+            if role == "system":
+                sys_txt.append(msg.get("content", ""))
+                continue
+
+            # assistant function calls → need to be handled in tool result flow
+            if role == "assistant" and msg.get("tool_calls"):
+                # Convert to text description for now
+                tool_text = "Assistant called functions: "
+                for tc in msg["tool_calls"]:
+                    fn = tc["function"]
+                    tool_text += f"{fn['name']}({fn.get('arguments', '{}')}) "
+                contents.append(tool_text)
+                continue
+
+            # tool response → convert to user message
+            if role == "tool":
+                tool_result = msg.get("content") or ""
+                fn_name = msg.get("name", "tool")
+                contents.append(f"Tool {fn_name} returned: {tool_result}")
+                continue
+
+            # normal / multimodal messages with universal vision support
+            if role in {"user", "assistant"}:
+                cont = msg.get("content")
+                if cont is None:
+                    continue
+                
+                if isinstance(cont, str):
+                    # Simple text content
+                    contents.append(cont)
+                elif isinstance(cont, list):
+                    # Multimodal content - check if vision is supported
+                    has_vision_content = any(
+                        isinstance(item, dict) and item.get("type") == "image_url" 
+                        for item in cont
+                    )
+                    
+                    if has_vision_content and not self.supports_feature("vision"):
+                        log.warning(f"Vision content detected but model {self.model} doesn't support vision according to configuration")
+                        # Convert to text-only by filtering out images
+                        text_only_content = [
+                            item.get("text", str(item)) for item in cont 
+                            if not (isinstance(item, dict) and item.get("type") == "image_url")
+                        ]
+                        if text_only_content:
+                            contents.append(" ".join(text_only_content))
+                        continue
+                    
+                    # Process multimodal content - for now, convert to text description
+                    # TODO: Implement proper multimodal content handling for Gemini
+                    text_parts = []
+                    for item in cont:
+                        if isinstance(item, dict):
+                            if item.get("type") == "text":
+                                text_parts.append(item.get("text", ""))
+                            elif item.get("type") == "image_url":
+                                text_parts.append("[Image content provided]")
+                            else:
+                                text_parts.append(str(item))
+                        else:
+                            text_parts.append(str(item))
+                    
+                    if text_parts:
+                        contents.append(" ".join(text_parts))
+                else:
+                    # Fallback for other content types
+                    contents.append(str(cont))
+
+        return "\n".join(sys_txt).strip(), contents
 
     def create_completion(
-        self, 
-        messages: List[Dict[str, Any]], 
-        tools: Optional[List[Dict[str, Any]]] = None, 
-        *, 
-        stream: bool = False,
-        **kwargs: Any
-    ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
-        """
-        Configuration-aware completion generation with complete warning suppression.
-        
-        • stream=False → returns awaitable that resolves to standardised dict
-        • stream=True  → returns async iterator that yields chunks in real-time
-        """
-        log.debug("create_completion called – stream=%s, kwargs=%s", stream, kwargs)
-        
-        # Validate request against configuration
-        validated_messages, validated_tools, validated_stream, validated_kwargs = self._validate_request_with_config(
-            messages, tools, stream, **kwargs
-        )
-        
-        if validated_stream:
-            return self._stream_completion_async(validated_messages, validated_tools, **validated_kwargs)
-        else:
-            return self._regular_completion(validated_messages, validated_tools, **validated_kwargs)
-        
-    def _parse_gemini_chunk(self, chunk) -> Tuple[str, List[Dict[str, Any]]]:
-        """Parse Gemini streaming chunk for text and function calls"""
-        chunk_text = ""
-        tool_calls = []
-        
-        try:
-            # Extract text content
-            if hasattr(chunk, 'text') and chunk.text:
-                chunk_text = chunk.text
-            
-            # Check for function calls (only if tools are supported)
-            if self.supports_feature("tools"):
-                if hasattr(chunk, 'function_calls') and chunk.function_calls:
-                    for fc in chunk.function_calls:
-                        try:
-                            tool_calls.append({
-                                "id": f"call_{uuid.uuid4().hex[:8]}",
-                                "type": "function",
-                                "function": {
-                                    "name": getattr(fc, "name", "unknown"),
-                                    "arguments": json.dumps(dict(getattr(fc, "args", {})))
-                                }
-                            })
-                        except Exception as e:
-                            log.debug(f"Error parsing function call in chunk: {e}")
-                            continue
-                
-                # Alternative: check candidates structure for function calls
-                elif hasattr(chunk, 'candidates') and chunk.candidates:
-                    try:
-                        cand = chunk.candidates[0]
-                        if hasattr(cand, 'content') and hasattr(cand.content, 'parts'):
-                            for part in cand.content.parts:
-                                try:
-                                    if hasattr(part, 'text') and part.text:
-                                        chunk_text += part.text
-                                    elif hasattr(part, 'function_call'):
-                                        fc = part.function_call
-                                        tool_calls.append({
-                                            "id": f"call_{uuid.uuid4().hex[:8]}", 
-                                            "type": "function", 
-                                            "function": {
-                                                "name": getattr(fc, "name", "unknown"),
-                                                "arguments": json.dumps(dict(getattr(fc, "args", {})))
-                                            }
-                                        })
-                                except Exception as e:
-                                    log.debug(f"Error parsing part in chunk: {e}")
-                                    continue
-                    except (AttributeError, IndexError, TypeError) as e:
-                        log.debug(f"Error parsing chunk candidates: {e}")
-            
-        except Exception as e:
-            log.debug(f"Error parsing Gemini chunk: {e}")
-        
-        return chunk_text, tool_calls
-
-    async def _stream_completion_async(
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
-        **kwargs: Any,
+        *,
+        stream: bool = False,
+        max_tokens: Optional[int] = None,
+        system: Optional[str] = None,
+        **extra,
+    ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
+        """
+        Configuration-aware completion generation following Anthropic client patterns.
+        
+        Uses configuration to validate:
+        - Tool support before processing tools
+        - Streaming support before enabling streaming
+        - JSON mode support before adding JSON instructions
+        - Vision support during message processing
+        """
+
+        # Validate capabilities using configuration
+        if tools and not self.supports_feature("tools"):
+            log.warning(f"Tools provided but model {self.model} doesn't support tools according to configuration")
+            tools = None
+        
+        if stream and not self.supports_feature("streaming"):
+            log.warning(f"Streaming requested but model {self.model} doesn't support streaming according to configuration")
+            stream = False
+
+        gemini_tools = _convert_tools_to_gemini_format(tools)
+        
+        # Check for JSON mode (using configuration validation)
+        json_instruction = self._check_json_mode(extra)
+        
+        # Filter parameters for Gemini compatibility (using configuration limits)
+        if max_tokens:
+            extra["max_tokens"] = max_tokens
+        filtered_params = self._filter_gemini_params(extra)
+
+        # ––– streaming: use async streaming -------------------------
+        if stream:
+            return self._stream_completion_async(system, json_instruction, messages, gemini_tools, filtered_params)
+
+        # ––– non-streaming: use async client ------------------------------
+        return self._regular_completion_async(system, json_instruction, messages, gemini_tools, filtered_params)
+
+    async def _stream_completion_async(
+        self, 
+        system: Optional[str],
+        json_instruction: Optional[str],
+        messages: List[Dict[str, Any]],
+        gemini_tools: Optional[List[gtypes.Tool]],
+        filtered_params: Dict[str, Any]
     ) -> AsyncIterator[Dict[str, Any]]:
-        """
-        Real async streaming with configuration awareness and complete warning suppression.
-        """
+        """Real streaming using Gemini client with configuration-aware processing."""
         try:
-            log.debug(f"Starting Gemini streaming for model: {self.model}")
+            # Handle system message and JSON instruction
+            system_from_messages, contents = await self._split_for_gemini_async(messages)
+            final_system = system or system_from_messages
             
-            # Extract content and prepare config
-            system_instruction, user_message = _convert_messages_for_chat(messages)
-            config, direct_params = self._prepare_gemini_config(tools, **kwargs)
+            if json_instruction:
+                if final_system:
+                    final_system = f"{final_system}\n\n{json_instruction}"
+                else:
+                    final_system = json_instruction
+                log.debug("Added JSON mode instruction to system prompt")
+
+            # Build config
+            config_params = filtered_params.copy()
+            if gemini_tools:
+                config_params["tools"] = gemini_tools
             
-            # Build request parameters
-            request_params = {
+            # Handle thinking models hitting token limits
+            if "2.5" in self.model:
+                if "max_output_tokens" not in config_params:
+                    # Set a reasonable max_output_tokens to prevent thinking from consuming all tokens
+                    config_params["max_output_tokens"] = 4096
+                    log.debug("Set max_output_tokens=4096 for Gemini 2.5 to prevent thinking token overflow")
+            elif "max_output_tokens" not in config_params:
+                # Set default for non-thinking models
+                config_params["max_output_tokens"] = 4096
+            
+            config = None
+            if config_params:
+                try:
+                    # Add system instruction to config if present and supported
+                    if final_system and self.supports_feature("system_messages"):
+                        config_params["system_instruction"] = final_system
+                    
+                    config = gtypes.GenerateContentConfig(**config_params)
+                except Exception as e:
+                    log.warning(f"Error creating GenerateContentConfig: {e}")
+                    # Try with minimal config
+                    minimal_config = {}
+                    for key in ["max_output_tokens", "temperature", "top_p", "top_k"]:
+                        if key in config_params:
+                            minimal_config[key] = config_params[key]
+                    
+                    if minimal_config:
+                        try:
+                            config = gtypes.GenerateContentConfig(**minimal_config)
+                        except Exception as e2:
+                            log.warning(f"Failed to create minimal config: {e2}")
+                            config = None
+
+            # Combine all content into a single message
+            combined_content = "\n\n".join(contents) if contents else "Hello"
+            
+            # Prepend system instruction if not supported in config
+            if final_system and not self.supports_feature("system_messages"):
+                combined_content = f"System: {final_system}\n\nUser: {combined_content}"
+
+            base_payload: Dict[str, Any] = {
                 "model": self.model,
-                "contents": user_message
+                "contents": combined_content
             }
             
-            # Add system instruction if present and supported
-            if system_instruction:
-                if self.supports_feature("system_messages"):
-                    request_params["system_instruction"] = system_instruction
-                else:
-                    log.debug("System instruction ignored - not supported by model according to configuration")
-            elif "system_instruction" in direct_params and self.supports_feature("system_messages"):
-                request_params["system_instruction"] = direct_params["system_instruction"]
-            
-            # Add config if present
             if config:
-                request_params["config"] = config
+                base_payload["config"] = config
+
+            log.debug("Gemini streaming payload keys: %s", list(base_payload.keys()))
             
-            log.debug(f"Streaming request params keys: {list(request_params.keys())}")
+            accumulated_response = ""
             
-            chunk_count = 0
-            # Use nuclear suppression for the entire streaming operation
+            # Use complete suppression for streaming
             with SuppressAllOutput():
-                async for chunk in await self.client.aio.models.generate_content_stream(**request_params):
-                    chunk_count += 1
-                    
-                    # Direct access to chunk.text
+                async for chunk in await self.client.aio.models.generate_content_stream(**base_payload):
                     chunk_text = ""
+                    tool_calls = []
+                    
+                    # Parse chunk
                     if hasattr(chunk, 'text') and chunk.text:
                         chunk_text = chunk.text
-                        log.debug(f"Chunk {chunk_count}: '{chunk_text[:50]}...'")
                     
-                    # Immediate yield
+                    # Check for function calls if tools are supported
+                    if gemini_tools and self.supports_feature("tools"):
+                        tool_calls = self._extract_tool_calls_from_response(chunk)
+                    
+                    # Handle text content with deduplication
                     if chunk_text:
-                        yield {
-                            "response": chunk_text,
-                            "tool_calls": [],
-                        }
-                        await asyncio.sleep(0.001)
+                        if not accumulated_response or not chunk_text.startswith(accumulated_response):
+                            new_content = chunk_text[len(accumulated_response):] if chunk_text.startswith(accumulated_response) else chunk_text
+                            if new_content:
+                                accumulated_response += new_content
+                                yield {
+                                    "response": new_content,
+                                    "tool_calls": []
+                                }
                     
-                    # Handle tool calls separately if present and supported
-                    if self.supports_feature("tools"):
-                        tool_calls = self._extract_tool_calls_from_chunk(chunk)
-                        if tool_calls:
-                            yield {
-                                "response": "",
-                                "tool_calls": tool_calls,
-                            }
-                            await asyncio.sleep(0.001)
-            
-            log.debug(f"Gemini streaming completed with {chunk_count} chunks")
-                
+                    # Handle tool calls
+                    if tool_calls:
+                        yield {
+                            "response": "",
+                            "tool_calls": tool_calls
+                        }
+        
         except Exception as e:
             log.error(f"Error in Gemini streaming: {e}")
             yield {
@@ -605,59 +791,88 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                 "tool_calls": [],
                 "error": True
             }
-            
-    async def _regular_completion(
+
+    async def _regular_completion_async(
         self, 
-        messages: List[Dict[str, Any]], 
-        tools: Optional[List[Dict[str, Any]]] = None,
-        **kwargs: Any
+        system: Optional[str],
+        json_instruction: Optional[str],
+        messages: List[Dict[str, Any]],
+        gemini_tools: Optional[List[gtypes.Tool]],
+        filtered_params: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Non-streaming completion with configuration awareness and complete warning suppression."""
+        """Non-streaming completion using async client with configuration-aware processing."""
         try:
-            log.debug(f"Starting Gemini completion for model: {self.model}")
+            # Handle system message and JSON instruction
+            system_from_messages, contents = await self._split_for_gemini_async(messages)
+            final_system = system or system_from_messages
             
-            # Extract content and prepare config
-            system_instruction, user_message = _convert_messages_for_chat(messages)
-            config, direct_params = self._prepare_gemini_config(tools, **kwargs)
-            
-            # Build request parameters
-            request_params = {
-                "model": self.model,
-                "contents": [user_message]
-            }
-            
-            # Add system instruction if present and supported
-            if system_instruction:
-                if self.supports_feature("system_messages"):
-                    request_params["system_instruction"] = system_instruction
+            if json_instruction:
+                if final_system:
+                    final_system = f"{final_system}\n\n{json_instruction}"
                 else:
-                    log.debug("System instruction ignored - not supported by model according to configuration")
-            elif "system_instruction" in direct_params and self.supports_feature("system_messages"):
-                request_params["system_instruction"] = direct_params["system_instruction"]
+                    final_system = json_instruction
+                log.debug("Added JSON mode instruction to system prompt")
+
+            # Build config
+            config_params = filtered_params.copy()
+            if gemini_tools:
+                config_params["tools"] = gemini_tools
             
-            # Add config if present
-            if config:
-                request_params["config"] = config
+            # Handle thinking models hitting token limits
+            if "2.5" in self.model:
+                if "max_output_tokens" not in config_params:
+                    # Set a reasonable max_output_tokens to prevent thinking from consuming all tokens
+                    config_params["max_output_tokens"] = 4096
+                    log.debug("Set max_output_tokens=4096 for Gemini 2.5 to prevent thinking token overflow")
+            elif "max_output_tokens" not in config_params:
+                # Set default for non-thinking models
+                config_params["max_output_tokens"] = 4096
             
-            log.debug(f"Regular completion request params keys: {list(request_params.keys())}")
+            config = None
+            if config_params:
+                try:
+                    # Add system instruction to config if present and supported
+                    if final_system and self.supports_feature("system_messages"):
+                        config_params["system_instruction"] = final_system
+                    
+                    config = gtypes.GenerateContentConfig(**config_params)
+                except Exception as e:
+                    log.warning(f"Error creating GenerateContentConfig: {e}")
+                    # Try with minimal config
+                    minimal_config = {}
+                    for key in ["max_output_tokens", "temperature", "top_p", "top_k"]:
+                        if key in config_params:
+                            minimal_config[key] = config_params[key]
+                    
+                    if minimal_config:
+                        try:
+                            config = gtypes.GenerateContentConfig(**minimal_config)
+                        except Exception as e2:
+                            log.warning(f"Failed to create minimal config: {e2}")
+                            config = None
+
+            # Combine all content into a single message
+            combined_content = "\n\n".join(contents) if contents else "Hello"
             
-            # Make the async request with complete suppression
-            with SuppressAllOutput():
-                response = await self.client.aio.models.generate_content(**request_params)
-            
-            # Parse response
-            response_text, tool_calls = self._parse_gemini_response(response)
-            
-            result = {
-                "response": response_text,
-                "tool_calls": tool_calls
+            # Prepend system instruction if not supported in config
+            if final_system and not self.supports_feature("system_messages"):
+                combined_content = f"System: {final_system}\n\nUser: {combined_content}"
+
+            base_payload: Dict[str, Any] = {
+                "model": self.model,
+                "contents": [combined_content]
             }
             
-            log.debug(f"Gemini completion result: "
-                     f"response={len(str(result.get('response', ''))) if result.get('response') else 0} chars, "
-                     f"tool_calls={len(result.get('tool_calls', []))}")
+            if config:
+                base_payload["config"] = config
+
+            log.debug("Gemini payload keys: %s", list(base_payload.keys()))
             
-            return result
+            # Make the request with complete suppression
+            with SuppressAllOutput():
+                resp = await self.client.aio.models.generate_content(**base_payload)
+            
+            return _parse_gemini_response(resp)
             
         except Exception as e:
             log.error(f"Error in Gemini completion: {e}")
@@ -667,10 +882,8 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                 "error": True
             }
 
-# ───────────────────────────────────────── parse helpers ──────────
-
-    def _extract_tool_calls_from_chunk(self, chunk) -> List[Dict[str, Any]]:
-        """Fast tool call extraction - simplified for streaming performance"""
+    def _extract_tool_calls_from_response(self, response) -> List[Dict[str, Any]]:
+        """Extract tool calls from Gemini response"""
         tool_calls = []
         
         # Only extract tool calls if tools are supported
@@ -678,9 +891,27 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
             return tool_calls
         
         try:
-            # Quick check for function calls
-            if hasattr(chunk, 'function_calls') and chunk.function_calls:
-                for fc in chunk.function_calls:
+            # Check response structure for function calls
+            if hasattr(response, 'candidates') and response.candidates:
+                cand = response.candidates[0]
+                if hasattr(cand, 'content') and cand.content:
+                    # Check if content has parts
+                    if hasattr(cand.content, 'parts') and cand.content.parts:
+                        for part in cand.content.parts:
+                            if hasattr(part, 'function_call'):
+                                fc = part.function_call
+                                tool_calls.append({
+                                    "id": f"call_{uuid.uuid4().hex[:8]}",
+                                    "type": "function",
+                                    "function": {
+                                        "name": getattr(fc, "name", "unknown"),
+                                        "arguments": json.dumps(dict(getattr(fc, "args", {})))
+                                    }
+                                })
+            
+            # Alternative: check for function calls at response level
+            elif hasattr(response, 'function_calls') and response.function_calls:
+                for fc in response.function_calls:
                     try:
                         tool_calls.append({
                             "id": f"call_{uuid.uuid4().hex[:8]}",
@@ -692,64 +923,8 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                         })
                     except Exception:
                         continue
-        except Exception:
-            pass
-        
-        return tool_calls
-
-    def _parse_gemini_response(self, response) -> Tuple[str, List[Dict[str, Any]]]:
-        """Parse Gemini non-streaming response for text and function calls"""
-        response_text = ""
-        tool_calls = []
-        
-        try:
-            # Extract text content
-            if hasattr(response, 'text') and response.text:
-                response_text = response.text
-            
-            # Check for function calls (only if tools are supported)
-            if self.supports_feature("tools"):
-                if hasattr(response, 'function_calls') and response.function_calls:
-                    for fc in response.function_calls:
-                        try:
-                            tool_calls.append({
-                                "id": f"call_{uuid.uuid4().hex[:8]}",
-                                "type": "function",
-                                "function": {
-                                    "name": getattr(fc, "name", "unknown"),
-                                    "arguments": json.dumps(dict(getattr(fc, "args", {})))
-                                }
-                            })
-                        except Exception as e:
-                            log.debug(f"Error parsing function call: {e}")
-                            continue
-                
-                # Alternative: check candidates structure for function calls
-                elif hasattr(response, 'candidates') and response.candidates:
-                    try:
-                        cand = response.candidates[0]
-                        if hasattr(cand, 'content') and hasattr(cand.content, 'parts'):
-                            for part in cand.content.parts:
-                                try:
-                                    if hasattr(part, 'text') and part.text:
-                                        response_text += part.text
-                                    elif hasattr(part, 'function_call'):
-                                        fc = part.function_call
-                                        tool_calls.append({
-                                            "id": f"call_{uuid.uuid4().hex[:8]}", 
-                                            "type": "function", 
-                                            "function": {
-                                                "name": getattr(fc, "name", "unknown"),
-                                                "arguments": json.dumps(dict(getattr(fc, "args", {})))
-                                            }
-                                        })
-                                except Exception as e:
-                                    log.debug(f"Error parsing part: {e}")
-                                    continue
-                    except (AttributeError, IndexError, TypeError) as e:
-                        log.debug(f"Error parsing response candidates: {e}")
             
         except Exception as e:
-            log.debug(f"Error parsing Gemini response: {e}")
+            log.debug(f"Error extracting tool calls: {e}")
         
-        return response_text, tool_calls
+        return tool_calls

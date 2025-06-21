@@ -1,22 +1,24 @@
 #!/usr/bin/env python3
 """
-ChukLLM Discovery Configuration Debug Script
+ChukLLM Safe Discovery Configuration Debug Script
 
-This script investigates why discovery appears disabled when it should be enabled.
+This script investigates discovery configuration WITHOUT triggering downloads.
+Only checks configuration files and API connectivity.
 """
 
-import asyncio
 import json
 from pathlib import Path
 
-async def debug_discovery_config():
-    """Debug discovery configuration loading"""
+def debug_discovery_config_safe():
+    """Debug discovery configuration without triggering downloads"""
     
-    print("🔍 ChukLLM Discovery Configuration Debug")
+    print("🔍 ChukLLM Safe Discovery Configuration Debug")
     print("=" * 50)
+    print("⚠️  This script will NOT download or discover models")
+    print()
     
     # Step 1: Check config file location and content
-    print("\n1️⃣ Config File Analysis...")
+    print("1️⃣ Config File Analysis...")
     
     try:
         from chuk_llm.configuration.unified_config import UnifiedConfigManager
@@ -41,6 +43,15 @@ async def debug_discovery_config():
                 print(f"      discoverer_type: {discovery_config.get('discoverer_type', 'NOT_FOUND')}")
                 print(f"      cache_timeout: {discovery_config.get('cache_timeout', 'NOT_FOUND')}")
                 
+                # Show the entire extra section if it exists
+                extra_section = ollama_config.get('extra', {})
+                if extra_section:
+                    print(f"   📋 Full 'extra' section:")
+                    for key, value in extra_section.items():
+                        print(f"      {key}: {value}")
+                else:
+                    print(f"   ⚠️  No 'extra' section found in YAML")
+                
             except Exception as e:
                 print(f"   ❌ Failed to read raw YAML: {e}")
         else:
@@ -49,8 +60,8 @@ async def debug_discovery_config():
     except Exception as e:
         print(f"   ❌ Config file analysis failed: {e}")
     
-    # Step 2: Check loaded configuration
-    print("\n2️⃣ Loaded Configuration Analysis...")
+    # Step 2: Check loaded configuration (NO API CALLS)
+    print(f"\n2️⃣ Loaded Configuration Analysis...")
     
     try:
         from chuk_llm.configuration import get_config
@@ -59,6 +70,7 @@ async def debug_discovery_config():
         provider_config = config_manager.get_provider("ollama")
         
         print(f"   📋 Provider loaded successfully")
+        print(f"   🔧 Provider type: {type(provider_config)}")
         print(f"   🔧 Extra fields: {list(provider_config.extra.keys())}")
         
         # Check discovery config in provider.extra
@@ -66,14 +78,14 @@ async def debug_discovery_config():
             discovery_data = provider_config.extra['dynamic_discovery']
             print(f"   ✅ Discovery config found in extra:")
             print(f"      Type: {type(discovery_data)}")
-            print(f"      Content: {discovery_data}")
+            print(f"      Raw content: {discovery_data}")
             
             if isinstance(discovery_data, dict):
                 enabled = discovery_data.get('enabled', False)
                 print(f"   🎯 Discovery enabled: {enabled}")
                 print(f"   📋 Full discovery config:")
                 for key, value in discovery_data.items():
-                    print(f"      {key}: {value}")
+                    print(f"      {key}: {value} ({type(value)})")
             else:
                 print(f"   ⚠️ Discovery data is not a dict: {type(discovery_data)}")
                 
@@ -81,197 +93,217 @@ async def debug_discovery_config():
             print(f"   ❌ No 'dynamic_discovery' found in extra")
             print(f"   📋 Available extra keys: {list(provider_config.extra.keys())}")
             
+        # Show full provider config structure
+        print(f"   📋 Provider config structure:")
+        print(f"      api_base: {getattr(provider_config, 'api_base', 'NOT_FOUND')}")
+        print(f"      models: {len(getattr(provider_config, 'models', []))} models")
+        print(f"      features: {getattr(provider_config, 'features', 'NOT_FOUND')}")
+        
     except Exception as e:
         print(f"   ❌ Loaded config analysis failed: {e}")
         import traceback
-        print(f"   📋 Traceback: {traceback.format_exc()}")
+        print(f"   📋 Traceback:")
+        traceback.print_exc()
     
-    # Step 3: Test the discovery mixin directly
-    print("\n3️⃣ Discovery Mixin Test...")
+    # Step 3: Check API connectivity WITHOUT discovery
+    print(f"\n3️⃣ API Connectivity Test (No Discovery)...")
     
     try:
+        import httpx
+        import asyncio
+        
+        async def test_api_only():
+            try:
+                # Just test if Ollama is running - no model operations
+                async with httpx.AsyncClient(timeout=3.0) as client:
+                    response = await client.get("http://localhost:11434/api/version")
+                    if response.status_code == 200:
+                        version_data = response.json()
+                        print(f"   ✅ Ollama API accessible")
+                        print(f"      Version: {version_data.get('version', 'unknown')}")
+                        return True
+                    else:
+                        print(f"   ⚠️  Ollama API responded with status: {response.status_code}")
+                        return False
+            except Exception as e:
+                print(f"   ❌ Ollama API not accessible: {e}")
+                return False
+        
+        # Run the API test
+        api_available = asyncio.run(test_api_only())
+        
+        if api_available:
+            print(f"   💡 API is available for discovery when enabled")
+        else:
+            print(f"   ⚠️  API not available - discovery would fail")
+            
+    except Exception as e:
+        print(f"   ❌ API connectivity test failed: {e}")
+    
+    # Step 4: Check discovery imports WITHOUT creating instances
+    print(f"\n4️⃣ Discovery Module Import Test...")
+    
+    try:
+        # Just test imports - don't create instances
+        print(f"   🔍 Testing discovery imports...")
+        
+        try:
+            from chuk_llm.llm.discovery.engine import UniversalModelDiscoveryManager
+            print(f"   ✅ UniversalModelDiscoveryManager import OK")
+        except ImportError as e:
+            print(f"   ❌ UniversalModelDiscoveryManager import failed: {e}")
+        
+        try:
+            from chuk_llm.llm.discovery.providers import DiscovererFactory
+            print(f"   ✅ DiscovererFactory import OK")
+        except ImportError as e:
+            print(f"   ❌ DiscovererFactory import failed: {e}")
+        
+        try:
+            from chuk_llm.api.discovery import discover_models_sync
+            print(f"   ✅ discover_models_sync import OK")
+        except ImportError as e:
+            print(f"   ❌ discover_models_sync import failed: {e}")
+            
+        print(f"   💡 All discovery components available for use")
+        
+    except Exception as e:
+        print(f"   ❌ Discovery module test failed: {e}")
+    
+    # Step 5: Configuration consistency check
+    print(f"\n5️⃣ Configuration Consistency Check...")
+    
+    try:
+        # Check if the config parsing is consistent
         from chuk_llm.configuration.discovery import ConfigDiscoveryMixin
-        from chuk_llm.configuration.models import DiscoveryConfig
         
-        # Create a test discovery mixin
+        # Test the mixin parsing without any actual discovery
         mixin = ConfigDiscoveryMixin()
-        mixin.providers = {"ollama": provider_config}  # Add provider manually
         
-        # Test parsing discovery config
-        provider_data = {"extra": provider_config.extra}
-        discovery_config = mixin._parse_discovery_config(provider_data)
+        # Create test data similar to what should be in the config
+        test_provider_data = {
+            "extra": {
+                "dynamic_discovery": {
+                    "enabled": True,
+                    "discoverer_type": "ollama",
+                    "cache_timeout": 3600
+                }
+            }
+        }
         
-        if discovery_config:
-            print(f"   ✅ Discovery config parsed successfully:")
-            print(f"      enabled: {discovery_config.enabled}")
-            print(f"      discoverer_type: {discovery_config.discoverer_type}")
-            print(f"      cache_timeout: {discovery_config.cache_timeout}")
+        parsed_config = mixin._parse_discovery_config(test_provider_data)
+        
+        if parsed_config:
+            print(f"   ✅ Discovery config parsing works correctly")
+            print(f"      enabled: {parsed_config.enabled}")
+            print(f"      discoverer_type: {parsed_config.discoverer_type}")
+            print(f"      cache_timeout: {parsed_config.cache_timeout}")
         else:
             print(f"   ❌ Discovery config parsing returned None")
-            print(f"   📋 Input data: {provider_data}")
             
-    except Exception as e:
-        print(f"   ❌ Discovery mixin test failed: {e}")
-        import traceback
-        print(f"   📋 Traceback: {traceback.format_exc()}")
-    
-    # Step 4: Test client get_model_info method
-    print("\n4️⃣ Client Model Info Test...")
-    
-    try:
-        from chuk_llm.llm.client import get_client
-        
-        client = get_client("ollama", model="granite3.3")
-        model_info = client.get_model_info()
-        
-        print(f"   ✅ Client created successfully")
-        print(f"   📋 Model info keys: {list(model_info.keys())}")
-        
-        # Check if client has discovery-related info
-        if hasattr(client, '_get_provider_config'):
-            provider_config = client._get_provider_config()
-            if provider_config:
-                discovery_data = provider_config.extra.get('dynamic_discovery')
-                print(f"   🔧 Client sees discovery config: {discovery_data is not None}")
-                if discovery_data:
-                    print(f"      enabled: {discovery_data.get('enabled', 'NOT_FOUND')}")
-            else:
-                print(f"   ❌ Client cannot get provider config")
-        else:
-            print(f"   ⚠️ Client doesn't have _get_provider_config method")
-            
-    except Exception as e:
-        print(f"   ❌ Client test failed: {e}")
-        import traceback
-        print(f"   📋 Traceback: {traceback.format_exc()}")
-    
-    # Step 5: Check discovery manager creation
-    print("\n5️⃣ Discovery Manager Creation Test...")
-    
-    try:
-        # Try to create discovery manager
+        # Now test with actual provider config
         if 'dynamic_discovery' in provider_config.extra:
-            discovery_data = provider_config.extra['dynamic_discovery']
+            actual_provider_data = {"extra": provider_config.extra}
+            actual_parsed = mixin._parse_discovery_config(actual_provider_data)
             
-            if discovery_data.get('enabled'):
-                print(f"   🎯 Attempting to create discovery manager...")
-                
-                # Import discovery components
-                try:
-                    from chuk_llm.llm.discovery.engine import UniversalModelDiscoveryManager
-                    from chuk_llm.llm.discovery.providers import DiscovererFactory
-                    
-                    print(f"   ✅ Discovery imports successful")
-                    
-                    # Try to create discoverer
-                    discoverer_config = {
-                        **discovery_data.get('discoverer_config', {}),
-                        "api_base": provider_config.api_base,
-                    }
-                    
-                    discoverer_type = discovery_data.get('discoverer_type', 'ollama')
-                    print(f"   🔧 Creating discoverer: {discoverer_type}")
-                    print(f"   📋 Discoverer config: {discoverer_config}")
-                    
-                    discoverer = DiscovererFactory.create_discoverer(discoverer_type, **discoverer_config)
-                    print(f"   ✅ Discoverer created: {type(discoverer)}")
-                    
-                    # Create manager
-                    manager = UniversalModelDiscoveryManager(
-                        provider_name="ollama",
-                        discoverer=discoverer,
-                        inference_config=discovery_data.get('inference_config', {})
-                    )
-                    print(f"   ✅ Discovery manager created successfully")
-                    
-                    # Test discovery
-                    print(f"   🧪 Testing model discovery...")
-                    models = await manager.discover_models()
-                    print(f"   🎯 Discovered {len(models)} models")
-                    
-                    if models:
-                        print(f"   📋 Sample models:")
-                        for model in models[:5]:
-                            print(f"      • {model.name} ({model.family})")
-                        if len(models) > 5:
-                            print(f"      ... and {len(models) - 5} more")
-                    
-                except Exception as discovery_error:
-                    print(f"   ❌ Discovery manager creation failed: {discovery_error}")
-                    import traceback
-                    print(f"   📋 Traceback: {traceback.format_exc()}")
-                    
+            if actual_parsed:
+                print(f"   ✅ Actual provider config parses correctly")
+                print(f"      enabled: {actual_parsed.enabled}")
             else:
-                print(f"   ⚠️ Discovery disabled in config")
-        else:
-            print(f"   ❌ No discovery config found")
-            
+                print(f"   ❌ Actual provider config parsing failed")
+                print(f"   📋 Input data: {actual_provider_data}")
+        
     except Exception as e:
-        print(f"   ❌ Discovery manager test failed: {e}")
+        print(f"   ❌ Configuration consistency check failed: {e}")
         import traceback
-        print(f"   📋 Traceback: {traceback.format_exc()}")
+        traceback.print_exc()
     
-    # Step 6: Check the specific method that showed discovery as disabled
-    print("\n6️⃣ Discovery Status Check...")
+    # Step 6: Discovery status summary
+    print(f"\n6️⃣ Discovery Status Summary...")
     
     try:
-        # This is what the original script was checking
-        discovery_enabled = False
         discovery_data = provider_config.extra.get('dynamic_discovery')
         
-        print(f"   📋 Raw discovery data: {discovery_data}")
-        print(f"   📋 Type: {type(discovery_data)}")
+        print(f"   📊 Discovery Configuration Status:")
+        print(f"      Config exists: {'Yes' if discovery_data else 'No'}")
         
         if discovery_data:
             if isinstance(discovery_data, dict):
-                discovery_enabled = discovery_data.get('enabled', False)
-                print(f"   🎯 Discovery enabled (dict access): {discovery_enabled}")
-            else:
-                print(f"   ⚠️ Discovery data is not a dict!")
+                enabled = discovery_data.get('enabled', False)
+                discoverer_type = discovery_data.get('discoverer_type', 'unknown')
                 
-        print(f"   📊 Final discovery status: {discovery_enabled}")
-        
+                print(f"      Discovery enabled: {enabled}")
+                print(f"      Discoverer type: {discoverer_type}")
+                
+                if enabled:
+                    print(f"   ✅ Discovery should work when triggered")
+                else:
+                    print(f"   ⚠️  Discovery is disabled in configuration")
+            else:
+                print(f"      ❌ Discovery config malformed (not a dict)")
+        else:
+            print(f"      ❌ No discovery configuration found")
+    
     except Exception as e:
-        print(f"   ❌ Discovery status check failed: {e}")
+        print(f"   ❌ Discovery status summary failed: {e}")
     
-    print("\n" + "=" * 50)
-    print("🎯 Debug Analysis Complete")
-    
-    return True
+    print(f"\n" + "=" * 50)
+    print("🎯 Safe Debug Analysis Complete")
+    print()
+    print("💡 What this tells us:")
+    print("   • Whether discovery is configured correctly")
+    print("   • If the API is accessible for discovery")  
+    print("   • Whether discovery modules can be imported")
+    print("   • Configuration parsing consistency")
+    print()
+    print("🚫 What this DIDN'T do:")
+    print("   • No model downloads triggered")
+    print("   • No actual discovery operations")
+    print("   • No model list queries")
 
-async def test_manual_discovery():
-    """Test discovery manually"""
-    print("\n🧪 Manual Discovery Test...")
+
+def check_existing_model_functions():
+    """Check what model functions already exist WITHOUT discovery"""
+    print(f"\n🔧 Existing Function Check...")
     
     try:
-        from chuk_llm.api.discovery import discover_models_sync
+        from chuk_llm.api.providers import get_all_functions
         
-        print("   🔍 Testing manual discovery...")
-        models = discover_models_sync("ollama")
+        all_functions = get_all_functions()
         
-        print(f"   ✅ Manual discovery successful!")
-        print(f"   📊 Found {len(models)} models")
+        # Count different types
+        ollama_ask = [name for name in all_functions.keys() if name.startswith('ask_ollama_') and not name.endswith('_sync')]
+        ollama_stream = [name for name in all_functions.keys() if name.startswith('stream_ollama_')]
+        ollama_sync = [name for name in all_functions.keys() if name.startswith('ask_ollama_') and name.endswith('_sync')]
         
-        if models:
-            print("   📋 Sample discovered models:")
-            for model in models[:5]:
-                print(f"      • {model['name']} - {model.get('features', [])}")
+        print(f"   📊 Current Ollama Functions:")
+        print(f"      Async functions: {len(ollama_ask)}")
+        print(f"      Stream functions: {len(ollama_stream)}")
+        print(f"      Sync functions: {len(ollama_sync)}")
+        
+        # Show some examples
+        if ollama_ask:
+            print(f"   📋 Sample async functions:")
+            for func in sorted(ollama_ask)[:5]:
+                print(f"      • {func}")
+            if len(ollama_ask) > 5:
+                print(f"      ... and {len(ollama_ask) - 5} more")
+        
+        print(f"   💡 These functions exist from static configuration")
+        print(f"   💡 Discovery would add more functions for new models")
         
     except Exception as e:
-        print(f"   ❌ Manual discovery failed: {e}")
-        import traceback
-        print(f"   📋 Traceback: {traceback.format_exc()}")
+        print(f"   ❌ Function check failed: {e}")
 
-async def main():
-    """Main debug function"""
-    await debug_discovery_config()
-    await test_manual_discovery()
+
+def main():
+    """Main safe debug function"""
+    debug_discovery_config_safe()
+    check_existing_model_functions()
     
-    print("\n💡 Next Steps:")
-    print("   1. Check if discovery is actually working despite the status")
-    print("   2. Try manual discovery using the API")
-    print("   3. Check for any config inheritance issues")
-    print("   4. Verify all discovery components are imported correctly")
+    print(f"\n🛡️  Safe Debug Complete")
+    print("   No models were downloaded or discovered")
+    print("   Only configuration and connectivity tested")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

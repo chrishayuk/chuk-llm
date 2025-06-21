@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Google Gemini Provider Example Usage Script - Universal Config Version
+Google Gemini Provider Example Usage Script - Current Models (June 2025)
 ======================================================================
 
 Demonstrates all the features of the Gemini provider using the unified config system.
@@ -12,7 +12,7 @@ Requirements:
 
 Usage:
     python gemini_example.py
-    python gemini_example.py --model gemini-2.0-flash-exp
+    python gemini_example.py --model gemini-2.5-pro
     python gemini_example.py --skip-vision
     python gemini_example.py --test-multimodal
 """
@@ -70,7 +70,7 @@ def create_test_image(color="red", size=20):
 # Example 1: Basic Text Completion
 # =============================================================================
 
-async def basic_text_example(model: str = "gemini-2.0-flash-exp"):
+async def basic_text_example(model: str = "gemini-2.5-flash"):
     """Basic text completion example"""
     print(f"\n🤖 Basic Text Completion with {model}")
     print("=" * 60)
@@ -94,7 +94,7 @@ async def basic_text_example(model: str = "gemini-2.0-flash-exp"):
 # Example 2: Streaming Response
 # =============================================================================
 
-async def streaming_example(model: str = "gemini-2.0-flash-exp"):
+async def streaming_example(model: str = "gemini-2.5-flash"):
     """Real-time streaming example"""
     print(f"\n⚡ Streaming Example with {model}")
     print("=" * 60)
@@ -132,7 +132,7 @@ async def streaming_example(model: str = "gemini-2.0-flash-exp"):
 # Example 3: Function Calling
 # =============================================================================
 
-async def function_calling_example(model: str = "gemini-2.0-flash-exp"):
+async def function_calling_example(model: str = "gemini-2.5-flash"):
     """Function calling with tools"""
     print(f"\n🔧 Function Calling with {model}")
     print("=" * 60)
@@ -250,7 +250,7 @@ async def function_calling_example(model: str = "gemini-2.0-flash-exp"):
 # Example 4: Universal Vision Format
 # =============================================================================
 
-async def universal_vision_example(model: str = "gemini-2.0-flash-exp"):
+async def universal_vision_example(model: str = "gemini-2.5-flash"):
     """Vision capabilities using universal image_url format"""
     print(f"\n👁️  Universal Vision Format Example with {model}")
     print("=" * 60)
@@ -259,10 +259,10 @@ async def universal_vision_example(model: str = "gemini-2.0-flash-exp"):
     config = get_config()
     if not config.supports_feature("gemini", Feature.VISION, model):
         print(f"⚠️  Skipping vision: Model {model} doesn't support vision")
-        print(f"💡 Vision-capable models: gemini-2.0-flash-exp, gemini-1.5-pro, gemini-1.5-flash")
+        print(f"💡 Vision-capable models: gemini-2.5-flash, gemini-2.5-pro, gemini-1.5-pro")
         
         # Suggest a vision-capable model
-        vision_models = ["gemini-2.0-flash-exp", "gemini-1.5-pro", "gemini-1.5-flash"]
+        vision_models = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-pro"]
         for suggested_model in vision_models:
             if config.supports_feature("gemini", Feature.VISION, suggested_model):
                 print(f"💡 Try: --model {suggested_model}")
@@ -276,8 +276,7 @@ async def universal_vision_example(model: str = "gemini-2.0-flash-exp"):
     print("🖼️  Creating test image...")
     test_image_b64 = create_test_image("blue", 30)
     
-    # Note: Gemini client appears to have issues with image processing
-    # Let's try a text-based approach that acknowledges the limitation
+    # Note: Current Gemini client has image processing limitations
     print("⚠️  Note: Current Gemini client has image processing limitations")
     
     # Test with a simple text query instead since vision isn't working properly
@@ -315,7 +314,7 @@ async def universal_vision_example(model: str = "gemini-2.0-flash-exp"):
 # Example 5: System Parameter Support
 # =============================================================================
 
-async def system_parameter_example(model: str = "gemini-2.0-flash-exp"):
+async def system_parameter_example(model: str = "gemini-2.5-flash"):
     """System parameter example with different personas"""
     print(f"\n🎭 System Parameter Example with {model}")
     print("=" * 60)
@@ -347,30 +346,42 @@ async def system_parameter_example(model: str = "gemini-2.0-flash-exp"):
         }
     ]
     
-    print(f"⚠️  Note: Current Gemini client has system parameter limitations")
-    
     for persona in personas:
         print(f"\n🎭 Testing {persona['name']} persona:")
         
-        # Since the system parameter doesn't work, embed in user message
-        combined_message = f"Instructions: {persona['system']}\n\nUser request: {persona['query']}\n\nPlease respond according to the instructions above."
-        messages = [{"role": "user", "content": combined_message}]
-        
+        # Try both system parameter and system message approaches
         try:
-            response = await client.create_completion(messages, max_tokens=150)
-            print(f"   {response['response'][:200]}...")
+            # Method 1: Try system parameter (should work with updated client)
+            messages = [{"role": "user", "content": persona['query']}]
+            response = await client.create_completion(
+                messages, 
+                system=persona['system'],
+                max_tokens=150
+            )
+            print(f"   ✅ System parameter: {response['response'][:200]}...")
             
         except Exception as e:
-            print(f"   ❌ Error: {str(e)[:100]}...")
+            print(f"   ⚠️  System parameter failed: {str(e)[:100]}...")
+            
+            # Method 2: Fallback to system message in conversation
+            try:
+                messages = [
+                    {"role": "system", "content": persona['system']},
+                    {"role": "user", "content": persona['query']}
+                ]
+                response = await client.create_completion(messages, max_tokens=150)
+                print(f"   ✅ System message: {response['response'][:200]}...")
+                
+            except Exception as e2:
+                print(f"   ❌ Both methods failed: {str(e2)[:100]}...")
     
-    print(f"\n💡 Note: System parameter requires Gemini client improvements")
     return True
 
 # =============================================================================
 # Example 6: JSON Mode Support
 # =============================================================================
 
-async def json_mode_example(model: str = "gemini-2.0-flash-exp"):
+async def json_mode_example(model: str = "gemini-2.5-flash"):
     """JSON mode example using response_format"""
     print(f"\n📋 JSON Mode Example with {model}")
     print("=" * 60)
@@ -383,7 +394,7 @@ async def json_mode_example(model: str = "gemini-2.0-flash-exp"):
     
     client = get_client("gemini", model=model)
     
-    # Test JSON mode with different requests - simplified for Gemini client limitations
+    # Test JSON mode with different requests
     json_tasks = [
         {
             "name": "Technology Profile",
@@ -411,7 +422,6 @@ async def json_mode_example(model: str = "gemini-2.0-flash-exp"):
         ]
         
         try:
-            # Since generation_config isn't working, try direct approach
             response = await client.create_completion(
                 messages,
                 max_tokens=300,
@@ -459,61 +469,31 @@ async def json_mode_example(model: str = "gemini-2.0-flash-exp"):
                         
                 except json.JSONDecodeError as e:
                     print(f"   ⚠️  JSON parsing issue: {e}")
-                    # Try to find JSON within the response
-                    clean_response = response["response"].strip()
-                    if "```json" in clean_response:
-                        # Extract content between ```json and ```
-                        start = clean_response.find("```json") + 7
-                        end = clean_response.find("```", start)
-                        if end > start:
-                            json_content = clean_response[start:end].strip()
-                            try:
-                                json_data = json.loads(json_content)
-                                print(f"   ✅ Extracted valid JSON with keys: {list(json_data.keys())}")
-                                
-                                # Check expected keys
-                                found_keys = set(json_data.keys())
-                                expected_keys = set(task["expected_keys"])
-                                missing_keys = expected_keys - found_keys
-                                
-                                if missing_keys:
-                                    print(f"   ⚠️  Missing expected keys: {missing_keys}")
-                                else:
-                                    print(f"   ✅ All expected keys found")
-                                    
-                            except json.JSONDecodeError:
-                                print(f"   ❌ Could not parse extracted JSON")
-                                print(f"   📄 Raw response: {response['response'][:200]}...")
-                    else:
-                        print(f"   📄 Raw response: {response['response'][:200]}...")
+                    print(f"   📄 Raw response: {response['response'][:200]}...")
             else:
                 print(f"   ❌ No response received")
         
         except Exception as e:
             print(f"   ❌ JSON mode failed: {e}")
-            print(f"   💡 Gemini client may not support advanced JSON configuration")
     
     return True
 
 # =============================================================================
-# Example 7: Model Comparison using Unified Config
+# Example 7: Model Comparison using Current Models
 # =============================================================================
 
 async def model_comparison_example():
-    """Compare different Gemini models using unified config"""
+    """Compare different Gemini models using current available models"""
     print(f"\n📊 Model Comparison")
     print("=" * 60)
     
-    # Get all Gemini models from unified config
-    config = get_config()
-    provider_config = config.get_provider("gemini")
+    # Current available Gemini models (June 2025)
     models = [
-        "gemini-2.0-flash-exp",                 # Gemini 2.0 Flash Experimental
-        "gemini-2.0-flash-thinking-exp",        # Gemini 2.0 Flash Thinking
-        "gemini-1.5-pro",                       # Gemini 1.5 Pro
-        "gemini-1.5-flash",                     # Gemini 1.5 Flash
-        "gemini-1.5-flash-8b",                  # Gemini 1.5 Flash 8B
-    ][:4]  # Test top 4 models
+        "gemini-2.5-pro",                      # Most powerful with thinking
+        "gemini-2.5-flash",                    # Best price-performance
+        "gemini-2.0-flash",                    # Next-gen features
+        "gemini-1.5-pro",                      # Large context, reliable
+    ]
     
     prompt = "What is artificial intelligence? (One sentence)"
     results = {}
@@ -523,6 +503,8 @@ async def model_comparison_example():
             print(f"🔄 Testing {model}...")
             
             # Get model capabilities
+            config = get_config()
+            provider_config = config.get_provider("gemini")
             model_caps = provider_config.get_model_capabilities(model)
             features = [f.value for f in model_caps.features] if model_caps else []
             
@@ -553,7 +535,7 @@ async def model_comparison_example():
     print("\n📈 Results:")
     for model, result in results.items():
         status = "✅" if result["success"] else "❌"
-        model_short = model.replace("gemini-", "").replace("-exp", "")
+        model_short = model.replace("gemini-", "")
         print(f"   {status} {model_short}:")
         print(f"      Time: {result['time']:.2f}s")
         print(f"      Length: {result['length']} chars")
@@ -564,10 +546,10 @@ async def model_comparison_example():
     return results
 
 # =============================================================================
-# Example 8: Feature Detection with Universal Config
+# Example 8: Feature Detection with Current Models
 # =============================================================================
 
-async def feature_detection_example(model: str = "gemini-2.0-flash-exp"):
+async def feature_detection_example(model: str = "gemini-2.5-flash"):
     """Detect and display model features using unified config"""
     print(f"\n🔬 Feature Detection for {model}")
     print("=" * 60)
@@ -613,17 +595,14 @@ async def feature_detection_example(model: str = "gemini-2.0-flash-exp"):
 # Example 9: Comprehensive Feature Test
 # =============================================================================
 
-async def comprehensive_feature_test(model: str = "gemini-2.0-flash-exp"):
+async def comprehensive_feature_test(model: str = "gemini-2.5-flash"):
     """Test all features in one comprehensive example"""
     print(f"\n🚀 Comprehensive Feature Test with {model}")
     print("=" * 60)
     
-    # Since Gemini client has several limitations, we'll test what works
-    print(f"⚠️  Note: Testing available features due to current Gemini client limitations")
-    
     client = get_client("gemini", model=model)
     
-    # Test: Tools + Text (since system and vision have issues)
+    # Test: Tools + Text
     tools = [
         {
             "type": "function",
@@ -651,7 +630,7 @@ async def comprehensive_feature_test(model: str = "gemini-2.0-flash-exp"):
         }
     ]
     
-    print("🔄 Testing: Tools + Text (working features)...")
+    print("🔄 Testing: Tools + Text...")
     
     try:
         response = await asyncio.wait_for(
@@ -678,21 +657,13 @@ async def comprehensive_feature_test(model: str = "gemini-2.0-flash-exp"):
         return {"response": f"Error: {str(e)}", "error": True}
     
     print("✅ Comprehensive test completed!")
-    print("💡 Note: Full feature testing requires Gemini client improvements for:")
-    print("   • System message parameter handling")
-    print("   • Universal vision format support") 
-    print("   • JSON mode configuration")
     return response
-
-async def comprehensive_text_only_test(model: str):
-    """Comprehensive test without vision for non-vision models"""
-    return await comprehensive_feature_test(model)
 
 # =============================================================================
 # Example 10: Multimodal Capabilities Test
 # =============================================================================
 
-async def multimodal_example(model: str = "gemini-2.0-flash-exp"):
+async def multimodal_example(model: str = "gemini-2.5-flash"):
     """Test multimodal capabilities with multiple content types"""
     print(f"\n🎭 Multimodal Capabilities Test with {model}")
     print("=" * 60)
@@ -705,8 +676,7 @@ async def multimodal_example(model: str = "gemini-2.0-flash-exp"):
     
     client = get_client("gemini", model=model)
     
-    # Since the current Gemini client has image processing issues,
-    # we'll test conceptual multimodal understanding instead
+    # Test conceptual multimodal understanding
     print("🎭 Testing conceptual multimodal understanding...")
     
     messages = [
@@ -743,8 +713,8 @@ async def multimodal_example(model: str = "gemini-2.0-flash-exp"):
 
 async def main():
     """Run all examples"""
-    parser = argparse.ArgumentParser(description="Google Gemini Provider Example Script - Universal Config")
-    parser.add_argument("--model", default="gemini-2.0-flash-exp", help="Model to use (default: gemini-2.0-flash-exp)")
+    parser = argparse.ArgumentParser(description="Google Gemini Provider Examples - Current Models (June 2025)")
+    parser.add_argument("--model", default="gemini-2.5-flash", help="Model to use (default: gemini-2.5-flash)")
     parser.add_argument("--skip-vision", action="store_true", help="Skip vision examples")
     parser.add_argument("--skip-functions", action="store_true", help="Skip function calling")
     parser.add_argument("--test-multimodal", action="store_true", help="Focus on multimodal capabilities")
@@ -753,26 +723,53 @@ async def main():
     
     args = parser.parse_args()
     
-    print("🚀 Google Gemini Provider Examples (Universal Config v3)")
+    print("🚀 Google Gemini Provider Examples (Current Models - June 2025)")
     print("=" * 60)
     print(f"Using model: {args.model}")
     print(f"API Key: {'✅ Set' if os.getenv('GEMINI_API_KEY') else '❌ Missing'}")
     
-    # Show config info
+    # Show config info and validate model
     try:
         config = get_config()
         provider_config = config.get_provider("gemini")
-        print(f"Available models: {len(provider_config.models)}")
+        available_models = provider_config.models
+        
+        print(f"Available models: {len(available_models)}")
         print(f"Baseline features: {', '.join(f.value for f in provider_config.features)}")
         
-        # Check if the selected model supports vision
+        # Validate requested model
+        if args.model not in available_models:
+            print(f"⚠️  Model {args.model} not in configured models")
+            print(f"📋 Available models: {', '.join(available_models)}")
+            print(f"💡 Try one of: gemini-2.5-flash, gemini-2.5-pro, gemini-2.0-flash, gemini-1.5-pro")
+            return
+        
+        # Show model capabilities
+        model_caps = provider_config.get_model_capabilities(args.model)
+        if model_caps:
+            features = [f.value for f in model_caps.features]
+            print(f"Model capabilities: {', '.join(features[:5])}...")
+            
+            # Show context limits  
+            context_length = getattr(model_caps, 'max_context_length', 0)
+            output_tokens = getattr(model_caps, 'max_output_tokens', 0)
+            if context_length > 0:
+                print(f"📏 Context: {context_length:,} input tokens, {output_tokens:,} output tokens")
+                
+            # Special note for 2.5 series enhanced capabilities
+            if "2.5" in args.model:
+                print(f"🧠 Enhanced reasoning: Gemini 2.5 series includes advanced thinking capabilities")
+        
+        # Check vision support
         if config.supports_feature("gemini", Feature.VISION, args.model):
             print(f"✅ Model {args.model} supports vision")
         else:
             print(f"⚠️  Model {args.model} doesn't support vision - vision tests will be skipped")
             if not args.skip_vision:
-                vision_models = ["gemini-2.0-flash-exp", "gemini-1.5-pro", "gemini-1.5-flash"]
-                print(f"💡 For vision tests, try: {', '.join(vision_models)}")
+                vision_models = ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-pro", "gemini-1.5-flash"]
+                available_vision = [m for m in vision_models if m in available_models]
+                if available_vision:
+                    print(f"💡 For vision tests, try: {', '.join(available_vision[:3])}")
                 
     except Exception as e:
         print(f"⚠️  Config warning: {e}")
@@ -841,24 +838,31 @@ async def main():
     
     if successful == total:
         print(f"\n🎉 All examples completed successfully!")
-        print(f"🔗 Google Gemini provider is working perfectly with universal config!")
-        print(f"✨ Features tested: System params, JSON mode, Universal vision, Tools, Streaming")
+        print(f"🔗 Google Gemini provider is working perfectly with current models!")
+        print(f"✨ Features tested: System params, JSON mode, Vision concepts, Tools, Streaming")
     else:
         print(f"\n⚠️  Some examples failed. Check your API key and model access.")
-        
-        # Show model recommendations
-        print(f"\n💡 Model Recommendations:")
-        print(f"   • For latest features: gemini-2.0-flash-exp")
-        print(f"   • For reasoning: gemini-2.0-flash-thinking-exp")
-        print(f"   • For production: gemini-1.5-pro, gemini-1.5-flash")
-        print(f"   • For efficiency: gemini-1.5-flash-8b")
-        print(f"   • For vision: gemini-2.0-flash-exp, gemini-1.5-pro")
-        
-        print(f"\n🔧 Current Gemini Client Limitations:")
-        print(f"   • System parameter uses 'system_instruction' instead of 'system'")
-        print(f"   • Vision requires native Gemini format, not universal image_url")
-        print(f"   • JSON mode needs proper generation_config implementation")
-        print(f"   • Missing get_model_info() method for client introspection")
+    
+    # Show current model recommendations
+    print(f"\n💡 Current Model Recommendations (June 2025):")
+    print(f"   • For thinking & reasoning: gemini-2.5-pro")      # Best for complex tasks
+    print(f"   • For best price-performance: gemini-2.5-flash")  # Adaptive thinking
+    print(f"   • For next-gen features: gemini-2.0-flash")       # Speed and features
+    print(f"   • For large context: gemini-1.5-pro")             # 2M tokens
+    print(f"   • For high volume: gemini-1.5-flash-8b")          # Cost-efficient
+    print(f"   • For vision: gemini-2.5-pro, gemini-2.5-flash") # All 2.5 models support vision
+    
+    print(f"\n🆕 New in Gemini 2.5 Series:")
+    print(f"   • Enhanced thinking capabilities with up to 64K output tokens")
+    print(f"   • Adaptive thinking - model thinks as needed")
+    print(f"   • Improved reasoning for complex problems")
+    print(f"   • Better multimodal understanding")
+    
+    print(f"\n🔧 Cleaned Up Gemini Client:")
+    print(f"   • No hard-coded model fallbacks")
+    print(f"   • No experimental model aliases") 
+    print(f"   • Clean error messages for unavailable models")
+    print(f"   • Uses only current stable models from configuration")
 
 if __name__ == "__main__":
     try:
