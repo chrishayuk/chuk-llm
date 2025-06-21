@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 # Version info
 __version__ = "0.1.0"
 __author__ = "Chris Hay"
-__email__ = "chris@chrishay.co.uk"
+__email__ = "chuk@nowhere.com"
 
 # Unified configuration system
 try:

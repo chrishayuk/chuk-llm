@@ -1,4 +1,3 @@
-# chuk_llm/configuration/unified_config.py
 """
 Clean Unified Configuration System with Transparent Discovery
 ===========================================================
@@ -217,13 +216,37 @@ class UnifiedConfigManager(ConfigDiscoveryMixin):
             if "inherits" in data:
                 provider.inherits = data["inherits"]
             
-            # Extra fields
-            extra_fields = {k: v for k, v in data.items() 
-                          if k not in {"client_class", "api_key_env", "api_key_fallback_env", 
-                                      "api_base", "default_model", "models", "model_aliases",
-                                      "features", "max_context_length", "max_output_tokens", 
-                                      "rate_limits", "model_capabilities", "inherits"}}
-            provider.extra.update(extra_fields)
+            # CRITICAL FIX: Process extra fields INSIDE the provider loop
+            known_fields = {"client_class", "api_key_env", "api_key_fallback_env",
+                           "api_base", "default_model", "models", "model_aliases",
+                           "features", "max_context_length", "max_output_tokens",
+                           "rate_limits", "model_capabilities", "inherits"}
+
+            # Extract extra fields for THIS provider
+            extra_fields = {k: v for k, v in data.items() if k not in known_fields}
+
+            # CRITICAL FIX: Deep merge extra fields for THIS provider
+            for key, value in extra_fields.items():
+                if isinstance(value, dict) and key in provider.extra and isinstance(provider.extra[key], dict):
+                    # Deep merge dictionaries (like dynamic_discovery)
+                    provider.extra[key].update(value)
+                else:
+                    # Replace for non-dict values
+                    provider.extra[key] = value
+            
+            # CRITICAL FIX: Handle double nesting issue
+            if "extra" in provider.extra and isinstance(provider.extra["extra"], dict):
+                # Flatten double-nested extra fields
+                nested_extra = provider.extra["extra"]
+                del provider.extra["extra"]
+                provider.extra.update(nested_extra)
+                logger.debug(f"Fixed double nesting for provider {name}")
+            
+            # Debug logging for discovery config
+            if "dynamic_discovery" in extra_fields:
+                logger.debug(f"Added discovery config to {name}: {extra_fields['dynamic_discovery']}")
+            elif "dynamic_discovery" in provider.extra:
+                logger.debug(f"Discovery config available for {name}: enabled={provider.extra['dynamic_discovery'].get('enabled')}")
     
     def _resolve_inheritance(self):
         """Resolve provider inheritance - inherit config but NOT models/aliases"""
