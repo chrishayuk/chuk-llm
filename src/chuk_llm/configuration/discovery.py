@@ -40,7 +40,7 @@ class ConfigDiscoveryMixin:
         )
     
     async def _refresh_provider_models(self, provider_name: str, discovery_config: DiscoveryConfig) -> bool:
-        """Refresh models for provider using discovery (internal method)"""
+        """Refresh models for provider using discovery with :latest handling"""
         # Check cache first
         cache_key = provider_name
         cached_data = self._discovery_cache.get(cache_key)
@@ -65,9 +65,18 @@ class ConfigDiscoveryMixin:
                 logger.debug(f"No text models discovered for {provider_name}")
                 return False
             
-            # Update provider configuration seamlessly
+            # Update provider configuration seamlessly with :latest handling
             provider = self.providers[provider_name]
             static_models = set(provider.models)
+            
+            # Create lookup sets for both forms to avoid duplicates
+            static_models_normalized = set()
+            for model in static_models:
+                static_models_normalized.add(model)
+                if model.endswith(':latest'):
+                    static_models_normalized.add(model.replace(':latest', ''))
+                else:
+                    static_models_normalized.add(f"{model}:latest")
             
             # Merge models (static take precedence)
             new_model_names = []
@@ -76,14 +85,35 @@ class ConfigDiscoveryMixin:
             # Keep all static models
             new_model_names.extend(provider.models)
             
-            # Add new discovered models
+            # Add new discovered models with :latest deduplication
             for model in text_models:
-                if model.name not in static_models:
-                    new_model_names.append(model.name)
+                model_name = model.name
+                base_name = model_name.replace(':latest', '') if model_name.endswith(':latest') else model_name
+                
+                # Skip if we already have this model in any form
+                if (model_name not in static_models_normalized and 
+                    base_name not in static_models_normalized):
                     
-                    # Create capabilities for discovered model
+                    new_model_names.append(model_name)
+                    
+                    # Create capabilities for discovered model (exact pattern)
                     new_capabilities.append(ModelCapabilities(
-                        pattern=f"^{re.escape(model.name)}$",
+                        pattern=f"^{re.escape(model_name)}$",
+                        features=model.capabilities,
+                        max_context_length=model.context_length,
+                        max_output_tokens=model.max_output_tokens
+                    ))
+                    
+                    # Also create pattern for alternative form (:latest handling)
+                    if model_name.endswith(':latest'):
+                        # Add pattern for base name too
+                        alt_pattern = f"^{re.escape(base_name)}$"
+                    else:
+                        # Add pattern for :latest version too
+                        alt_pattern = f"^{re.escape(model_name)}:latest$"
+                    
+                    new_capabilities.append(ModelCapabilities(
+                        pattern=alt_pattern,
                         features=model.capabilities,
                         max_context_length=model.context_length,
                         max_output_tokens=model.max_output_tokens
@@ -157,6 +187,7 @@ class ConfigDiscoveryMixin:
     def _ensure_model_available(self, provider_name: str, model_name: Optional[str]) -> Optional[str]:
         """
         Ensure model is available, trigger discovery if needed.
+        Enhanced with intelligent :latest suffix handling.
         Returns resolved model name or None if not found.
         Completely transparent to caller.
         """
@@ -165,44 +196,175 @@ class ConfigDiscoveryMixin:
         
         provider = self.providers[provider_name]
         
-        # Check if model exists (including aliases)
+        # Step 1: Check exact match first (including aliases)
         resolved_model = provider.model_aliases.get(model_name, model_name)
         if resolved_model in provider.models:
             return resolved_model
         
-        # Model not found - check if discovery is enabled
+        # Step 2: Try :latest variants before discovery
+        latest_variant = None
+        base_variant = None
+        
+        if not model_name.endswith(':latest'):
+            # Try adding :latest suffix
+            latest_variant = f"{model_name}:latest"
+            resolved_latest = provider.model_aliases.get(latest_variant, latest_variant)
+            if resolved_latest in provider.models:
+                logger.debug(f"Resolved {model_name} to existing model {resolved_latest}")
+                return resolved_latest
+        else:
+            # Try removing :latest suffix
+            base_variant = model_name.replace(':latest', '')
+            resolved_base = provider.model_aliases.get(base_variant, base_variant)
+            if resolved_base in provider.models:
+                logger.debug(f"Resolved {model_name} to existing model {resolved_base}")
+                return resolved_base
+        
+        # Step 3: Model not found in static list - check if discovery is enabled
         discovery_config = self._parse_discovery_config({"extra": provider.extra})
         if not discovery_config or not discovery_config.enabled:
             return None  # No discovery available
         
-        # Try discovery (with timeout to avoid blocking)
+        # Step 4: Try discovery - FIXED async handling
         try:
-            # Create task for discovery
+            import asyncio
+            import threading
+            import concurrent.futures
+            
+            # Check if we're already in an async context
+            try:
+                asyncio.get_running_loop()
+                in_async_context = True
+            except RuntimeError:
+                in_async_context = False
+            
             async def _discover_and_check():
                 success = await self._refresh_provider_models(provider_name, discovery_config)
                 if success:
-                    # Re-check if model is now available
+                    # Re-check with both forms after discovery
                     updated_provider = self.providers[provider_name]
+                    
+                    # Check exact match
                     resolved_model = updated_provider.model_aliases.get(model_name, model_name)
                     if resolved_model in updated_provider.models:
+                        logger.debug(f"Found {model_name} via discovery")
                         return resolved_model
-                return None
-            
-            # Run with a reasonable timeout
-            try:
-                loop = asyncio.get_event_loop()
-                task = loop.create_task(_discover_and_check())
+                    
+                    # Check :latest variant
+                    if latest_variant:
+                        resolved_latest = updated_provider.model_aliases.get(latest_variant, latest_variant)
+                        if resolved_latest in updated_provider.models:
+                            logger.debug(f"Found {model_name} as {resolved_latest} via discovery")
+                            return resolved_latest
+                    
+                    # Check base variant
+                    if base_variant:
+                        resolved_base = updated_provider.model_aliases.get(base_variant, base_variant)
+                        if resolved_base in updated_provider.models:
+                            logger.debug(f"Found {model_name} as {resolved_base} via discovery")
+                            return resolved_base
                 
-                # If we have a running loop, we can await
-                result = asyncio.wait_for(task, timeout=5.0)  # 5 second timeout
-                return loop.run_until_complete(result)
-            except RuntimeError:
-                # No event loop, skip discovery for now
                 return None
             
-        except (asyncio.TimeoutError, RuntimeError):
-            logger.debug(f"Discovery timeout for {provider_name}/{model_name}")
+            if in_async_context:
+                # We're in an async context - run in thread pool to avoid blocking
+                def run_discovery():
+                    # Create new event loop in thread
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        return loop.run_until_complete(asyncio.wait_for(_discover_and_check(), timeout=5.0))
+                    finally:
+                        loop.close()
+                
+                # Use thread pool executor with timeout
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(run_discovery)
+                    try:
+                        return future.result(timeout=6.0)  # Slightly longer than internal timeout
+                    except concurrent.futures.TimeoutError:
+                        logger.debug(f"Discovery timeout for {provider_name}/{model_name}")
+                        return None
+            else:
+                # No event loop - create one
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    return loop.run_until_complete(asyncio.wait_for(_discover_and_check(), timeout=5.0))
+                finally:
+                    loop.close()
+            
+        except Exception as e:
+            logger.debug(f"Discovery error for {provider_name}/{model_name}: {e}")
             return None
+    
+    async def _ensure_model_available_async(self, provider_name: str, model_name: Optional[str]) -> Optional[str]:
+        """
+        Async version of _ensure_model_available for use in async contexts.
+        """
+        if not model_name:
+            return None
+        
+        provider = self.providers[provider_name]
+        
+        # Step 1: Check exact match first (including aliases)
+        resolved_model = provider.model_aliases.get(model_name, model_name)
+        if resolved_model in provider.models:
+            return resolved_model
+        
+        # Step 2: Try :latest variants before discovery
+        latest_variant = None
+        base_variant = None
+        
+        if not model_name.endswith(':latest'):
+            # Try adding :latest suffix
+            latest_variant = f"{model_name}:latest"
+            resolved_latest = provider.model_aliases.get(latest_variant, latest_variant)
+            if resolved_latest in provider.models:
+                logger.debug(f"Resolved {model_name} to existing model {resolved_latest}")
+                return resolved_latest
+        else:
+            # Try removing :latest suffix
+            base_variant = model_name.replace(':latest', '')
+            resolved_base = provider.model_aliases.get(base_variant, base_variant)
+            if resolved_base in provider.models:
+                logger.debug(f"Resolved {model_name} to existing model {resolved_base}")
+                return resolved_base
+        
+        # Step 3: Model not found in static list - check if discovery is enabled
+        discovery_config = self._parse_discovery_config({"extra": provider.extra})
+        if not discovery_config or not discovery_config.enabled:
+            return None  # No discovery available
+        
+        # Step 4: Try discovery (async version)
+        try:
+            success = await self._refresh_provider_models(provider_name, discovery_config)
+            if success:
+                # Re-check with both forms after discovery
+                updated_provider = self.providers[provider_name]
+                
+                # Check exact match
+                resolved_model = updated_provider.model_aliases.get(model_name, model_name)
+                if resolved_model in updated_provider.models:
+                    logger.debug(f"Found {model_name} via discovery")
+                    return resolved_model
+                
+                # Check :latest variant
+                if latest_variant:
+                    resolved_latest = updated_provider.model_aliases.get(latest_variant, latest_variant)
+                    if resolved_latest in updated_provider.models:
+                        logger.debug(f"Found {model_name} as {resolved_latest} via discovery")
+                        return resolved_latest
+                
+                # Check base variant
+                if base_variant:
+                    resolved_base = updated_provider.model_aliases.get(base_variant, base_variant)
+                    if resolved_base in updated_provider.models:
+                        logger.debug(f"Found {model_name} as {resolved_base} via discovery")
+                        return resolved_base
+            
+            return None
+            
         except Exception as e:
             logger.debug(f"Discovery error for {provider_name}/{model_name}: {e}")
             return None
