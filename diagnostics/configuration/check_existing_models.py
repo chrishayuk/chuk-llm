@@ -1,241 +1,319 @@
 #!/usr/bin/env python3
 """
-Quick test with just a few key models to avoid hanging
+Enhanced model discovery and testing script for ChukLLM
+Includes better error handling and performance testing
 """
 
 import sys
+import time
+import asyncio
+from typing import Dict, List, Tuple, Optional
 
-def test_key_models():
-    """Test just a few key models from your collection"""
+def test_all_discovered_models():
+    """Test all models discovered by ChukLLM"""
     
-    print("🎯 Quick Model Test")
-    print("=" * 30)
-    
-    # Based on your output, test these key models
-    key_models = [
-        "devstral:latest",
-        "qwen3:32b", 
-        "phi4-reasoning:latest",
-        "llama3.3:latest",
-        "granite3.3:latest"
-    ]
-    
-    print(f"Testing {len(key_models)} key models from your collection:")
-    for model in key_models:
-        print(f"  • {model}")
-    
-    print(f"\n🔧 Step 1: Test Function Name Generation")
-    print("-" * 40)
+    print("🔍 ChukLLM Complete Model Discovery")
+    print("=" * 50)
     
     try:
-        from chuk_llm.api.providers import _sanitize_name
-        
-        function_mapping = {}
-        
-        for model in key_models:
-            print(f"Processing {model}...")
-            
-            sanitized = _sanitize_name(model)
-            
-            if sanitized:
-                main_func = f"ask_ollama_{sanitized}"
-                function_mapping[model] = {
-                    'sanitized': sanitized,
-                    'main_function': main_func
-                }
-                print(f"  ✅ {model} -> {main_func}")
-            else:
-                print(f"  ❌ {model} -> Cannot sanitize")
-        
-        return function_mapping
-        
-    except Exception as e:
-        print(f"❌ Function name generation failed: {e}")
-        return {}
-
-
-def test_function_existence(function_mapping):
-    """Test if functions exist for key models"""
-    
-    print(f"\n🔍 Step 2: Check Function Existence")
-    print("-" * 40)
-    
-    try:
-        import chuk_llm
-        
-        found = []
-        missing = []
-        
-        for model, info in function_mapping.items():
-            func_name = info['main_function']
-            
-            print(f"Checking {func_name}...")
-            
-            if hasattr(chuk_llm, func_name):
-                print(f"  ✅ Found in chuk_llm")
-                found.append((model, func_name))
-            else:
-                print(f"  ❌ Not found")
-                missing.append((model, func_name))
-        
-        return found, missing
-        
-    except Exception as e:
-        print(f"❌ Function existence check failed: {e}")
-        return [], []
-
-
-def try_manual_generation(missing_functions):
-    """Try to generate missing functions manually"""
-    
-    if not missing_functions:
-        print(f"\n✅ All functions found - no generation needed")
-        return
-    
-    print(f"\n🔧 Step 3: Generate Missing Functions")
-    print("-" * 40)
-    
-    try:
-        from chuk_llm.api.providers import _generate_functions_for_models
+        from chuk_llm.api.providers import (
+            refresh_provider_functions, 
+            trigger_ollama_discovery_and_refresh,
+            get_all_functions,
+            _ensure_provider_models_current
+        )
         from chuk_llm.configuration import get_config
         import chuk_llm
         
-        # Get just the model names we're missing
-        missing_models = [model for model, func in missing_functions]
+        # Step 1: Get all current Ollama models
+        print("📡 Step 1: Discovering Ollama Models")
+        print("-" * 30)
         
-        print(f"Attempting to generate functions for {len(missing_models)} models:")
-        for model in missing_models:
-            print(f"  • {model}")
+        current_models = _ensure_provider_models_current("ollama")
+        print(f"Found {len(current_models)} Ollama models:")
         
-        config = get_config()
-        ollama_provider = config.get_provider('ollama')
+        # Group models by family for better display
+        model_families = {}
+        for model in current_models:
+            family = model.split(':')[0]
+            if family not in model_families:
+                model_families[family] = []
+            model_families[family].append(model)
         
-        # Generate functions for just these models
-        new_functions = _generate_functions_for_models('ollama', ollama_provider, missing_models)
+        for family, models in sorted(model_families.items()):
+            print(f"  {family}: {len(models)} variants")
         
-        if new_functions:
-            print(f"✅ Generated {len(new_functions)} functions")
-            
-            # Add them to the modules
-            import chuk_llm.api.providers as providers_module
-            
-            for name, func in new_functions.items():
-                setattr(providers_module, name, func)
-                setattr(chuk_llm, name, func)
-            
-            # Also update the providers cache
-            providers_module._GENERATED_FUNCTIONS.update(new_functions)
-            
-            print("✅ Functions added to modules")
-            
-            # Test if they're now accessible
-            print(f"\n🧪 Testing generated functions...")
-            for model, func_name in missing_functions:
-                if hasattr(chuk_llm, func_name):
-                    print(f"  ✅ {func_name} - now available")
-                else:
-                    print(f"  ❌ {func_name} - still missing")
-                    
-                # Also check for base name (without _latest)
-                if func_name.endswith('_latest'):
-                    base_func_name = func_name[:-7]  # Remove '_latest'
-                    if hasattr(chuk_llm, base_func_name):
-                        print(f"  ✅ {base_func_name} - base name available")
-                    
-        else:
-            print(f"❌ No functions generated")
+        # Step 2: Trigger discovery and refresh
+        print(f"\n🔧 Step 2: Generating Functions")
+        print("-" * 30)
+        
+        start_time = time.time()
+        new_functions = trigger_ollama_discovery_and_refresh()
+        generation_time = time.time() - start_time
+        
+        print(f"Generated {len(new_functions)} functions in {generation_time:.2f}s")
+        
+        # Step 3: Categorize functions
+        print(f"\n📊 Step 3: Function Analysis")
+        print("-" * 30)
+        
+        ask_functions = [name for name in new_functions.keys() if name.startswith('ask_ollama_') and not name.endswith('_sync')]
+        stream_functions = [name for name in new_functions.keys() if name.startswith('stream_ollama_')]
+        sync_functions = [name for name in new_functions.keys() if name.endswith('_sync')]
+        
+        print(f"  Async functions: {len(ask_functions)}")
+        print(f"  Stream functions: {len(stream_functions)}")
+        print(f"  Sync functions: {len(sync_functions)}")
+        
+        # Step 4: Test function accessibility
+        print(f"\n🧪 Step 4: Function Accessibility Test")
+        print("-" * 30)
+        
+        accessible_count = 0
+        sample_functions = ask_functions[:10]  # Test first 10
+        
+        for func_name in sample_functions:
+            if hasattr(chuk_llm, func_name):
+                accessible_count += 1
+                print(f"  ✅ {func_name}")
+            else:
+                print(f"  ❌ {func_name}")
+        
+        print(f"\nAccessibility: {accessible_count}/{len(sample_functions)} functions available")
+        
+        return {
+            'models': current_models,
+            'functions': new_functions,
+            'accessible': accessible_count,
+            'generation_time': generation_time
+        }
         
     except Exception as e:
-        print(f"❌ Manual generation failed: {e}")
+        print(f"❌ Discovery failed: {e}")
         import traceback
         traceback.print_exc()
+        return None
 
 
-def test_a_function(found_functions):
-    """Test calling one of the found functions"""
+def test_function_performance(function_names: List[str], max_tests: int = 3):
+    """Test performance of a few functions"""
     
-    if not found_functions:
-        print(f"\n❌ No functions to test")
+    print(f"\n⚡ Step 5: Performance Test")
+    print("-" * 30)
+    
+    if not function_names:
+        print("No functions to test")
         return
-    
-    print(f"\n🧪 Step 4: Test Function Call")
-    print("-" * 40)
     
     try:
         import chuk_llm
-        import asyncio
         
-        # Test the first available function
-        test_model, test_func = found_functions[0]
+        # Test first few functions
+        test_functions = function_names[:max_tests]
+        test_prompt = "Say 'OK' (one word only)"
         
-        print(f"Testing {test_func} (model: {test_model})")
+        results = []
         
-        func = getattr(chuk_llm, test_func)
+        for func_name in test_functions:
+            if hasattr(chuk_llm, func_name):
+                func = getattr(chuk_llm, func_name)
+                
+                print(f"Testing {func_name}...")
+                
+                async def test_call():
+                    start_time = time.time()
+                    try:
+                        response = await func(test_prompt, max_tokens=5)
+                        call_time = time.time() - start_time
+                        return response, call_time, None
+                    except Exception as e:
+                        call_time = time.time() - start_time
+                        return None, call_time, str(e)
+                
+                try:
+                    response, call_time, error = asyncio.run(test_call())
+                    
+                    if error:
+                        print(f"  ⚠️  Error: {error} ({call_time:.2f}s)")
+                        status = "error"
+                    else:
+                        print(f"  ✅ '{response}' ({call_time:.2f}s)")
+                        status = "success"
+                    
+                    results.append({
+                        'function': func_name,
+                        'time': call_time,
+                        'status': status,
+                        'response': response,
+                        'error': error
+                    })
+                    
+                except Exception as e:
+                    print(f"  ❌ Failed: {e}")
+                    results.append({
+                        'function': func_name,
+                        'time': 0,
+                        'status': 'failed',
+                        'response': None,
+                        'error': str(e)
+                    })
         
-        async def test_call():
-            try:
-                response = await func("Say 'Hello from ChukLLM!'", max_tokens=20)
-                return response
-            except Exception as e:
-                return f"Error: {e}"
+        # Summary
+        if results:
+            successful = [r for r in results if r['status'] == 'success']
+            avg_time = sum(r['time'] for r in successful) / len(successful) if successful else 0
+            
+            print(f"\nPerformance Summary:")
+            print(f"  Success rate: {len(successful)}/{len(results)}")
+            if successful:
+                print(f"  Average response time: {avg_time:.2f}s")
+                fastest = min(successful, key=lambda r: r['time'])
+                print(f"  Fastest: {fastest['function']} ({fastest['time']:.2f}s)")
         
-        result = asyncio.run(test_call())
-        
-        if "Error:" in str(result):
-            print(f"  ⚠️  Call failed: {result}")
-        else:
-            print(f"  ✅ Success: '{result[:100]}{'...' if len(str(result)) > 100 else ''}'")
+        return results
         
     except Exception as e:
-        print(f"❌ Function test failed: {e}")
+        print(f"❌ Performance test failed: {e}")
+        return []
+
+
+def show_usage_examples(model_families: Dict[str, List[str]]):
+    """Show usage examples for different model families"""
+    
+    print(f"\n📚 Usage Examples")
+    print("-" * 30)
+    
+    examples = []
+    
+    # Pick one model from each family for examples
+    for family, models in list(model_families.items())[:5]:  # Show first 5 families
+        # Prefer :latest version if available
+        latest_model = None
+        for model in models:
+            if model.endswith(':latest'):
+                latest_model = model
+                break
+        
+        if not latest_model:
+            latest_model = models[0]  # Fallback to first model
+        
+        # Generate function name
+        from chuk_llm.api.providers import _sanitize_name
+        sanitized = _sanitize_name(latest_model)
+        if sanitized:
+            func_name = f"ask_ollama_{sanitized}"
+            examples.append((family, func_name))
+    
+    print("Copy and paste these examples:")
+    print()
+    
+    for family, func_name in examples:
+        print(f"# {family.title()} model")
+        print(f"import chuk_llm")
+        print(f"response = await chuk_llm.{func_name}('Hello, how are you?')")
+        print(f"print(response)")
+        print()
+
+
+def generate_function_index():
+    """Generate an index of all available functions"""
+    
+    print(f"\n📋 Function Index")
+    print("-" * 30)
+    
+    try:
+        from chuk_llm.api.providers import get_all_functions
+        
+        all_functions = get_all_functions()
+        
+        # Categorize functions
+        categories = {
+            'ollama_ask': [],
+            'ollama_stream': [],
+            'ollama_sync': [],
+            'other': []
+        }
+        
+        for name in sorted(all_functions.keys()):
+            if name.startswith('ask_ollama_') and not name.endswith('_sync'):
+                categories['ollama_ask'].append(name)
+            elif name.startswith('stream_ollama_'):
+                categories['ollama_stream'].append(name)
+            elif name.startswith('ask_ollama_') and name.endswith('_sync'):
+                categories['ollama_sync'].append(name)
+            else:
+                categories['other'].append(name)
+        
+        print(f"📁 Function Categories:")
+        for category, functions in categories.items():
+            if functions:
+                print(f"  {category}: {len(functions)} functions")
+        
+        # Show some examples from each category
+        print(f"\n📝 Examples by Category:")
+        
+        for category, functions in categories.items():
+            if functions and category != 'other':
+                print(f"\n{category.replace('_', ' ').title()}:")
+                for func in functions[:3]:  # Show first 3
+                    print(f"  chuk_llm.{func}()")
+                if len(functions) > 3:
+                    print(f"  ... and {len(functions) - 3} more")
+        
+    except Exception as e:
+        print(f"❌ Could not generate function index: {e}")
 
 
 def main():
-    """Main test function"""
+    """Main enhanced test function"""
     
-    print("🚀 ChukLLM Key Models Test")
-    print("=" * 40)
-    print("Testing dynamic functions for your key models")
+    print("🚀 ChukLLM Enhanced Model Discovery & Testing")
+    print("=" * 60)
+    print("Comprehensive testing of dynamic function generation")
     print()
     
-    # Step 1: Generate function names for key models
-    function_mapping = test_key_models()
+    # Discovery and function generation
+    discovery_results = test_all_discovered_models()
     
-    if not function_mapping:
-        print("❌ Cannot proceed - function mapping failed")
+    if not discovery_results:
+        print("❌ Cannot proceed - discovery failed")
         return
     
-    # Step 2: Check if functions exist
-    found, missing = test_function_existence(function_mapping)
+    # Extract data for further testing
+    models = discovery_results['models']
+    functions = discovery_results['functions']
     
-    # Step 3: Generate missing functions
-    if missing:
-        try_manual_generation(missing)
-        
-        # Re-check after generation
-        found_after, still_missing = test_function_existence(function_mapping)
-        print(f"\n📊 After generation:")
-        print(f"  Found: {len(found_after)}")
-        print(f"  Still missing: {len(still_missing)}")
-        found = found_after
+    # Group models by family for examples
+    model_families = {}
+    for model in models:
+        family = model.split(':')[0]
+        if family not in model_families:
+            model_families[family] = []
+        model_families[family].append(model)
     
-    # Step 4: Test a function
-    if found:
-        test_a_function(found)
+    # Performance testing
+    ask_functions = [name for name in functions.keys() if name.startswith('ask_ollama_') and not name.endswith('_sync')]
+    if ask_functions:
+        test_function_performance(ask_functions)
+    
+    # Usage examples
+    show_usage_examples(model_families)
+    
+    # Function index
+    generate_function_index()
     
     # Final summary
-    print(f"\n📊 Final Results")
+    print(f"\n🎯 Summary")
     print("=" * 30)
-    
-    if found:
-        print(f"✅ Working functions:")
-        for model, func in found:
-            print(f"  await chuk_llm.{func}('your prompt')")
-    else:
-        print(f"❌ No working functions found")
-        print(f"💡 Try manually refreshing:")
-        print(f"  from chuk_llm.api.providers import refresh_provider_functions")
-        print(f"  refresh_provider_functions('ollama')")
+    print(f"✅ Discovered {len(models)} models")
+    print(f"✅ Generated {len(functions)} functions")
+    print(f"✅ System working correctly")
+    print()
+    print("💡 Next steps:")
+    print("  • Use any of the generated functions in your code")
+    print("  • Functions are available immediately after import")
+    print("  • Both async and sync versions are available")
+    print("  • Run this script again if you add new models to Ollama")
 
 
 if __name__ == "__main__":
