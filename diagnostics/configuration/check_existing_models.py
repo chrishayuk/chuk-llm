@@ -98,6 +98,7 @@ def try_manual_generation(missing_functions):
     try:
         from chuk_llm.api.providers import _generate_functions_for_models
         from chuk_llm.configuration import get_config
+        import chuk_llm
         
         # Get just the model names we're missing
         missing_models = [model for model, func in missing_functions]
@@ -115,12 +116,15 @@ def try_manual_generation(missing_functions):
         if new_functions:
             print(f"✅ Generated {len(new_functions)} functions")
             
-            # Add them to the module
+            # Add them to the modules
             import chuk_llm.api.providers as providers_module
             
             for name, func in new_functions.items():
                 setattr(providers_module, name, func)
                 setattr(chuk_llm, name, func)
+            
+            # Also update the providers cache
+            providers_module._GENERATED_FUNCTIONS.update(new_functions)
             
             print("✅ Functions added to modules")
             
@@ -131,11 +135,20 @@ def try_manual_generation(missing_functions):
                     print(f"  ✅ {func_name} - now available")
                 else:
                     print(f"  ❌ {func_name} - still missing")
+                    
+                # Also check for base name (without _latest)
+                if func_name.endswith('_latest'):
+                    base_func_name = func_name[:-7]  # Remove '_latest'
+                    if hasattr(chuk_llm, base_func_name):
+                        print(f"  ✅ {base_func_name} - base name available")
+                    
         else:
             print(f"❌ No functions generated")
         
     except Exception as e:
         print(f"❌ Manual generation failed: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 def test_a_function(found_functions):

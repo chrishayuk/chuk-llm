@@ -61,55 +61,44 @@ def _run_sync(coro):
 def _sanitize_name(name: str) -> str:
     """Convert any name to valid Python identifier
     
-    Single rule: Convert to lowercase, replace separators with underscores,
-    remove special chars, and merge alphabetic parts with short numeric parts.
+    Improved version that keeps separators as underscores for better readability.
+    
+    Examples:
+        devstral:latest -> devstral_latest
+        qwen3:32b -> qwen3_32b  
+        phi4-reasoning:latest -> phi4_reasoning_latest
+        llama3.3:latest -> llama3_3_latest
     """
     if not name:
         return ""
     
-    # Single rule approach
+    # Start with lowercase
     sanitized = name.lower()
     
-    # Replace all separators (dots, dashes, slashes, spaces) with underscores
-    sanitized = re.sub(r'[-./\s]+', '_', sanitized)
+    # Replace separators with underscores (keep them separated!)
+    sanitized = sanitized.replace(':', '_')    # version separators
+    sanitized = sanitized.replace('-', '_')    # hyphens  
+    sanitized = sanitized.replace('.', '_')    # dots
+    sanitized = sanitized.replace('/', '_')    # slashes
+    sanitized = sanitized.replace(' ', '_')    # spaces
     
-    # Remove all non-alphanumeric characters except underscores
+    # Remove any other non-alphanumeric characters except underscores
     sanitized = re.sub(r'[^a-zA-Z0-9_]', '', sanitized)
     
-    # Consolidate multiple underscores
+    # Consolidate multiple underscores into single underscores
     sanitized = re.sub(r'_+', '_', sanitized)
     
-    # Split and apply simple merging rule
-    parts = [p for p in sanitized.split('_') if p]
+    # Remove leading/trailing underscores
+    sanitized = sanitized.strip('_')
     
-    if not parts:
+    if not sanitized:
         return ""
     
-    # Single merging rule: alphabetic + short alphanumeric = merge
-    merged_parts = []
-    i = 0
+    # Handle leading digits (Python identifiers can't start with digits)
+    if sanitized and sanitized[0].isdigit():
+        sanitized = f"model_{sanitized}"
     
-    while i < len(parts):
-        current = parts[i]
-        
-        if (i + 1 < len(parts) and 
-            current.isalpha() and 
-            len(parts[i + 1]) <= 3 and 
-            any(c.isdigit() for c in parts[i + 1])):
-            # Merge current with next
-            merged_parts.append(current + parts[i + 1])
-            i += 2
-        else:
-            merged_parts.append(current)
-            i += 1
-    
-    result = '_'.join(merged_parts)
-    
-    # Handle leading digits
-    if result and result[0].isdigit():
-        result = f"model_{result}"
-    
-    return result.strip('_')
+    return sanitized
 
 
 def _prepare_vision_message(prompt: str, image: Union[str, Path, bytes], provider: str = None) -> Dict[str, any]:
@@ -373,7 +362,7 @@ def _generate_functions_for_models(provider_name: str, provider_config, models: 
             model_caps = provider_config.get_model_capabilities(model)
             model_supports_vision = Feature.VISION in model_caps.features
             
-            # Generate the three function types
+            # Generate the three function types for the full model name
             ask_func = _create_provider_function(provider_name, model, model_supports_vision)
             stream_func = _create_stream_function(provider_name, model, model_supports_vision)
             sync_func = _create_sync_function(provider_name, model, model_supports_vision)
@@ -411,6 +400,50 @@ def _generate_functions_for_models(provider_name: str, provider_config, models: 
                         func.__doc__ = f"Stream from {base}."
                 
                 functions[name] = func
+            
+            # ALSO generate functions for the base name (without :latest)
+            if model.endswith(':latest'):
+                base_model = model[:-7]  # Remove ':latest'
+                base_suffix = _sanitize_name(base_model)
+                
+                if base_suffix and base_suffix != model_suffix:
+                    # Generate additional functions for the base name
+                    base_ask_func = _create_provider_function(provider_name, model, model_supports_vision)
+                    base_stream_func = _create_stream_function(provider_name, model, model_supports_vision)
+                    base_sync_func = _create_sync_function(provider_name, model, model_supports_vision)
+                    
+                    base_func_names = [
+                        f"ask_{provider_name}_{base_suffix}",
+                        f"stream_{provider_name}_{base_suffix}",
+                        f"ask_{provider_name}_{base_suffix}_sync"
+                    ]
+                    
+                    for func, name in zip([base_ask_func, base_stream_func, base_sync_func], base_func_names):
+                        func.__name__ = name
+                        
+                        # Set docstrings
+                        has_image_param = 'image' in func.__code__.co_varnames
+                        
+                        if name.endswith("_sync"):
+                            base = name[:-5].replace("_", " ")
+                            if has_image_param:
+                                func.__doc__ = f"Synchronous {base} call with optional image support."
+                            else:
+                                func.__doc__ = f"Synchronous {base} call."
+                        elif name.startswith("ask_"):
+                            base = name[4:].replace("_", " ")
+                            if has_image_param:
+                                func.__doc__ = f"Async {base} call with optional image support."
+                            else:
+                                func.__doc__ = f"Async {base} call."
+                        elif name.startswith("stream_"):
+                            base = name[7:].replace("_", " ")
+                            if has_image_param:
+                                func.__doc__ = f"Stream from {base} with optional image support."
+                            else:
+                                func.__doc__ = f"Stream from {base}."
+                        
+                        functions[name] = func
     
     return functions
 
@@ -421,13 +454,53 @@ def _ensure_provider_models_current(provider_name: str) -> List[str]:
         config_manager = get_config()
         provider_config = config_manager.get_provider(provider_name)
         
+        # For Ollama, also query the API directly to get current models
+        if provider_name == "ollama":
+            try:
+                import httpx
+                import asyncio
+                
+                async def get_ollama_models():
+                    try:
+                        async with httpx.AsyncClient(timeout=3.0) as client:
+                            response = await client.get("http://localhost:11434/api/tags")
+                            if response.status_code == 200:
+                                data = response.json()
+                                return [model['name'] for model in data.get('models', [])]
+                    except:
+                        return []
+                    return []
+                
+                # Get current models from Ollama API
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # If we're in an async context, skip the API call to avoid blocking
+                        pass
+                    else:
+                        ollama_models = loop.run_until_complete(get_ollama_models())
+                        if ollama_models:
+                            # Merge with existing models
+                            all_models = list(set(provider_config.models + ollama_models))
+                            provider_config.models = all_models
+                            logger.debug(f"Updated Ollama models: {len(all_models)} total")
+                except:
+                    # If async fails, continue with existing models
+                    pass
+            except ImportError:
+                # httpx not available, continue with existing models
+                pass
+        
         # Check if discovery is enabled
         discovery_data = provider_config.extra.get("dynamic_discovery")
         if discovery_data and discovery_data.get("enabled", False):
             # Trigger discovery by accessing models through the ensure method
             # This will automatically discover new models if they exist
-            dummy_model = config_manager._ensure_model_available(provider_name, "dummy_model_to_trigger_discovery")
-            # The above call will trigger discovery and update the provider's models list
+            try:
+                dummy_model = config_manager._ensure_model_available(provider_name, "dummy_model_to_trigger_discovery")
+            except:
+                # Discovery might fail, continue with current models
+                pass
         
         return provider_config.models
         
@@ -516,8 +589,10 @@ def refresh_provider_functions(provider_name: str = None):
         try:
             provider_config = config_manager.get_provider(provider_name)
             
-            # Get current models (this will trigger discovery)
+            # Get current models (this will trigger discovery and API query for Ollama)
             current_models = _ensure_provider_models_current(provider_name)
+            
+            logger.info(f"Generating functions for {len(current_models)} {provider_name} models")
             
             # Generate functions for new models
             new_functions = _generate_functions_for_models(provider_name, provider_config, current_models)
@@ -531,9 +606,20 @@ def refresh_provider_functions(provider_name: str = None):
             for name, func in new_functions.items():
                 setattr(current_module, name, func)
             
+            # Update main chuk_llm module too
+            try:
+                import chuk_llm
+                for name, func in new_functions.items():
+                    if name.startswith(('ask_', 'stream_')) and provider_name in name:
+                        setattr(chuk_llm, name, func)
+            except:
+                pass
+            
             # Update __all__
             if hasattr(current_module, '__all__'):
-                current_module.__all__.extend(new_functions.keys())
+                for name in new_functions.keys():
+                    if name not in current_module.__all__:
+                        current_module.__all__.append(name)
             
             logger.info(f"Refreshed {len(new_functions)} functions for {provider_name}")
             return new_functions
@@ -543,7 +629,7 @@ def refresh_provider_functions(provider_name: str = None):
             return {}
     else:
         # Refresh all providers
-        all_new_functions = _generate_functions()
+        all_new_functions = _generate_static_functions()
         _GENERATED_FUNCTIONS.update(all_new_functions)
         _FUNCTION_CACHE_DIRTY = False
         
@@ -552,6 +638,15 @@ def refresh_provider_functions(provider_name: str = None):
         current_module = sys.modules[__name__]
         for name, func in all_new_functions.items():
             setattr(current_module, name, func)
+        
+        # Update main chuk_llm module too
+        try:
+            import chuk_llm
+            for name, func in all_new_functions.items():
+                if name.startswith(('ask_', 'stream_')):
+                    setattr(chuk_llm, name, func)
+        except:
+            pass
         
         logger.info(f"Refreshed {len(all_new_functions)} total functions")
         return all_new_functions
