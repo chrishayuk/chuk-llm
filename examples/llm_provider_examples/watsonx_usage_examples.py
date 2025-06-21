@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-# examples/watsonx_usage_examples.py
 """
-Watson X Provider Example Usage Script
-=====================================
+Watson X Provider Example Usage Script - Universal Config Version
+================================================================
 
-Demonstrates all the features of the Watson X provider in the chuk-llm library.
-Run this script to see Watson X in action with various capabilities.
+Demonstrates all the features of the Watson X provider using the unified config system.
+Tests universal format support, JSON mode, function calling, and system parameter handling.
 
 Requirements:
 - pip install ibm-watsonx-ai chuk-llm
@@ -17,6 +16,7 @@ Usage:
     python watsonx_example.py
     python watsonx_example.py --model ibm/granite-3-8b-instruct
     python watsonx_example.py --skip-tools
+    python watsonx_example.py --test-benchmark
 """
 
 import asyncio
@@ -24,6 +24,8 @@ import argparse
 import os
 import sys
 import time
+import json
+import base64
 from typing import Dict, Any, List
 
 # dotenv
@@ -46,12 +48,32 @@ if not os.getenv("WATSONX_PROJECT_ID"):
     sys.exit(1)
 
 try:
-    from chuk_llm.llm.client import get_client
-    from chuk_llm.configuration.capabilities import CapabilityChecker
+    from chuk_llm.llm.client import get_client, get_provider_info, validate_provider_setup
+    from chuk_llm.configuration import get_config, CapabilityChecker, Feature
 except ImportError as e:
     print(f"❌ Import error: {e}")
     print("   Please make sure you're running from the chuk-llm directory")
     sys.exit(1)
+
+def create_test_image(color="red", size=20):
+    """Create a test image as base64 - tries PIL first, fallback to hardcoded"""
+    try:
+        from PIL import Image
+        import io
+        
+        # Create a colored square
+        img = Image.new('RGB', (size, size), color)
+        
+        # Convert to base64
+        buffer = io.BytesIO()
+        img.save(buffer, format='PNG')
+        img_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
+        
+        return img_data
+    except ImportError:
+        print("⚠️  PIL not available, using fallback image")
+        # Fallback: 20x20 red square (valid PNG)
+        return "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAdgAAAHYBTnsmCAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAABYSURBVDiN7dMxDQAhDAVQPlYgASuwAhuwAiuwAiuwAiuwAiuwAiuwgv8FJpBMJnfJfc0TDaVLkiRJkiRJkmQpY621zjl775xzSimllFJKKaWUUkoppZRSSimllFJKKe8AK0wGkZ6oONkAAAAASUVORK5CYII="
 
 # =============================================================================
 # Example 1: Basic Text Completion
@@ -86,6 +108,12 @@ async def streaming_example(model: str = "ibm/granite-3-8b-instruct"):
     print(f"\n⚡ Streaming Example with {model}")
     print("=" * 60)
     
+    # Check streaming support using unified config
+    config = get_config()
+    if not config.supports_feature("watsonx", Feature.STREAMING, model):
+        print(f"⚠️  Model {model} doesn't support streaming")
+        return None
+    
     client = get_client("watsonx", model=model)
     
     messages = [
@@ -118,13 +146,10 @@ async def function_calling_example(model: str = "ibm/granite-3-8b-instruct"):
     print(f"\n🔧 Function Calling with {model}")
     print("=" * 60)
     
-    # Check if model supports tools first
-    can_handle, issues = CapabilityChecker.can_handle_request(
-        "watsonx", model, has_tools=True
-    )
-    
-    if not can_handle:
-        print(f"⚠️  Skipping function calling: {', '.join(issues)}")
+    # Check if model supports tools using unified config
+    config = get_config()
+    if not config.supports_feature("watsonx", Feature.TOOLS, model):
+        print(f"⚠️  Skipping function calling: Model {model} doesn't support tools")
         return None
     
     client = get_client("watsonx", model=model)
@@ -134,18 +159,18 @@ async def function_calling_example(model: str = "ibm/granite-3-8b-instruct"):
         {
             "type": "function",
             "function": {
-                "name": "add",
-                "description": "Adds the values a and b to get a sum.",
+                "name": "add_numbers",
+                "description": "Adds two numbers together",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "a": {
-                            "description": "A number value",
-                            "type": "number"
+                            "type": "number",
+                            "description": "First number"
                         },
                         "b": {
-                            "description": "A number value", 
-                            "type": "number"
+                            "type": "number", 
+                            "description": "Second number"
                         }
                     },
                     "required": ["a", "b"]
@@ -176,7 +201,7 @@ async def function_calling_example(model: str = "ibm/granite-3-8b-instruct"):
     ]
     
     messages = [
-        {"role": "user", "content": "What is 2 plus 4? And also analyze the sentiment of this text: 'I love Watson X!'"}
+        {"role": "user", "content": "Please add 15 and 27, and also analyze the sentiment of this text: 'I absolutely love working with Watson X!'"}
     ]
     
     print("🔄 Making function calling request...")
@@ -200,10 +225,10 @@ async def function_calling_example(model: str = "ibm/granite-3-8b-instruct"):
         for tool_call in response["tool_calls"]:
             func_name = tool_call["function"]["name"]
             
-            if func_name == "add":
-                result = '{"sum": 6}'
+            if func_name == "add_numbers":
+                result = '{"sum": 42}'
             elif func_name == "analyze_sentiment":
-                result = '{"sentiment": "positive", "confidence": 0.95, "score": 0.9}'
+                result = '{"sentiment": "positive", "confidence": 0.98, "score": 0.95}'
             else:
                 result = '{"status": "success"}'
             
@@ -227,17 +252,72 @@ async def function_calling_example(model: str = "ibm/granite-3-8b-instruct"):
         return response
 
 # =============================================================================
-# Example 4: System Messages
+# Example 4: Universal Vision Format
 # =============================================================================
 
-async def system_message_example(model: str = "ibm/granite-3-8b-instruct"):
-    """System message example with different personas"""
-    print(f"\n🎭 System Message Example with {model}")
+async def universal_vision_example(model: str = "meta-llama/llama-3-2-90b-vision-instruct"):
+    """Vision capabilities using universal image format"""
+    print(f"\n👁️  Universal Vision Format Example with {model}")
     print("=" * 60)
+    
+    # Check if model supports vision using unified config
+    config = get_config()
+    if not config.supports_feature("watsonx", Feature.VISION, model):
+        print(f"⚠️  Skipping vision: Model {model} doesn't support vision")
+        print(f"💡 Vision-capable models: meta-llama/llama-3-2-90b-vision-instruct")
+        return None
     
     client = get_client("watsonx", model=model)
     
-    # Test different personas
+    # Create a proper test image
+    print("🖼️  Creating test image...")
+    test_image_b64 = create_test_image("blue", 30)
+    
+    # Test universal image_url format (this should work with all providers)
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "What color is this square? Please describe it in one sentence."
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{test_image_b64}"
+                    }
+                }
+            ]
+        }
+    ]
+    
+    print("👀 Analyzing image using universal format...")
+    response = await client.create_completion(messages, max_tokens=100)
+    
+    print(f"✅ Vision response:")
+    print(f"   {response['response']}")
+    
+    return response
+
+# =============================================================================
+# Example 5: System Parameter Support
+# =============================================================================
+
+async def system_parameter_example(model: str = "ibm/granite-3-8b-instruct"):
+    """System parameter example with different personas"""
+    print(f"\n🎭 System Parameter Example with {model}")
+    print("=" * 60)
+    
+    # Check system message support
+    config = get_config()
+    if not config.supports_feature("watsonx", Feature.SYSTEM_MESSAGES, model):
+        print(f"⚠️  Model {model} doesn't support system messages")
+        return None
+    
+    client = get_client("watsonx", model=model)
+    
+    # Test different personas using the system parameter
     personas = [
         {
             "name": "Helpful Assistant",
@@ -245,7 +325,7 @@ async def system_message_example(model: str = "ibm/granite-3-8b-instruct"):
             "query": "How do I bake a cake?"
         },
         {
-            "name": "Pirate",
+            "name": "Pirate Captain",
             "system": "You are a friendly pirate captain. Speak like a pirate and use nautical terms.",
             "query": "How do I bake a cake?"
         },
@@ -260,34 +340,126 @@ async def system_message_example(model: str = "ibm/granite-3-8b-instruct"):
         print(f"\n🎭 Testing {persona['name']} persona:")
         
         messages = [
-            {"role": "system", "content": persona["system"]},
             {"role": "user", "content": persona["query"]}
         ]
         
-        try:
-            response = await client.create_completion(messages, max_tokens=150)
-            print(f"   {response['response'][:200]}...")
-        except Exception as e:
-            print(f"   Error: {e}")
+        # Use the system parameter properly
+        response = await client.create_completion(
+            messages, 
+            system=persona["system"],
+            max_tokens=150
+        )
+        print(f"   {response['response'][:200]}...")
     
     return True
 
 # =============================================================================
-# Example 5: Model Comparison
+# Example 6: JSON Mode Support
+# =============================================================================
+
+async def json_mode_example(model: str = "ibm/granite-3-8b-instruct"):
+    """JSON mode example using response_format"""
+    print(f"\n📋 JSON Mode Example with {model}")
+    print("=" * 60)
+    
+    # Check JSON mode support using unified config
+    config = get_config()
+    if not config.supports_feature("watsonx", Feature.JSON_MODE, model):
+        print(f"⚠️  Model {model} doesn't support JSON mode")
+        return None
+    
+    client = get_client("watsonx", model=model)
+    
+    # Test JSON mode with different requests - more specific prompts
+    json_tasks = [
+        {
+            "name": "Employee Profile",
+            "prompt": """Create a JSON employee profile with exactly these fields: name, department, skills (array), years_experience. 
+            Employee: A data scientist named Sarah who works in Analytics with Python, SQL, and machine learning skills for 5 years.""",
+            "expected_keys": ["name", "department", "skills", "years_experience"]
+        },
+        {
+            "name": "Model Information", 
+            "prompt": """Generate JSON with exactly these fields: model_name, provider, capabilities (array), use_cases (array).
+            Model: IBM Granite which is an enterprise AI model for coding, reasoning, and enterprise applications.""",
+            "expected_keys": ["model_name", "provider", "capabilities", "use_cases"]
+        },
+        {
+            "name": "System Status",
+            "prompt": """Generate a system status JSON with exactly these fields: status, cpu_usage, memory_usage, services (array).
+            System: Healthy server running at 45% CPU, 67% memory, with services: web, database, cache.""",
+            "expected_keys": ["status", "cpu_usage", "memory_usage", "services"]
+        }
+    ]
+    
+    for task in json_tasks:
+        print(f"\n📋 {task['name']} JSON Generation:")
+        
+        messages = [
+            {"role": "user", "content": task["prompt"]}
+        ]
+        
+        # Test using response_format with explicit system instruction
+        response = await client.create_completion(
+            messages,
+            response_format={"type": "json_object"},
+            system="You must respond with valid JSON only. No markdown, no code blocks, no explanations. Just pure JSON.",
+            max_tokens=300
+        )
+        
+        if response.get("response"):
+            try:
+                # Clean the response - remove any markdown formatting
+                clean_response = response["response"].strip()
+                if clean_response.startswith("```json"):
+                    clean_response = clean_response.replace("```json", "").replace("```", "").strip()
+                
+                json_data = json.loads(clean_response)
+                print(f"   ✅ Valid JSON with keys: {list(json_data.keys())}")
+                
+                # Check if expected keys are present
+                found_keys = set(json_data.keys())
+                expected_keys = set(task["expected_keys"])
+                missing_keys = expected_keys - found_keys
+                
+                if missing_keys:
+                    print(f"   ⚠️  Missing expected keys: {missing_keys}")
+                else:
+                    print(f"   ✅ All expected keys found")
+                
+                # Pretty print a sample
+                sample_json = json.dumps(json_data, indent=2)
+                if len(sample_json) > 200:
+                    sample_json = sample_json[:200] + "..."
+                print(f"   📄 Sample: {sample_json}")
+                
+            except json.JSONDecodeError as e:
+                print(f"   ❌ Invalid JSON: {e}")
+                print(f"   📄 Raw response: {response['response'][:200]}...")
+        else:
+            print(f"   ❌ No response received")
+    
+    return True
+
+# =============================================================================
+# Example 7: Model Comparison using Unified Config
 # =============================================================================
 
 async def model_comparison_example():
-    """Compare different Watson X models"""
+    """Compare different Watson X models using unified config"""
     print(f"\n📊 Model Comparison")
     print("=" * 60)
     
+    # Get all Watson X models from unified config
+    config = get_config()
+    provider_config = config.get_provider("watsonx")
     models = [
         "ibm/granite-3-8b-instruct",               # IBM Granite - very reliable
         "meta-llama/llama-3-2-1b-instruct",        # Llama 3.2 1B - fast
         "meta-llama/llama-3-2-3b-instruct",        # Llama 3.2 3B - good balance  
         "meta-llama/llama-3-3-70b-instruct",       # Llama 3.3 70B - most capable
         "mistralai/mistral-large",                 # Mistral Large - enterprise
-    ]
+    ][:4]  # Test top 4 models
     
     prompt = "What is artificial intelligence? (One sentence)"
     results = {}
@@ -295,6 +467,11 @@ async def model_comparison_example():
     for model in models:
         try:
             print(f"🔄 Testing {model}...")
+            
+            # Get model capabilities
+            model_caps = provider_config.get_model_capabilities(model)
+            features = [f.value for f in model_caps.features] if model_caps else []
+            
             client = get_client("watsonx", model=model)
             messages = [{"role": "user", "content": prompt}]
             
@@ -306,6 +483,7 @@ async def model_comparison_example():
                 "response": response.get("response", ""),
                 "time": duration,
                 "length": len(response.get("response", "")),
+                "features": features,
                 "success": True
             }
             
@@ -314,87 +492,213 @@ async def model_comparison_example():
                 "response": f"Error: {str(e)}",
                 "time": 0,
                 "length": 0,
+                "features": [],
                 "success": False
             }
     
     print("\n📈 Results:")
     for model, result in results.items():
         status = "✅" if result["success"] else "❌"
-        print(f"   {status} {model}:")
+        model_short = model.replace("meta-llama/", "").replace("ibm/", "").replace("mistralai/", "")
+        print(f"   {status} {model_short}:")
         print(f"      Time: {result['time']:.2f}s")
         print(f"      Length: {result['length']} chars")
+        print(f"      Features: {', '.join(result['features'][:3])}...")
         print(f"      Response: {result['response'][:80]}...")
         print()
     
     return results
 
 # =============================================================================
-# Example 6: Simple Chat Interface
+# Example 8: Feature Detection with Universal Config
 # =============================================================================
 
-async def simple_chat_example(model: str = "ibm/granite-3-8b-instruct"):
-    """Simple chat interface simulation"""
-    print(f"\n💬 Simple Chat Interface")
+async def feature_detection_example(model: str = "ibm/granite-3-8b-instruct"):
+    """Detect and display model features using unified config"""
+    print(f"\n🔬 Feature Detection for {model}")
     print("=" * 60)
     
+    # Get model info
+    model_info = get_provider_info("watsonx", model)
+    
+    print("📋 Model Information:")
+    print(f"   Provider: {model_info['provider']}")
+    print(f"   Model: {model_info['model']}")
+    print(f"   Max Context: {model_info['max_context_length']:,} tokens")
+    print(f"   Max Output: {model_info['max_output_tokens']:,} tokens")
+    
+    print("\n🎯 Supported Features:")
+    for feature, supported in model_info['supports'].items():
+        status = "✅" if supported else "❌"
+        print(f"   {status} {feature}")
+    
+    print("\n📊 Rate Limits:")
+    for tier, limit in model_info['rate_limits'].items():
+        print(f"   {tier}: {limit} requests/min")
+    
+    # Test actual client info
     client = get_client("watsonx", model=model)
-    
-    # Simulate a simple conversation
-    conversation = [
-        "Hello Watson X! How are you today?",
-        "What's the most interesting thing about AI?", 
-        "Can you help me write a Python function to reverse a string?"
-    ]
-    
-    messages = []
-    
-    for user_input in conversation:
-        print(f"👤 User: {user_input}")
-        
-        # Add user message
-        messages.append({"role": "user", "content": user_input})
-        
-        # Get response
-        response = await client.create_completion(messages)
-        assistant_response = response.get("response", "No response")
-        
-        print(f"🤖 Watson X: {assistant_response}")
-        print()
-        
-        # Add assistant response to conversation
-        messages.append({"role": "assistant", "content": assistant_response})
-    
-    return messages
-
-# =============================================================================
-# Example 7: Model Information
-# =============================================================================
-
-async def model_info_example(model: str = "ibm/granite-3-8b-instruct"):
-    """Get detailed model information"""
-    print(f"\n📋 Model Information for {model}")
-    print("=" * 60)
-    
-    client = get_client("watsonx", model=model)
-    
-    # Get model info from client
-    if hasattr(client, 'get_model_info'):
-        info = client.get_model_info()
-        print("🔍 Model details:")
-        for key, value in info.items():
-            print(f"   {key}: {value}")
-    
-    # Get capability info
-    model_info = CapabilityChecker.get_model_info("watsonx", model)
-    print(f"\n🎯 Capabilities:")
-    for key, value in model_info.items():
-        if key != "error":
-            print(f"   {key}: {value}")
+    client_info = client.get_model_info()
+    print(f"\n🔧 Client Features:")
+    print(f"   Streaming: {'✅' if client_info.get('supports_streaming') else '❌'}")
+    print(f"   JSON Mode: {'✅' if client_info.get('supports_json_mode') else '❌'}")
+    print(f"   System Messages: {'✅' if client_info.get('supports_system_messages') else '❌'}")
+    print(f"   Function Calling: {'✅' if client_info.get('supports_function_calling') else '❌'}")
     
     return model_info
 
 # =============================================================================
-# Example 8: Comprehensive Model Benchmark
+# Example 9: Comprehensive Feature Test
+# =============================================================================
+
+async def comprehensive_feature_test(model: str = "ibm/granite-3-8b-instruct"):
+    """Test all features in one comprehensive example"""
+    print(f"\n🚀 Comprehensive Feature Test with {model}")
+    print("=" * 60)
+    
+    # Check if model supports vision first
+    config = get_config()
+    if not config.supports_feature("watsonx", Feature.VISION, model):
+        print(f"⚠️  Model {model} doesn't support vision - using text-only comprehensive test")
+        return await comprehensive_text_only_test(model)
+    
+    client = get_client("watsonx", model=model)
+    
+    # Create a test image
+    print("🖼️  Creating test image...")
+    test_image_b64 = create_test_image("green", 25)
+    
+    # Test: System message + Vision + Tools + JSON mode
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "image_analysis_result",
+                "description": "Store the structured result of image analysis",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "image_type": {"type": "string"},
+                        "dominant_colors": {"type": "array", "items": {"type": "string"}},
+                        "dimensions": {"type": "string"},
+                        "description": {"type": "string"}
+                    },
+                    "required": ["image_type", "dominant_colors", "description"]
+                }
+            }
+        }
+    ]
+    
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Please analyze this image and use the image_analysis_result function to store your findings in a structured format."
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{test_image_b64}"
+                    }
+                }
+            ]
+        }
+    ]
+    
+    print("🔄 Testing: System + Vision + Tools...")
+    
+    # Test with all features combined
+    response = await client.create_completion(
+        messages,
+        tools=tools,
+        system="You are an expert image analyst. Always use the provided function to structure your results.",
+        max_tokens=300
+    )
+    
+    if response.get("tool_calls"):
+        print(f"✅ Tool calls generated: {len(response['tool_calls'])}")
+        for tc in response["tool_calls"]:
+            print(f"   🔧 {tc['function']['name']}: {tc['function']['arguments'][:100]}...")
+        
+        # Simulate tool execution
+        messages.append({
+            "role": "assistant",
+            "tool_calls": response["tool_calls"]
+        })
+        
+        # Add tool result
+        for tc in response["tool_calls"]:
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "name": tc["function"]["name"],
+                "content": '{"status": "stored", "analysis_id": "test_123"}'
+            })
+        
+        # Get final response
+        final_response = await client.create_completion(messages)
+        print(f"✅ Final analysis: {final_response['response'][:150]}...")
+        
+    else:
+        print(f"ℹ️  Direct response: {response['response'][:150]}...")
+    
+    print("✅ Comprehensive test completed!")
+    return response
+
+async def comprehensive_text_only_test(model: str):
+    """Comprehensive test without vision for non-vision models"""
+    client = get_client("watsonx", model=model)
+    
+    # Test: System message + Tools + JSON mode
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "text_analysis_result",
+                "description": "Store the structured result of text analysis",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "sentiment": {"type": "string"},
+                        "key_topics": {"type": "array", "items": {"type": "string"}},
+                        "word_count": {"type": "number"},
+                        "summary": {"type": "string"}
+                    },
+                    "required": ["sentiment", "key_topics", "summary"]
+                }
+            }
+        }
+    ]
+    
+    messages = [
+        {
+            "role": "user",
+            "content": "Please analyze this text and use the text_analysis_result function: 'I absolutely love working with Watson X and IBM's enterprise AI capabilities. The platform is fantastic!'"
+        }
+    ]
+    
+    print("🔄 Testing: System + Tools + JSON (text-only)...")
+    
+    response = await client.create_completion(
+        messages,
+        tools=tools,
+        system="You are an expert text analyst. Always use the provided function to structure your results.",
+        max_tokens=300
+    )
+    
+    if response.get("tool_calls"):
+        print(f"✅ Tool calls generated: {len(response['tool_calls'])}")
+        for tc in response["tool_calls"]:
+            print(f"   🔧 {tc['function']['name']}: {tc['function']['arguments'][:100]}...")
+    else:
+        print(f"ℹ️  Direct response: {response['response'][:150]}...")
+    
+    return response
+
+# =============================================================================
+# Example 10: Comprehensive Model Benchmark
 # =============================================================================
 
 async def comprehensive_benchmark():
@@ -409,7 +713,6 @@ async def comprehensive_benchmark():
         "meta-llama/llama-3-2-3b-instruct",        # Llama 3.2 3B - good performance
         "meta-llama/llama-3-3-70b-instruct",       # Llama 3.3 70B - latest, powerful
         "mistralai/mistral-large",                 # Mistral Large - reliable
-        # Note: Excluding vision model due to timeout issues
     ]
     
     # Quick benchmark tasks
@@ -508,107 +811,7 @@ async def comprehensive_benchmark():
         model_short = model.replace("meta-llama/", "").replace("ibm/", "").replace("mistralai/", "")
         print(f"   {i}. {model_short:<25} {avg_time:.2f}s")
     
-    # Show sample responses
-    print(f"\n📝 Sample Responses (Reasoning Task):")
-    for model, model_results in results.items():
-        if "error" not in model_results and "Reasoning" in model_results:
-            reasoning = model_results["Reasoning"]
-            model_short = model.replace("meta-llama/", "").replace("ibm/", "").replace("mistralai/", "")
-            print(f"\n{model_short}:")
-            print(f"   {reasoning['response']}")
-    
     return results
-
-# =============================================================================
-# Example 9: Long Context Test
-# =============================================================================
-
-async def long_context_example(model: str = "ibm/granite-3-8b-instruct"):
-    """Test long context capabilities"""
-    print(f"\n📚 Long Context Test with {model}")
-    print("=" * 60)
-    
-    client = get_client("watsonx", model=model)
-    
-    # Create a longer context
-    long_text = """
-    Watson X is IBM's AI and data platform that brings together new generative AI capabilities
-    powered by foundation models and traditional machine learning into a powerful studio
-    spanning the AI lifecycle. Watson X enables organizations to scale and accelerate the
-    impact of AI with trusted data across the business. The platform includes three core
-    components: the watsonx.ai studio for new foundation models, generative AI and machine
-    learning; watsonx.data, a fit-for-purpose data store built on an open lake house
-    architecture; and watsonx.governance, a toolkit to enable AI workflows that are built
-    with responsibility, transparency and explainability.
-    """ * 20  # Repeat to create longer context
-    
-    messages = [
-        {"role": "user", "content": f"Here's some text about Watson X:\n\n{long_text}\n\nPlease summarize this text in 2-3 sentences."}
-    ]
-    
-    print("📝 Processing long context...")
-    start_time = time.time()
-    response = await client.create_completion(messages)
-    duration = time.time() - start_time
-    
-    print(f"✅ Long context response ({duration:.2f}s):")
-    print(f"   Input length: ~{len(long_text)} characters")
-    print(f"   Summary: {response['response']}")
-    
-    return response
-
-# =============================================================================
-# Example 10: Vision Test (if supported)
-# =============================================================================
-
-async def vision_example(model: str = "meta-llama/llama-4-scout-17b-16e-instruct"):
-    """Vision capabilities test with Watson X models"""
-    print(f"\n👁️  Vision Example with {model}")
-    print("=" * 60)
-    
-    # Check if model supports vision
-    can_handle, issues = CapabilityChecker.can_handle_request(
-        "watsonx", model, has_vision=True
-    )
-    
-    if not can_handle:
-        print(f"⚠️  Skipping vision: {', '.join(issues)}")
-        return None
-    
-    client = get_client("watsonx", model=model)
-    
-    # Simple test image (1x1 red pixel)
-    test_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
-    
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": "What do you see in this image? Please describe it in detail."
-                },
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "image/png",
-                        "data": test_image
-                    }
-                }
-            ]
-        }
-    ]
-    
-    print("👀 Analyzing image...")
-    try:
-        response = await client.create_completion(messages)
-        print(f"✅ Vision response:")
-        print(f"   {response['response']}")
-        return response
-    except Exception as e:
-        print(f"❌ Vision test failed: {e}")
-        return None
 
 # =============================================================================
 # Main Function
@@ -616,39 +819,70 @@ async def vision_example(model: str = "meta-llama/llama-4-scout-17b-16e-instruct
 
 async def main():
     """Run all examples"""
-    parser = argparse.ArgumentParser(description="Watson X Provider Example Script")
-    parser.add_argument("--model", default="ibm/granite-3-8b-instruct", help="Model to use")
-    parser.add_argument("--skip-tools", action="store_true", help="Skip function calling")
+    parser = argparse.ArgumentParser(description="Watson X Provider Example Script - Universal Config")
+    parser.add_argument("--model", default="ibm/granite-3-8b-instruct", help="Model to use (default: ibm/granite-3-8b-instruct)")
     parser.add_argument("--skip-vision", action="store_true", help="Skip vision examples")
+    parser.add_argument("--skip-tools", action="store_true", help="Skip function calling")
+    parser.add_argument("--test-benchmark", action="store_true", help="Run comprehensive benchmark")
     parser.add_argument("--quick", action="store_true", help="Run only basic examples")
+    parser.add_argument("--comprehensive", action="store_true", help="Run comprehensive feature test")
     
     args = parser.parse_args()
     
-    print("🚀 Watson X Provider Examples")
+    print("🚀 Watson X Provider Examples (Universal Config v3)")
     print("=" * 60)
     print(f"Using model: {args.model}")
     print(f"API Key: {'✅ Set' if (os.getenv('WATSONX_API_KEY') or os.getenv('IBM_CLOUD_API_KEY')) else '❌ Missing'}")
     print(f"Project ID: {'✅ Set' if os.getenv('WATSONX_PROJECT_ID') else '❌ Missing'}")
     print(f"Watson X URL: {os.getenv('WATSONX_AI_URL', 'https://us-south.ml.cloud.ibm.com (default)')}")
     
+    # Show config info
+    try:
+        config = get_config()
+        provider_config = config.get_provider("watsonx")
+        print(f"Available models: {len(provider_config.models)}")
+        print(f"Baseline features: {', '.join(f.value for f in provider_config.features)}")
+        
+        # Check if the selected model supports vision
+        if config.supports_feature("watsonx", Feature.VISION, args.model):
+            print(f"✅ Model {args.model} supports vision")
+        else:
+            print(f"⚠️  Model {args.model} doesn't support vision - vision tests will be skipped")
+            if not args.skip_vision:
+                vision_models = ["meta-llama/llama-3-2-90b-vision-instruct"]
+                print(f"💡 For vision tests, try: {', '.join(vision_models)}")
+                
+    except Exception as e:
+        print(f"⚠️  Config warning: {e}")
+    
+    # Run comprehensive test if requested
+    if args.comprehensive:
+        await comprehensive_feature_test(args.model)
+        return
+    
+    # Run benchmark if requested
+    if args.test_benchmark:
+        await comprehensive_benchmark()
+        return
+    
     examples = [
+        ("Feature Detection", lambda: feature_detection_example(args.model)),
         ("Basic Text", lambda: basic_text_example(args.model)),
         ("Streaming", lambda: streaming_example(args.model)),
-        ("Model Info", lambda: model_info_example(args.model)),
+        ("System Parameter", lambda: system_parameter_example(args.model)),
+        ("JSON Mode", lambda: json_mode_example(args.model)),
     ]
     
     if not args.quick:
         if not args.skip_tools:
-            examples.append(("Function Calling", lambda: function_calling_example("ibm/granite-3-8b-instruct")))
+            examples.append(("Function Calling", lambda: function_calling_example(args.model)))
         
         if not args.skip_vision:
-            examples.append(("Vision", lambda: vision_example("meta-llama/llama-4-scout-17b-16e-instruct")))
+            examples.append(("Universal Vision", lambda: universal_vision_example("meta-llama/llama-3-2-90b-vision-instruct")))
         
         examples.extend([
-            ("System Messages", lambda: system_message_example(args.model)),
             ("Model Comparison", model_comparison_example),
-            ("Simple Chat", lambda: simple_chat_example(args.model)),
-            ("Long Context", lambda: long_context_example(args.model)),
+            ("Comprehensive Test", lambda: comprehensive_feature_test(args.model)),
             ("Comprehensive Benchmark", comprehensive_benchmark),
         ])
     
@@ -685,16 +919,19 @@ async def main():
     
     if successful == total:
         print(f"\n🎉 All examples completed successfully!")
-        print(f"🔗 Watson X provider is working perfectly with chuk-llm!")
+        print(f"🔗 Watson X provider is working perfectly with universal config!")
+        print(f"✨ Features tested: System params, JSON mode, Universal vision, Tools, Streaming")
     else:
         print(f"\n⚠️  Some examples failed. Check your API key, project ID, and model access.")
         
-    # Tips for common issues
-    print(f"\n💡 Tips:")
-    print(f"   • Make sure you have access to the models you're trying to use")
-    print(f"   • Some models may not support all features (tools, vision, etc.)")
-    print(f"   • Check your Watson X project permissions and quotas")
-    print(f"   • For function calling, try ibm/granite-3-8b-instruct or mistralai/mistral-large")
+        # Show model recommendations
+        print(f"\n💡 Model Recommendations:")
+        print(f"   • For tools + reliability: ibm/granite-3-8b-instruct")
+        print(f"   • For speed: meta-llama/llama-3-2-1b-instruct")
+        print(f"   • For balance: meta-llama/llama-3-2-3b-instruct")
+        print(f"   • For capability: meta-llama/llama-3-3-70b-instruct")
+        print(f"   • For enterprise: mistralai/mistral-large")
+        print(f"   • For vision: meta-llama/llama-3-2-90b-vision-instruct")
 
 if __name__ == "__main__":
     try:
