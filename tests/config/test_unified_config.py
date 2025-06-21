@@ -4,13 +4,10 @@ Comprehensive pytest tests for the unified configuration system
 """
 
 import os
-import pytest
 import tempfile
-from pathlib import Path
 from unittest.mock import patch, MagicMock
-from dataclasses import dataclass
-from typing import Set
 
+import pytest
 from chuk_llm.configuration.unified_config import (
     Feature,
     ModelCapabilities,
@@ -422,6 +419,21 @@ class TestConfigValidator:
         is_valid, issues = ConfigValidator.validate_provider_config(provider)
         assert is_valid  # ollama doesn't need API key
     
+    def test_validate_provider_config_docker_model_runner(self):
+        """Test that Docker Model Runner doesn't need API key validation"""
+        provider = ProviderConfig(
+            name="docker_model_runner",
+            client_class="chuk_llm.llm.providers.openai_client.OpenAILLMClient",
+            default_model="ai/smollm2",
+            extra={"fake_api_key": "docker-model-runner"}
+        )
+        
+        # Should be valid even without API key environment variable
+        with patch.dict(os.environ, {}, clear=True):
+            is_valid, issues = ConfigValidator.validate_provider_config(provider)
+            assert is_valid
+            assert len(issues) == 0
+    
     def test_validate_request_compatibility(self):
         """Test request compatibility validation"""
         # Mock config manager
@@ -565,6 +577,273 @@ class TestCapabilityChecker:
             assert info["supports_streaming"] is True
             assert info["supports_tools"] is True
             assert info["supports_vision"] is False
+
+
+# ──────────────────────────── Docker Model Runner Tests ─────────────────────────────
+class TestDockerModelRunner:
+    """Test Docker Model Runner specific functionality"""
+    
+    def test_docker_model_runner_api_key_fallback(self):
+        """Test that Docker Model Runner uses fake API key when none set"""
+        config = UnifiedConfigManager()
+        
+        # Create Docker Model Runner provider
+        provider = ProviderConfig(
+            name="docker_model_runner",
+            client_class="chuk_llm.llm.providers.openai_client.OpenAILLMClient",
+            default_model="ai/smollm2",
+            extra={"fake_api_key": "docker-model-runner"}
+        )
+        config.providers["docker_model_runner"] = provider
+        
+        # Should get fake API key even without environment variable
+        with patch.dict(os.environ, {}, clear=True):
+            key = config.get_api_key("docker_model_runner")
+            assert key == "docker-model-runner"
+    
+    def test_docker_model_runner_custom_fake_key(self):
+        """Test Docker Model Runner with custom fake API key"""
+        config = UnifiedConfigManager()
+        
+        # Create Docker Model Runner provider with custom fake key
+        provider = ProviderConfig(
+            name="docker_model_runner",
+            client_class="chuk_llm.llm.providers.openai_client.OpenAILLMClient",
+            default_model="ai/smollm2",
+            extra={"fake_api_key": "custom-docker-key"}
+        )
+        config.providers["docker_model_runner"] = provider
+        
+        # Should get custom fake API key
+        with patch.dict(os.environ, {}, clear=True):
+            key = config.get_api_key("docker_model_runner")
+            assert key == "custom-docker-key"
+    
+    def test_docker_model_runner_env_var_override(self):
+        """Test that environment variable overrides fake API key"""
+        config = UnifiedConfigManager()
+        
+        # Create Docker Model Runner provider
+        provider = ProviderConfig(
+            name="docker_model_runner",
+            client_class="chuk_llm.llm.providers.openai_client.OpenAILLMClient",
+            api_key_env="DOCKER_MODEL_RUNNER_API_KEY",
+            default_model="ai/smollm2",
+            extra={"fake_api_key": "docker-model-runner"}
+        )
+        config.providers["docker_model_runner"] = provider
+        
+        # Environment variable should take precedence
+        with patch.dict(os.environ, {"DOCKER_MODEL_RUNNER_API_KEY": "real-key"}, clear=True):
+            key = config.get_api_key("docker_model_runner")
+            assert key == "real-key"
+    
+    def test_docker_model_runner_features(self):
+        """Test Docker Model Runner feature support"""
+        provider = ProviderConfig(
+            name="docker_model_runner",
+            features={Feature.TEXT, Feature.STREAMING, Feature.SYSTEM_MESSAGES}
+        )
+        
+        # Should support basic features but not advanced ones
+        assert provider.supports_feature(Feature.TEXT)
+        assert provider.supports_feature(Feature.STREAMING)
+        assert provider.supports_feature(Feature.SYSTEM_MESSAGES)
+        assert not provider.supports_feature(Feature.TOOLS)
+        assert not provider.supports_feature(Feature.VISION)
+        assert not provider.supports_feature(Feature.JSON_MODE)
+    
+    def test_docker_model_runner_inheritance(self):
+        """Test Docker Model Runner inheritance from OpenAI"""
+        config = UnifiedConfigManager()
+        
+        # Create base OpenAI provider
+        openai_provider = ProviderConfig(
+            name="openai",
+            client_class="chuk_llm.llm.providers.openai_client.OpenAILLMClient",
+            features={Feature.TEXT, Feature.STREAMING, Feature.TOOLS},
+            max_context_length=128000
+        )
+        config.providers["openai"] = openai_provider
+        
+        # Create Docker Model Runner that inherits from OpenAI
+        docker_provider = ProviderConfig(
+            name="docker_model_runner",
+            inherits="openai",
+            api_base="http://localhost:12434/engines/llama.cpp/v1",
+            default_model="ai/smollm2",
+            features={Feature.TEXT, Feature.STREAMING},  # Override features
+            extra={"fake_api_key": "docker-model-runner"}
+        )
+        config.providers["docker_model_runner"] = docker_provider
+        
+        # Resolve inheritance
+        config._resolve_inheritance()
+        
+        # Should inherit client class but have own settings
+        assert docker_provider.client_class == "chuk_llm.llm.providers.openai_client.OpenAILLMClient"
+        assert docker_provider.api_base == "http://localhost:12434/engines/llama.cpp/v1"
+        assert docker_provider.default_model == "ai/smollm2"
+        
+        # Should have combined features (inheritance + own)
+        assert Feature.TEXT in docker_provider.features
+        assert Feature.STREAMING in docker_provider.features
+        assert Feature.TOOLS in docker_provider.features  # Inherited from OpenAI
+    
+    def test_docker_model_runner_model_capabilities(self):
+        """Test Docker Model Runner model capabilities"""
+        provider = ProviderConfig(
+            name="docker_model_runner",
+            features={Feature.TEXT, Feature.STREAMING},
+            max_context_length=32768,
+            max_output_tokens=4096,
+            model_capabilities=[
+                ModelCapabilities(
+                    pattern="ai/llama.*",
+                    features={Feature.REASONING},
+                    max_context_length=65536
+                )
+            ]
+        )
+        
+        # Basic model (ai/smollm2)
+        basic_caps = provider.get_model_capabilities("ai/smollm2")
+        assert Feature.TEXT in basic_caps.features
+        assert Feature.STREAMING in basic_caps.features
+        assert Feature.REASONING not in basic_caps.features
+        assert basic_caps.max_context_length == 32768
+        
+        # Llama model with enhanced capabilities
+        llama_caps = provider.get_model_capabilities("ai/llama3.2")
+        assert Feature.TEXT in llama_caps.features  # Inherited
+        assert Feature.STREAMING in llama_caps.features  # Inherited
+        assert Feature.REASONING in llama_caps.features  # Model-specific
+        assert llama_caps.max_context_length == 65536  # Override
+
+    @pytest.fixture
+    def docker_yaml_content(self):
+        """YAML content with Docker Model Runner configuration"""
+        return """
+__global__:
+  active_provider: docker_model_runner
+
+__global_aliases__:
+  docker: docker_model_runner/ai/smollm2
+  local_ai: docker_model_runner/ai/llama3.2
+
+openai:
+  client_class: "chuk_llm.llm.providers.openai_client.OpenAILLMClient"
+  api_key_env: "OPENAI_API_KEY"
+  default_model: "gpt-4o-mini"
+  features: [text, streaming, tools]
+
+docker_model_runner:
+  inherits: "openai"
+  api_base: "http://localhost:12434/engines/llama.cpp/v1"
+  default_model: "ai/smollm2"
+  features: [text, streaming, system_messages]
+  models:
+    - "ai/smollm2"
+    - "ai/llama3.2"
+    - "ai/codellama"
+    - "ai/phi3"
+  model_aliases:
+    small: "ai/smollm2"
+    large: "ai/llama3.2"
+    code: "ai/codellama"
+  extra:
+    fake_api_key: "docker-model-runner"
+    requires_docker: true
+"""
+    
+    def test_docker_model_runner_integration(self, docker_yaml_content):
+        """Test Docker Model Runner integration with full configuration"""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write(docker_yaml_content)
+            temp_path = f.name
+        
+        try:
+            config = UnifiedConfigManager(config_path=temp_path)
+            config.load()
+            
+            # Check global settings
+            settings = config.get_global_settings()
+            assert settings["active_provider"] == "docker_model_runner"
+            
+            # Check global aliases
+            aliases = config.get_global_aliases()
+            assert aliases["docker"] == "docker_model_runner/ai/smollm2"
+            assert aliases["local_ai"] == "docker_model_runner/ai/llama3.2"
+            
+            # Check Docker Model Runner provider
+            docker_provider = config.get_provider("docker_model_runner")
+            assert docker_provider.name == "docker_model_runner"
+            assert docker_provider.default_model == "ai/smollm2"
+            assert docker_provider.api_base == "http://localhost:12434/engines/llama.cpp/v1"
+            
+            # Check inheritance worked
+            assert docker_provider.client_class == "chuk_llm.llm.providers.openai_client.OpenAILLMClient"
+            
+            # Check features
+            assert config.supports_feature("docker_model_runner", Feature.TEXT)
+            assert config.supports_feature("docker_model_runner", Feature.STREAMING)
+            assert config.supports_feature("docker_model_runner", Feature.SYSTEM_MESSAGES)
+            assert config.supports_feature("docker_model_runner", Feature.TOOLS)  # Inherited
+            
+            # Check models and aliases
+            assert "ai/smollm2" in docker_provider.models
+            assert "ai/llama3.2" in docker_provider.models
+            assert docker_provider.model_aliases["small"] == "ai/smollm2"
+            assert docker_provider.model_aliases["code"] == "ai/codellama"
+            
+            # Check extra fields (may be empty if not processed correctly)
+            if "fake_api_key" in docker_provider.extra:
+                assert docker_provider.extra["fake_api_key"] == "docker-model-runner"
+            if "requires_docker" in docker_provider.extra:
+                assert docker_provider.extra["requires_docker"] is True
+            
+            # Test API key retrieval (should use fake key from config or default)
+            with patch.dict(os.environ, {}, clear=True):
+                key = config.get_api_key("docker_model_runner")
+                # Should get fake key either from extra config or default fallback
+                assert key in ["docker-model-runner", "docker-model-runner"]
+            
+            # Test validation (should pass without API key)
+            is_valid, issues = ConfigValidator.validate_provider_config(docker_provider)
+            assert is_valid
+            assert len(issues) == 0
+            
+        finally:
+            os.unlink(temp_path)
+    
+    def test_docker_model_runner_capability_checking(self):
+        """Test Docker Model Runner with capability checker"""
+        with patch('chuk_llm.configuration.unified_config.get_config') as mock_get_config:
+            mock_config = MagicMock()
+            
+            # Setup Docker Model Runner provider
+            docker_provider = MagicMock()
+            docker_provider.supports_feature.side_effect = lambda f, m: f in [Feature.TEXT, Feature.STREAMING]
+            mock_config.get_provider.return_value = docker_provider
+            mock_get_config.return_value = mock_config
+            
+            # Can handle basic requests
+            can_handle, problems = CapabilityChecker.can_handle_request(
+                provider="docker_model_runner",
+                needs_streaming=True
+            )
+            assert can_handle
+            assert len(problems) == 0
+            
+            # Cannot handle advanced features
+            can_handle, problems = CapabilityChecker.can_handle_request(
+                provider="docker_model_runner",
+                has_tools=True,
+                has_vision=True
+            )
+            assert not can_handle
+            assert "tools not supported" in problems
+            assert "vision not supported" in problems
 
 
 # ──────────────────────────── Global Functions Tests ─────────────────────────────

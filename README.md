@@ -459,6 +459,7 @@ asyncio.run(performance_demo())
 - **Google Gemini** - Gemini 2.0 Flash, Gemini 1.5 Pro  
 - **Groq** - Lightning-fast inference with Llama models
 - **Perplexity** - Real-time web search with Sonar models
+- **Docker Model Runner** - Local AI models via Docker with OpenAI-compatible API
 - **Ollama** - Local model deployment and management
 
 ### Core Capabilities
@@ -931,6 +932,23 @@ for provider, response in results.items():
     print(f"{provider}: {response[:100]}...")
 ```
 
+### Docker Model Runner - Local AI via Docker 🐳
+
+Docker Model Runner provides OpenAI-compatible APIs for running AI models locally via Docker. Perfect for privacy, cost savings, and offline usage.
+
+#### Setup Docker Model Runner
+
+```bash
+# 1. Enable Docker Model Runner in Docker Desktop
+# Go to Settings → Beta features → Enable "Docker Model Runner"
+
+# 2. Pull and run a model
+docker model run ai/smollm2
+
+# 3. Verify it's working
+curl http://localhost:12434/models
+```
+
 ### Real-time Information with Perplexity
 
 ```python
@@ -1055,6 +1073,24 @@ Perplexity offers specialized models optimized for real-time web search and reas
 #### Chat Models (No Search)
 - **llama-3.1-sonar-small-128k-chat** - 8B parameter chat model without web search
 - **llama-3.1-sonar-large-128k-chat** - 70B parameter chat model without web search
+
+### Docker Model Runner 🐳
+Docker Model Runner provides local AI inference via Docker with OpenAI-compatible APIs. Perfect for privacy, cost savings, and offline usage.
+
+#### Available Models
+- **ai/smollm2** - Small, fast model (135M-361M parameters) - recommended for testing
+- **ai/llama3.2** - Larger, more capable Llama model
+- **ai/phi3** - Microsoft's efficient small language model
+- **ai/gemma3** - Google's Gemma 3 model
+- **ai/qwen2.5** - Alibaba's multilingual Qwen model
+- **ai/mistral** - Mistral AI's foundation model
+
+#### Key Features
+- ✅ **Zero API Costs** - All processing happens locally
+- ✅ **No Rate Limits** - Unlimited inference capacity
+- ✅ **Complete Privacy** - Data never leaves your machine
+- ✅ **Offline Capable** - Works without internet connection
+- ✅ **OpenAI Compatible** - Drop-in replacement for OpenAI API calls
 
 ### Ollama
 - **Local Models** - Any compatible GGUF model (Llama, Mistral, CodeLlama, etc.)

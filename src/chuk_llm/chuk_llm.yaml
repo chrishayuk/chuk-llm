@@ -42,7 +42,7 @@ __global_aliases__:
   qwen: ollama/qwen3
   granite: ollama/granite3.3
   phi: ollama/phi3
-  
+
   # Enterprise models
   watsonx: watsonx/ibm/granite-3-3-8b-instruct
   
@@ -681,6 +681,46 @@ watsonx:
       features: [text, streaming, tools, parallel_calls]
       max_context_length: 131072  # 128k
       max_output_tokens: 8192
+
+# Docker Model Runner - Local AI models via Docker
+docker_model_runner:
+  inherits: "openai"
+  client_class: "chuk_llm.llm.providers.openai_client.OpenAILLMClient"
+  api_key_env: "DOCKER_MODEL_RUNNER_API_KEY"
+  api_base: "http://localhost:12434/engines/llama.cpp/v1"
+  default_model: "ai/smollm2"
+  
+  # Docker Model Runner features - local models with basic capabilities
+  features: [text, streaming, system_messages]
+  max_context_length: 32768
+  max_output_tokens: 4096
+  rate_limits: {}  # No rate limits for local models
+  
+  models:
+    # Popular models from Docker Hub ai/ namespace
+    - "ai/smollm2"
+    - "ai/qwen3"
+    - "ai/llama3.2"
+    - "ai/phi4"
+    - "ai/gemma3"
+    - "ai/qwen2.5"
+    - "ai/mistral"
+  
+  model_capabilities:
+    # All Docker Model Runner models have basic text capabilities
+    - pattern: ".*"
+      features: [text, streaming]
+      max_context_length: 32768
+      max_output_tokens: 4096
+  
+  extra:
+    requires_docker: true
+    fake_api_key: "docker-model-runner"
+    setup_instructions: |
+      1. Enable Docker Model Runner in Docker Desktop settings (Beta features)
+      2. Pull a model: docker model pull ai/smollm2
+      3. Run a model: docker model run ai/smollm2
+      4. Access via http://localhost:12434
 
 # Perplexity AI - OpenAI-compatible with search capabilities
 perplexity:
