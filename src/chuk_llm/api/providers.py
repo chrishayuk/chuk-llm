@@ -1,10 +1,11 @@
 # chuk_llm/api/providers.py
 """
-Dynamic provider function generation - everything from YAML
-==========================================================
+Dynamic provider function generation with live discovery support
+==============================================================
 
 Generates functions like ask_openai_gpt4o(), ask_claude_sync(), etc.
 All models, aliases, and providers come from YAML configuration.
+NOW SUPPORTS LIVE DISCOVERY - functions are generated on-demand for discovered models.
 """
 
 import asyncio
@@ -22,6 +23,10 @@ logger = logging.getLogger(__name__)
 # Suppress specific asyncio cleanup warnings that don't affect functionality
 warnings.filterwarnings("ignore", message=".*Event loop is closed.*", category=RuntimeWarning)
 warnings.filterwarnings("ignore", message=".*Task exception was never retrieved.*", category=RuntimeWarning)
+
+# Cache for generated functions
+_GENERATED_FUNCTIONS = {}
+_FUNCTION_CACHE_DIRTY = True
 
 
 def _run_sync(coro):
@@ -208,7 +213,8 @@ def _prepare_vision_message(prompt: str, image: Union[str, Path, bytes], provide
                 }
             ]
         }
-    
+
+
 def _create_provider_function(provider_name: str, model_name: Optional[str] = None, supports_vision: bool = False):
     """Create async provider function with optional vision support"""
     if model_name:
@@ -353,13 +359,90 @@ def _create_global_alias_function(alias_name: str, provider_model: str, supports
     }
 
 
-def _generate_functions():
-    """Generate all provider functions from YAML config"""
+def _generate_functions_for_models(provider_name: str, provider_config, models: List[str]) -> Dict[str, callable]:
+    """Generate functions for a specific list of models"""
+    functions = {}
+    
+    # Check if provider supports vision at all
+    provider_supports_vision = Feature.VISION in provider_config.features
+    
+    for model in models:
+        model_suffix = _sanitize_name(model)
+        if model_suffix:
+            # Check if this specific model supports vision
+            model_caps = provider_config.get_model_capabilities(model)
+            model_supports_vision = Feature.VISION in model_caps.features
+            
+            # Generate the three function types
+            ask_func = _create_provider_function(provider_name, model, model_supports_vision)
+            stream_func = _create_stream_function(provider_name, model, model_supports_vision)
+            sync_func = _create_sync_function(provider_name, model, model_supports_vision)
+            
+            # Set function names and docstrings
+            func_names = [
+                f"ask_{provider_name}_{model_suffix}",
+                f"stream_{provider_name}_{model_suffix}",
+                f"ask_{provider_name}_{model_suffix}_sync"
+            ]
+            
+            for func, name in zip([ask_func, stream_func, sync_func], func_names):
+                func.__name__ = name
+                
+                # Check if this is a vision-capable function
+                has_image_param = 'image' in func.__code__.co_varnames
+                
+                if name.endswith("_sync"):
+                    base = name[:-5].replace("_", " ")
+                    if has_image_param:
+                        func.__doc__ = f"Synchronous {base} call with optional image support."
+                    else:
+                        func.__doc__ = f"Synchronous {base} call."
+                elif name.startswith("ask_"):
+                    base = name[4:].replace("_", " ")
+                    if has_image_param:
+                        func.__doc__ = f"Async {base} call with optional image support."
+                    else:
+                        func.__doc__ = f"Async {base} call."
+                elif name.startswith("stream_"):
+                    base = name[7:].replace("_", " ")
+                    if has_image_param:
+                        func.__doc__ = f"Stream from {base} with optional image support."
+                    else:
+                        func.__doc__ = f"Stream from {base}."
+                
+                functions[name] = func
+    
+    return functions
+
+
+def _ensure_provider_models_current(provider_name: str) -> List[str]:
+    """Ensure provider models are current (trigger discovery if needed)"""
+    try:
+        config_manager = get_config()
+        provider_config = config_manager.get_provider(provider_name)
+        
+        # Check if discovery is enabled
+        discovery_data = provider_config.extra.get("dynamic_discovery")
+        if discovery_data and discovery_data.get("enabled", False):
+            # Trigger discovery by accessing models through the ensure method
+            # This will automatically discover new models if they exist
+            dummy_model = config_manager._ensure_model_available(provider_name, "dummy_model_to_trigger_discovery")
+            # The above call will trigger discovery and update the provider's models list
+        
+        return provider_config.models
+        
+    except Exception as e:
+        logger.debug(f"Could not ensure current models for {provider_name}: {e}")
+        return []
+
+
+def _generate_static_functions():
+    """Generate functions for static (YAML-configured) models"""
     config_manager = get_config()
     functions = {}
     
     providers = config_manager.get_all_providers()
-    logger.info(f"Generating functions for {len(providers)} providers")
+    logger.info(f"Generating static functions for {len(providers)} providers")
     
     # Generate provider functions
     for provider_name in providers:
@@ -377,17 +460,12 @@ def _generate_functions():
         functions[f"stream_{provider_name}"] = _create_stream_function(provider_name, supports_vision=provider_supports_vision)
         functions[f"ask_{provider_name}_sync"] = _create_sync_function(provider_name, supports_vision=provider_supports_vision)
         
-        # Model-specific functions from YAML models list
-        for model in provider_config.models:
-            model_suffix = _sanitize_name(model)
-            if model_suffix:
-                # Check if this specific model supports vision
-                model_caps = provider_config.get_model_capabilities(model)
-                model_supports_vision = Feature.VISION in model_caps.features
-                
-                functions[f"ask_{provider_name}_{model_suffix}"] = _create_provider_function(provider_name, model, model_supports_vision)
-                functions[f"stream_{provider_name}_{model_suffix}"] = _create_stream_function(provider_name, model, model_supports_vision)
-                functions[f"ask_{provider_name}_{model_suffix}_sync"] = _create_sync_function(provider_name, model, model_supports_vision)
+        # Get current models (including discovered ones)
+        current_models = _ensure_provider_models_current(provider_name)
+        
+        # Generate functions for current models
+        model_functions = _generate_functions_for_models(provider_name, provider_config, current_models)
+        functions.update(model_functions)
         
         # Alias functions from YAML model_aliases
         for alias, actual_model in provider_config.model_aliases.items():
@@ -419,34 +497,81 @@ def _generate_functions():
         alias_functions = _create_global_alias_function(alias_name, provider_model, alias_supports_vision)
         functions.update(alias_functions)
     
-    # Set function names and docstrings
-    for name, func in functions.items():
-        func.__name__ = name
-        
-        # Check if this is a vision-capable function
-        has_image_param = 'image' in func.__code__.co_varnames
-        
-        if name.endswith("_sync"):
-            base = name[:-5].replace("_", " ")
-            if has_image_param:
-                func.__doc__ = f"Synchronous {base} call with optional image support."
-            else:
-                func.__doc__ = f"Synchronous {base} call."
-        elif name.startswith("ask_"):
-            base = name[4:].replace("_", " ")
-            if has_image_param:
-                func.__doc__ = f"Async {base} call with optional image support."
-            else:
-                func.__doc__ = f"Async {base} call."
-        elif name.startswith("stream_"):
-            base = name[7:].replace("_", " ")
-            if has_image_param:
-                func.__doc__ = f"Stream from {base} with optional image support."
-            else:
-                func.__doc__ = f"Stream from {base}."
-    
-    logger.info(f"Generated {len(functions)} provider functions")
     return functions
+
+
+def _generate_functions():
+    """Generate all provider functions from YAML config"""
+    return _generate_static_functions()
+
+
+def refresh_provider_functions(provider_name: str = None):
+    """Refresh functions for a specific provider or all providers"""
+    global _GENERATED_FUNCTIONS, _FUNCTION_CACHE_DIRTY
+    
+    config_manager = get_config()
+    
+    if provider_name:
+        # Refresh specific provider
+        try:
+            provider_config = config_manager.get_provider(provider_name)
+            
+            # Get current models (this will trigger discovery)
+            current_models = _ensure_provider_models_current(provider_name)
+            
+            # Generate functions for new models
+            new_functions = _generate_functions_for_models(provider_name, provider_config, current_models)
+            
+            # Update the global functions dict
+            _GENERATED_FUNCTIONS.update(new_functions)
+            
+            # Update module namespace
+            import sys
+            current_module = sys.modules[__name__]
+            for name, func in new_functions.items():
+                setattr(current_module, name, func)
+            
+            # Update __all__
+            if hasattr(current_module, '__all__'):
+                current_module.__all__.extend(new_functions.keys())
+            
+            logger.info(f"Refreshed {len(new_functions)} functions for {provider_name}")
+            return new_functions
+            
+        except Exception as e:
+            logger.error(f"Failed to refresh functions for {provider_name}: {e}")
+            return {}
+    else:
+        # Refresh all providers
+        all_new_functions = _generate_functions()
+        _GENERATED_FUNCTIONS.update(all_new_functions)
+        _FUNCTION_CACHE_DIRTY = False
+        
+        # Update module namespace
+        import sys
+        current_module = sys.modules[__name__]
+        for name, func in all_new_functions.items():
+            setattr(current_module, name, func)
+        
+        logger.info(f"Refreshed {len(all_new_functions)} total functions")
+        return all_new_functions
+
+
+def trigger_ollama_discovery_and_refresh():
+    """Trigger Ollama model discovery and refresh functions"""
+    try:
+        # This will trigger discovery for Ollama specifically
+        current_models = _ensure_provider_models_current("ollama")
+        
+        # Refresh functions for Ollama
+        new_functions = refresh_provider_functions("ollama")
+        
+        logger.info(f"Ollama discovery triggered: {len(current_models)} models, {len(new_functions)} functions generated")
+        return new_functions
+        
+    except Exception as e:
+        logger.error(f"Failed to trigger Ollama discovery: {e}")
+        return {}
 
 
 def _create_utility_functions():
@@ -505,10 +630,17 @@ def _create_utility_functions():
             if len(aliases) > 5:
                 print(f"  ... and {len(aliases) - 5} more")
     
+    def discover_and_refresh(provider: str = "ollama"):
+        """Discover models and refresh functions for a provider"""
+        return refresh_provider_functions(provider)
+    
     return {
         'quick_question': quick_question,
         'compare_providers': compare_providers,
         'show_config': show_config,
+        'discover_and_refresh': discover_and_refresh,
+        'refresh_provider_functions': refresh_provider_functions,
+        'trigger_ollama_discovery_and_refresh': trigger_ollama_discovery_and_refresh,
     }
 
 
@@ -526,6 +658,9 @@ try:
     _all_functions = {}
     _all_functions.update(_provider_functions)
     _all_functions.update(_utility_functions)
+    
+    # Store in cache
+    _GENERATED_FUNCTIONS.update(_all_functions)
     
     # Add to module namespace
     globals().update(_all_functions)
@@ -545,35 +680,103 @@ try:
 except Exception as e:
     logger.error(f"Error generating provider functions: {e}")
     # Fallback - at least provide utility functions
-    __all__ = ['show_config']
+    __all__ = ['show_config', 'refresh_provider_functions', 'trigger_ollama_discovery_and_refresh']
     
     def show_config():
         print(f"❌ Error loading configuration: {e}")
         print("Create a providers.yaml file to use ChukLLM")
     
+    def refresh_provider_functions(provider_name: str = None):
+        print(f"❌ Function refresh not available: {e}")
+        return {}
+    
+    def trigger_ollama_discovery_and_refresh():
+        print(f"❌ Discovery not available: {e}")
+        return {}
+    
     globals()['show_config'] = show_config
+    globals()['refresh_provider_functions'] = refresh_provider_functions
+    globals()['trigger_ollama_discovery_and_refresh'] = trigger_ollama_discovery_and_refresh
+
+
+# Enhanced __getattr__ to support on-demand function generation
+def __getattr__(name):
+    """Allow access to generated functions with on-demand discovery"""
+    # First check if it's in our generated functions
+    if name in _GENERATED_FUNCTIONS:
+        return _GENERATED_FUNCTIONS[name]
+    
+    # Check if it looks like a provider function we might need to generate
+    if name.startswith(('ask_', 'stream_')) and ('_' in name[4:] if name.startswith('ask_') else '_' in name[7:]):
+        # Parse the function name to extract provider and model
+        if name.startswith('ask_'):
+            base_name = name[4:]  # Remove 'ask_'
+            is_sync = base_name.endswith('_sync')
+            if is_sync:
+                base_name = base_name[:-5]  # Remove '_sync'
+        elif name.startswith('stream_'):
+            base_name = name[7:]  # Remove 'stream_'
+            is_sync = False
+        else:
+            raise AttributeError(f"module 'providers' has no attribute '{name}'")
+        
+        # Split provider and model
+        parts = base_name.split('_', 1)
+        if len(parts) == 2:
+            provider_name, model_part = parts
+            
+            # Try to refresh functions for this provider
+            try:
+                new_functions = refresh_provider_functions(provider_name)
+                if name in new_functions:
+                    return new_functions[name]
+            except Exception as e:
+                logger.debug(f"Could not refresh functions for {provider_name}: {e}")
+    
+    # If we still don't have it, raise AttributeError
+    raise AttributeError(f"module 'providers' has no attribute '{name}'")
+
 
 # Export all generated functions for external access
 def get_all_functions():
     """Get all generated provider functions"""
-    return _all_functions.copy() if '_all_functions' in globals() else {}
+    return _GENERATED_FUNCTIONS.copy()
+
 
 def list_provider_functions():
     """List all available provider functions"""
-    if '_all_functions' not in globals():
-        return []
-    
-    functions = list(_all_functions.keys())
-    functions.sort()
-    return functions
+    return sorted(list(_GENERATED_FUNCTIONS.keys()))
+
 
 def has_function(name):
     """Check if a provider function exists"""
-    return '_all_functions' in globals() and name in _all_functions
+    return name in _GENERATED_FUNCTIONS
 
-# Make all generated functions available for getattr
-def __getattr__(name):
-    """Allow access to generated functions"""
-    if '_all_functions' in globals() and name in _all_functions:
-        return _all_functions[name]
-    raise AttributeError(f"module 'providers' has no attribute '{name}'")
+
+def get_discovered_functions(provider: str = None):
+    """Get functions that were created for discovered models"""
+    discovered = {}
+    config_manager = get_config()
+    
+    if provider:
+        providers_to_check = [provider]
+    else:
+        providers_to_check = config_manager.get_all_providers()
+    
+    for provider_name in providers_to_check:
+        try:
+            provider_config = config_manager.get_provider(provider_name)
+            discovery_data = provider_config.extra.get("dynamic_discovery")
+            
+            if discovery_data and discovery_data.get("enabled", False):
+                # Check which functions exist for this provider
+                provider_functions = {
+                    name: func for name, func in _GENERATED_FUNCTIONS.items()
+                    if name.startswith(f'ask_{provider_name}_') or name.startswith(f'stream_{provider_name}_')
+                }
+                discovered[provider_name] = provider_functions
+                
+        except Exception as e:
+            logger.debug(f"Could not check discovered functions for {provider_name}: {e}")
+    
+    return discovered
