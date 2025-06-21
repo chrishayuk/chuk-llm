@@ -1,6 +1,7 @@
-# chuk_llm/llm/features.py - Updated with unified configuration
+# chuk_llm/llm/features.py
 from typing import Dict, Any, List, Optional
 import logging
+import asyncio
 
 from chuk_llm.configuration import get_config, Feature
 
@@ -19,6 +20,15 @@ class ProviderAdapter:
         except Exception as e:
             logger.warning(f"Could not check feature support for {provider}: {e}")
             return False
+    
+    @staticmethod
+    def validate_text_capability(provider: str, model: Optional[str] = None) -> bool:
+        """Validate that provider/model supports basic text completion"""
+        # TEXT is fundamental - all models should support it
+        if not ProviderAdapter.supports_feature(provider, Feature.TEXT, model):
+            logger.error(f"{provider}/{model} doesn't support basic text completion")
+            return False
+        return True
     
     @staticmethod
     def enable_json_mode(provider: str, model: Optional[str], kwargs: Dict[str, Any]) -> Dict[str, Any]:
@@ -213,6 +223,10 @@ class UnifiedLLMInterface:
             logger.error(f"Could not get provider config: {e}")
             self.model = model or "default"
         
+        # Validate basic text capability
+        if not ProviderAdapter.validate_text_capability(self.provider, self.model):
+            raise ValueError(f"Provider {self.provider} with model {self.model} doesn't support basic text completion")
+        
         self.client = get_client(
             provider=provider,
             model=self.model,
@@ -233,6 +247,7 @@ class UnifiedLLMInterface:
                 "max_context_length": model_caps.max_context_length,
                 "max_output_tokens": model_caps.max_output_tokens,
                 "supports": {
+                    "text": Feature.TEXT in model_caps.features,
                     "streaming": Feature.STREAMING in model_caps.features,
                     "tools": Feature.TOOLS in model_caps.features,
                     "vision": Feature.VISION in model_caps.features,
@@ -256,6 +271,10 @@ class UnifiedLLMInterface:
         **kwargs
     ):
         """Unified chat interface across all providers with automatic feature validation"""
+        
+        # Validate basic text capability first
+        if not ProviderAdapter.validate_text_capability(self.provider, self.model):
+            raise ValueError(f"Provider {self.provider}/{self.model} doesn't support basic text completion")
         
         # Validate vision content
         if not ProviderAdapter.check_vision_support(self.provider, self.model, messages):
@@ -336,8 +355,6 @@ async def multi_provider_chat(
     model_map = model_map or {}
     results = {}
     
-    import asyncio
-    
     async def get_provider_response(provider: str) -> Dict[str, Any]:
         try:
             model = model_map.get(provider)
@@ -383,27 +400,48 @@ async def find_best_provider_for_task(
     exclude_providers: Optional[List[str]] = None
 ) -> Optional[Dict[str, Any]]:
     """Find and use the best provider for a specific task"""
-    # Simple implementation without find_best_provider_for_request
-    # This would need to be implemented based on what's available in client.py
-    config = get_config()
+    from chuk_llm.configuration import CapabilityChecker
     
-    # Just use first available provider for now
-    providers = config.get_all_providers()
-    if exclude_providers:
-        providers = [p for p in providers if p not in exclude_providers]
+    required_features = required_features or []
+    exclude_providers = exclude_providers or []
     
-    if not providers:
+    # Convert string features to Feature enum
+    feature_set = set()
+    for feat in required_features:
+        try:
+            feature_set.add(Feature.from_string(feat))
+        except ValueError:
+            logger.warning(f"Unknown feature: {feat}")
+            continue
+    
+    # Always require TEXT feature
+    feature_set.add(Feature.TEXT)
+    
+    # Find best provider
+    best_provider = CapabilityChecker.get_best_provider_for_features(
+        feature_set,
+        exclude=set(exclude_providers)
+    )
+    
+    if not best_provider:
         return None
     
-    # Use first available provider
-    provider = providers[0]
-    
-    interface = UnifiedLLMInterface(provider)
-    response = await interface.simple_chat(message)
-    
-    return {
-        "provider": provider,
-        "model": interface.model,
-        "response": response,
-        "capabilities": interface.get_capabilities()
-    }
+    try:
+        interface = UnifiedLLMInterface(best_provider)
+        response = await interface.simple_chat(message)
+        
+        return {
+            "provider": best_provider,
+            "model": interface.model,
+            "response": response,
+            "capabilities": interface.get_capabilities()
+        }
+    except Exception as e:
+        logger.error(f"Failed to use best provider {best_provider}: {e}")
+        return None
+
+
+# Text capability validation helper
+def validate_text_support(provider: str, model: Optional[str] = None) -> bool:
+    """Validate that a provider/model supports basic text completion"""
+    return ProviderAdapter.validate_text_capability(provider, model)

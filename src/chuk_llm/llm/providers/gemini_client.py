@@ -1,7 +1,9 @@
 # chuk_llm/llm/providers/gemini_client.py
 
 """
-Google Gemini chat-completion adapter with complete warning suppression and proper parameter handling.
+Google Gemini chat-completion adapter with unified configuration integration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Configuration-driven capabilities with complete warning suppression and proper parameter handling.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from google.genai import types as gtypes
 
 # providers
 from chuk_llm.llm.core.base import BaseLLMClient
+from chuk_llm.llm.providers._config_mixin import ConfigAwareProviderMixin
 
 log = logging.getLogger(__name__)
 
@@ -243,22 +246,28 @@ def suppress_warnings():
 
 # ─────────────────────────────────────────────────── main adapter ───────────
 
-class GeminiLLMClient(BaseLLMClient):
-    """`google-genai` wrapper with complete warning suppression and proper parameter handling."""
+class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
+    """
+    Configuration-aware `google-genai` wrapper that gets all capabilities from
+    unified YAML configuration with complete warning suppression.
+    """
 
     def __init__(self, model: str = "gemini-2.0-flash", *, api_key: Optional[str] = None) -> None:
         # Apply nuclear warning suppression during initialization
         apply_complete_warning_suppression()
         
+        # Initialize the configuration mixin FIRST
+        ConfigAwareProviderMixin.__init__(self, "gemini", model)
+        
         # load environment
         load_dotenv()
 
         # get the api key
-        api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
+        api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         
         # check if we have a key
         if not api_key:
-            raise ValueError("GEMINI_API_KEY / GEMINI_API_KEY env var not set")
+            raise ValueError("GEMINI_API_KEY / GOOGLE_API_KEY env var not set")
         
         # Initialize with complete suppression
         with SuppressAllOutput():
@@ -267,9 +276,107 @@ class GeminiLLMClient(BaseLLMClient):
 
         log.info("GeminiLLMClient initialised with model '%s'", model)
 
+    def get_model_info(self) -> Dict[str, Any]:
+        """
+        Get model info using configuration, with Gemini-specific additions.
+        """
+        # Get base info from configuration
+        info = super().get_model_info()
+        
+        # Add Gemini-specific metadata only if no error occurred
+        if not info.get("error"):
+            info.update({
+                "gemini_specific": {
+                    "context_length": "2M tokens" if "2.0" in self.model else "1M tokens",
+                    "model_family": self._detect_model_family(),
+                    "experimental_features": "2.0" in self.model,
+                    "warning_suppression": "complete",
+                },
+                "parameter_mapping": {
+                    "max_tokens": "max_output_tokens",
+                    "stop": "stop_sequences",
+                    "temperature": "temperature",
+                    "top_p": "top_p",
+                    "top_k": "top_k",
+                    "candidate_count": "candidate_count"
+                },
+                "unsupported_parameters": [
+                    "frequency_penalty", "presence_penalty", "logit_bias",
+                    "user", "n", "best_of", "seed"
+                ]
+            })
+        
+        return info
+
+    def _detect_model_family(self) -> str:
+        """Detect Gemini model family for optimizations"""
+        model_lower = self.model.lower()
+        if "2.0" in model_lower:
+            return "gemini-2.0"
+        elif "1.5" in model_lower:
+            return "gemini-1.5"
+        elif "flash" in model_lower:
+            return "flash"
+        elif "pro" in model_lower:
+            return "pro"
+        else:
+            return "unknown"
+
+    def _validate_request_with_config(
+        self, 
+        messages: List[Dict[str, Any]], 
+        tools: Optional[List[Dict[str, Any]]] = None,
+        stream: bool = False,
+        **kwargs
+    ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]], bool, Dict[str, Any]]:
+        """
+        Validate request against configuration before processing.
+        """
+        validated_messages = messages
+        validated_tools = tools
+        validated_stream = stream
+        validated_kwargs = kwargs.copy()
+        
+        # Check streaming support
+        if stream and not self.supports_feature("streaming"):
+            log.warning(f"Streaming requested but {self.model} doesn't support streaming according to configuration")
+            validated_stream = False
+        
+        # Check tool support
+        if tools and not self.supports_feature("tools"):
+            log.warning(f"Tools provided but {self.model} doesn't support tools according to configuration")
+            validated_tools = None
+        
+        # Check vision support
+        has_vision = any(
+            isinstance(msg.get("content"), list) and 
+            any(isinstance(item, dict) and item.get("type") == "image_url" for item in msg.get("content", []))
+            for msg in messages
+        )
+        if has_vision and not self.supports_feature("vision"):
+            log.warning(f"Vision content detected but {self.model} doesn't support vision according to configuration")
+        
+        # Check system message support (will be handled in message conversion)
+        has_system = any(msg.get("role") == "system" for msg in messages)
+        if has_system and not self.supports_feature("system_messages"):
+            log.info(f"System messages will be converted - {self.model} has limited system message support")
+        
+        # Validate parameters using configuration
+        validated_kwargs = self.validate_parameters(**validated_kwargs)
+        
+        # Remove unsupported parameters for Gemini
+        unsupported = ["frequency_penalty", "presence_penalty", "logit_bias", 
+                      "user", "n", "best_of", "seed"]
+        for param in unsupported:
+            if param in validated_kwargs:
+                log.debug(f"Removing unsupported parameter for Gemini: {param}")
+                validated_kwargs.pop(param)
+        
+        return validated_messages, validated_tools, validated_stream, validated_kwargs
+
     def _prepare_gemini_config(self, tools: Optional[List[Dict[str, Any]]] = None, **kwargs) -> Tuple[Optional[gtypes.GenerateContentConfig], Dict[str, Any]]:
         """
-        Prepare proper GenerateContentConfig for Gemini with parameter mapping.
+        Prepare proper GenerateContentConfig for Gemini with configuration-aware parameter mapping.
         
         Returns:
             Tuple of (config_object, remaining_direct_params)
@@ -309,12 +416,15 @@ class GeminiLLMClient(BaseLLMClient):
                 # Unknown parameter - log and skip
                 log.warning(f"Unknown parameter for Gemini: {param} = {value}")
         
-        # Add tools if provided
-        gemini_tools = _convert_tools_to_gemini_format(tools) if tools else None
-        if gemini_tools:
-            config_params["tools"] = gemini_tools
-            # Disable automatic function calling to maintain control
-            config_params["automatic_function_calling"] = gtypes.AutomaticFunctionCallingConfig(disable=True)
+        # Add tools if provided and supported
+        if tools and self.supports_feature("tools"):
+            gemini_tools = _convert_tools_to_gemini_format(tools)
+            if gemini_tools:
+                config_params["tools"] = gemini_tools
+                # Disable automatic function calling to maintain control
+                config_params["automatic_function_calling"] = gtypes.AutomaticFunctionCallingConfig(disable=True)
+        elif tools:
+            log.warning(f"Tools provided but {self.model} doesn't support tools according to configuration")
         
         # Create config object if we have parameters
         config = None
@@ -325,12 +435,14 @@ class GeminiLLMClient(BaseLLMClient):
             except Exception as e:
                 log.error(f"Error creating GenerateContentConfig: {e}")
                 log.debug(f"Failed config_params: {config_params}")
-                # Fallback to basic config with just tools if provided
-                if gemini_tools:
-                    config = gtypes.GenerateContentConfig(
-                        tools=gemini_tools,
-                        automatic_function_calling=gtypes.AutomaticFunctionCallingConfig(disable=True)
-                    )
+                # Fallback to basic config with just tools if provided and supported
+                if tools and self.supports_feature("tools"):
+                    gemini_tools = _convert_tools_to_gemini_format(tools)
+                    if gemini_tools:
+                        config = gtypes.GenerateContentConfig(
+                            tools=gemini_tools,
+                            automatic_function_calling=gtypes.AutomaticFunctionCallingConfig(disable=True)
+                        )
         
         return config, direct_params
 
@@ -343,17 +455,22 @@ class GeminiLLMClient(BaseLLMClient):
         **kwargs: Any
     ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
-        Generate completion with complete warning suppression and proper parameter handling.
+        Configuration-aware completion generation with complete warning suppression.
         
         • stream=False → returns awaitable that resolves to standardised dict
         • stream=True  → returns async iterator that yields chunks in real-time
         """
         log.debug("create_completion called – stream=%s, kwargs=%s", stream, kwargs)
         
-        if stream:
-            return self._stream_completion_async(messages, tools, **kwargs)
+        # Validate request against configuration
+        validated_messages, validated_tools, validated_stream, validated_kwargs = self._validate_request_with_config(
+            messages, tools, stream, **kwargs
+        )
+        
+        if validated_stream:
+            return self._stream_completion_async(validated_messages, validated_tools, **validated_kwargs)
         else:
-            return self._regular_completion(messages, tools, **kwargs)
+            return self._regular_completion(validated_messages, validated_tools, **validated_kwargs)
         
     def _parse_gemini_chunk(self, chunk) -> Tuple[str, List[Dict[str, Any]]]:
         """Parse Gemini streaming chunk for text and function calls"""
@@ -365,46 +482,47 @@ class GeminiLLMClient(BaseLLMClient):
             if hasattr(chunk, 'text') and chunk.text:
                 chunk_text = chunk.text
             
-            # Check for function calls
-            if hasattr(chunk, 'function_calls') and chunk.function_calls:
-                for fc in chunk.function_calls:
+            # Check for function calls (only if tools are supported)
+            if self.supports_feature("tools"):
+                if hasattr(chunk, 'function_calls') and chunk.function_calls:
+                    for fc in chunk.function_calls:
+                        try:
+                            tool_calls.append({
+                                "id": f"call_{uuid.uuid4().hex[:8]}",
+                                "type": "function",
+                                "function": {
+                                    "name": getattr(fc, "name", "unknown"),
+                                    "arguments": json.dumps(dict(getattr(fc, "args", {})))
+                                }
+                            })
+                        except Exception as e:
+                            log.debug(f"Error parsing function call in chunk: {e}")
+                            continue
+                
+                # Alternative: check candidates structure for function calls
+                elif hasattr(chunk, 'candidates') and chunk.candidates:
                     try:
-                        tool_calls.append({
-                            "id": f"call_{uuid.uuid4().hex[:8]}",
-                            "type": "function",
-                            "function": {
-                                "name": getattr(fc, "name", "unknown"),
-                                "arguments": json.dumps(dict(getattr(fc, "args", {})))
-                            }
-                        })
-                    except Exception as e:
-                        log.debug(f"Error parsing function call in chunk: {e}")
-                        continue
-            
-            # Alternative: check candidates structure for function calls
-            elif hasattr(chunk, 'candidates') and chunk.candidates:
-                try:
-                    cand = chunk.candidates[0]
-                    if hasattr(cand, 'content') and hasattr(cand.content, 'parts'):
-                        for part in cand.content.parts:
-                            try:
-                                if hasattr(part, 'text') and part.text:
-                                    chunk_text += part.text
-                                elif hasattr(part, 'function_call'):
-                                    fc = part.function_call
-                                    tool_calls.append({
-                                        "id": f"call_{uuid.uuid4().hex[:8]}", 
-                                        "type": "function", 
-                                        "function": {
-                                            "name": getattr(fc, "name", "unknown"),
-                                            "arguments": json.dumps(dict(getattr(fc, "args", {})))
-                                        }
-                                    })
-                            except Exception as e:
-                                log.debug(f"Error parsing part in chunk: {e}")
-                                continue
-                except (AttributeError, IndexError, TypeError) as e:
-                    log.debug(f"Error parsing chunk candidates: {e}")
+                        cand = chunk.candidates[0]
+                        if hasattr(cand, 'content') and hasattr(cand.content, 'parts'):
+                            for part in cand.content.parts:
+                                try:
+                                    if hasattr(part, 'text') and part.text:
+                                        chunk_text += part.text
+                                    elif hasattr(part, 'function_call'):
+                                        fc = part.function_call
+                                        tool_calls.append({
+                                            "id": f"call_{uuid.uuid4().hex[:8]}", 
+                                            "type": "function", 
+                                            "function": {
+                                                "name": getattr(fc, "name", "unknown"),
+                                                "arguments": json.dumps(dict(getattr(fc, "args", {})))
+                                            }
+                                        })
+                                except Exception as e:
+                                    log.debug(f"Error parsing part in chunk: {e}")
+                                    continue
+                    except (AttributeError, IndexError, TypeError) as e:
+                        log.debug(f"Error parsing chunk candidates: {e}")
             
         except Exception as e:
             log.debug(f"Error parsing Gemini chunk: {e}")
@@ -418,7 +536,7 @@ class GeminiLLMClient(BaseLLMClient):
         **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Real async streaming with complete warning suppression and proper parameter handling.
+        Real async streaming with configuration awareness and complete warning suppression.
         """
         try:
             log.debug(f"Starting Gemini streaming for model: {self.model}")
@@ -433,10 +551,13 @@ class GeminiLLMClient(BaseLLMClient):
                 "contents": user_message
             }
             
-            # Add system instruction if present (direct or from kwargs)
+            # Add system instruction if present and supported
             if system_instruction:
-                request_params["system_instruction"] = system_instruction
-            elif "system_instruction" in direct_params:
+                if self.supports_feature("system_messages"):
+                    request_params["system_instruction"] = system_instruction
+                else:
+                    log.debug("System instruction ignored - not supported by model according to configuration")
+            elif "system_instruction" in direct_params and self.supports_feature("system_messages"):
                 request_params["system_instruction"] = direct_params["system_instruction"]
             
             # Add config if present
@@ -465,14 +586,15 @@ class GeminiLLMClient(BaseLLMClient):
                         }
                         await asyncio.sleep(0.001)
                     
-                    # Handle tool calls separately if present
-                    tool_calls = self._extract_tool_calls_from_chunk(chunk)
-                    if tool_calls:
-                        yield {
-                            "response": "",
-                            "tool_calls": tool_calls,
-                        }
-                        await asyncio.sleep(0.001)
+                    # Handle tool calls separately if present and supported
+                    if self.supports_feature("tools"):
+                        tool_calls = self._extract_tool_calls_from_chunk(chunk)
+                        if tool_calls:
+                            yield {
+                                "response": "",
+                                "tool_calls": tool_calls,
+                            }
+                            await asyncio.sleep(0.001)
             
             log.debug(f"Gemini streaming completed with {chunk_count} chunks")
                 
@@ -490,8 +612,10 @@ class GeminiLLMClient(BaseLLMClient):
         tools: Optional[List[Dict[str, Any]]] = None,
         **kwargs: Any
     ) -> Dict[str, Any]:
-        """Non-streaming completion with complete warning suppression and proper parameter handling."""
+        """Non-streaming completion with configuration awareness and complete warning suppression."""
         try:
+            log.debug(f"Starting Gemini completion for model: {self.model}")
+            
             # Extract content and prepare config
             system_instruction, user_message = _convert_messages_for_chat(messages)
             config, direct_params = self._prepare_gemini_config(tools, **kwargs)
@@ -502,10 +626,13 @@ class GeminiLLMClient(BaseLLMClient):
                 "contents": [user_message]
             }
             
-            # Add system instruction if present (direct or from kwargs)
+            # Add system instruction if present and supported
             if system_instruction:
-                request_params["system_instruction"] = system_instruction
-            elif "system_instruction" in direct_params:
+                if self.supports_feature("system_messages"):
+                    request_params["system_instruction"] = system_instruction
+                else:
+                    log.debug("System instruction ignored - not supported by model according to configuration")
+            elif "system_instruction" in direct_params and self.supports_feature("system_messages"):
                 request_params["system_instruction"] = direct_params["system_instruction"]
             
             # Add config if present
@@ -521,10 +648,16 @@ class GeminiLLMClient(BaseLLMClient):
             # Parse response
             response_text, tool_calls = self._parse_gemini_response(response)
             
-            return {
+            result = {
                 "response": response_text,
                 "tool_calls": tool_calls
             }
+            
+            log.debug(f"Gemini completion result: "
+                     f"response={len(str(result.get('response', ''))) if result.get('response') else 0} chars, "
+                     f"tool_calls={len(result.get('tool_calls', []))}")
+            
+            return result
             
         except Exception as e:
             log.error(f"Error in Gemini completion: {e}")
@@ -539,6 +672,10 @@ class GeminiLLMClient(BaseLLMClient):
     def _extract_tool_calls_from_chunk(self, chunk) -> List[Dict[str, Any]]:
         """Fast tool call extraction - simplified for streaming performance"""
         tool_calls = []
+        
+        # Only extract tool calls if tools are supported
+        if not self.supports_feature("tools"):
+            return tool_calls
         
         try:
             # Quick check for function calls
@@ -570,46 +707,47 @@ class GeminiLLMClient(BaseLLMClient):
             if hasattr(response, 'text') and response.text:
                 response_text = response.text
             
-            # Check for function calls
-            if hasattr(response, 'function_calls') and response.function_calls:
-                for fc in response.function_calls:
+            # Check for function calls (only if tools are supported)
+            if self.supports_feature("tools"):
+                if hasattr(response, 'function_calls') and response.function_calls:
+                    for fc in response.function_calls:
+                        try:
+                            tool_calls.append({
+                                "id": f"call_{uuid.uuid4().hex[:8]}",
+                                "type": "function",
+                                "function": {
+                                    "name": getattr(fc, "name", "unknown"),
+                                    "arguments": json.dumps(dict(getattr(fc, "args", {})))
+                                }
+                            })
+                        except Exception as e:
+                            log.debug(f"Error parsing function call: {e}")
+                            continue
+                
+                # Alternative: check candidates structure for function calls
+                elif hasattr(response, 'candidates') and response.candidates:
                     try:
-                        tool_calls.append({
-                            "id": f"call_{uuid.uuid4().hex[:8]}",
-                            "type": "function",
-                            "function": {
-                                "name": getattr(fc, "name", "unknown"),
-                                "arguments": json.dumps(dict(getattr(fc, "args", {})))
-                            }
-                        })
-                    except Exception as e:
-                        log.debug(f"Error parsing function call: {e}")
-                        continue
-            
-            # Alternative: check candidates structure for function calls
-            elif hasattr(response, 'candidates') and response.candidates:
-                try:
-                    cand = response.candidates[0]
-                    if hasattr(cand, 'content') and hasattr(cand.content, 'parts'):
-                        for part in cand.content.parts:
-                            try:
-                                if hasattr(part, 'text') and part.text:
-                                    response_text += part.text
-                                elif hasattr(part, 'function_call'):
-                                    fc = part.function_call
-                                    tool_calls.append({
-                                        "id": f"call_{uuid.uuid4().hex[:8]}", 
-                                        "type": "function", 
-                                        "function": {
-                                            "name": getattr(fc, "name", "unknown"),
-                                            "arguments": json.dumps(dict(getattr(fc, "args", {})))
-                                        }
-                                    })
-                            except Exception as e:
-                                log.debug(f"Error parsing part: {e}")
-                                continue
-                except (AttributeError, IndexError, TypeError) as e:
-                    log.debug(f"Error parsing response candidates: {e}")
+                        cand = response.candidates[0]
+                        if hasattr(cand, 'content') and hasattr(cand.content, 'parts'):
+                            for part in cand.content.parts:
+                                try:
+                                    if hasattr(part, 'text') and part.text:
+                                        response_text += part.text
+                                    elif hasattr(part, 'function_call'):
+                                        fc = part.function_call
+                                        tool_calls.append({
+                                            "id": f"call_{uuid.uuid4().hex[:8]}", 
+                                            "type": "function", 
+                                            "function": {
+                                                "name": getattr(fc, "name", "unknown"),
+                                                "arguments": json.dumps(dict(getattr(fc, "args", {})))
+                                            }
+                                        })
+                                except Exception as e:
+                                    log.debug(f"Error parsing part: {e}")
+                                    continue
+                    except (AttributeError, IndexError, TypeError) as e:
+                        log.debug(f"Error parsing response candidates: {e}")
             
         except Exception as e:
             log.debug(f"Error parsing Gemini response: {e}")

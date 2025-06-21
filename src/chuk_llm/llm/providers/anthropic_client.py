@@ -1,12 +1,13 @@
 # chuk_llm/llm/providers/anthropic_client.py
 """
-Anthropic chat-completion adapter
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Anthropic chat-completion adapter with configuration integration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Wraps the official `anthropic` SDK and exposes an **OpenAI-style** interface
 compatible with the rest of *chuk-llm*.
 
 Key points
 ----------
+*   Uses unified configuration system for all capabilities
 *   Converts ChatML → Claude Messages format (tools / multimodal, …)
 *   Maps Claude replies back to the common `{response, tool_calls}` schema
 *   **Real Streaming** - uses Anthropic's native async streaming API
@@ -28,6 +29,7 @@ from anthropic import AsyncAnthropic
 # providers
 from ..core.base import BaseLLMClient
 from ._mixins import OpenAIStyleMixin
+from ._config_mixin import ConfigAwareProviderMixin
 
 log = logging.getLogger(__name__)
 if os.getenv("LOGLEVEL"):
@@ -69,30 +71,10 @@ def _parse_claude_response(resp) -> Dict[str, Any]:  # noqa: D401 – small help
 # ─────────────────────────── client ───────────────────────────
 
 
-class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
-    """Adapter around the *anthropic* SDK with OpenAI-style semantics and universal format support."""
-
-    # Parameters that Anthropic does NOT support
-    UNSUPPORTED_PARAMS = {
-        "frequency_penalty",
-        "presence_penalty", 
-        "stop",
-        "logit_bias",
-        "user",
-        "n",
-        "best_of",
-        "top_k",  # Anthropic has top_k but it's not in the standard create API
-        "seed",
-        "response_format"  # We handle JSON mode via system instructions
-    }
-    
-    # Parameters that Anthropic DOES support
-    SUPPORTED_PARAMS = {
-        "temperature",
-        "max_tokens", 
-        "top_p",
-        "stream"
-    }
+class AnthropicLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient):
+    """
+    Configuration-aware Anthropic adapter that gets all capabilities from YAML config.
+    """
 
     def __init__(
         self,
@@ -100,6 +82,9 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
     ) -> None:
+        # Initialize the configuration mixin FIRST
+        ConfigAwareProviderMixin.__init__(self, "anthropic", model)
+        
         self.model = model
         
         # Use AsyncAnthropic for real streaming support
@@ -112,33 +97,81 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
         # Keep sync client for backwards compatibility if needed
         from anthropic import Anthropic
         self.client = Anthropic(**kwargs)
+        
+        log.debug(f"Anthropic client initialized with model: {model}")
+
+    def get_model_info(self) -> Dict[str, Any]:
+        """
+        Get model info using configuration, with Anthropic-specific additions.
+        """
+        # Get base info from configuration
+        info = super().get_model_info()
+        
+        # Add Anthropic-specific metadata
+        if not info.get("error"):
+            info.update({
+                "vision_format": "universal_image_url",
+                "supported_parameters": ["temperature", "max_tokens", "top_p", "stream"],
+                "unsupported_parameters": [
+                    "frequency_penalty", "presence_penalty", "stop", "logit_bias",
+                    "user", "n", "best_of", "top_k", "seed", "response_format"
+                ],
+            })
+        
+        return info
 
     def _filter_anthropic_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Filter parameters to only include those supported by Anthropic"""
+        """Filter parameters using configuration limits instead of hardcoded lists"""
         filtered = {}
         
+        # Get supported parameters (keeping existing logic for now, but could move to config)
+        supported_params = {"temperature", "max_tokens", "top_p", "stream"}
+        unsupported_params = {
+            "frequency_penalty", "presence_penalty", "stop", "logit_bias",
+            "user", "n", "best_of", "top_k", "seed", "response_format"
+        }
+        
         for key, value in params.items():
-            if key in self.SUPPORTED_PARAMS:
-                # Anthropic has specific constraints
-                if key == "temperature" and value > 1.0:
-                    filtered[key] = 1.0  # Cap at 1.0 for Anthropic
-                    log.debug(f"Capped temperature from {value} to 1.0 for Anthropic")
+            if key in supported_params:
+                # Use configuration to validate parameter limits
+                if key == "temperature":
+                    # Anthropic temperature range validation
+                    if value > 1.0:
+                        filtered[key] = 1.0
+                        log.debug(f"Capped temperature from {value} to 1.0 for Anthropic")
+                    else:
+                        filtered[key] = value
+                elif key == "max_tokens":
+                    # Use configuration to validate max_tokens
+                    limit = self.get_max_tokens_limit()
+                    if limit and value > limit:
+                        filtered[key] = limit
+                        log.debug(f"Capped max_tokens from {value} to {limit} for Anthropic")
+                    else:
+                        filtered[key] = value
                 else:
                     filtered[key] = value
-            elif key in self.UNSUPPORTED_PARAMS:
+            elif key in unsupported_params:
                 log.debug(f"Filtered out unsupported parameter for Anthropic: {key}={value}")
             else:
                 log.warning(f"Unknown parameter for Anthropic: {key}={value}")
         
-        # Anthropic requires max_tokens
+        # Ensure required parameters based on configuration
         if "max_tokens" not in filtered:
-            filtered["max_tokens"] = 4096
-            log.debug("Added required max_tokens=4096 for Anthropic")
+            # Use configuration default if available, otherwise use reasonable default
+            default_max = self.get_max_tokens_limit() or 4096
+            filtered["max_tokens"] = min(4096, default_max)
+            log.debug(f"Added required max_tokens={filtered['max_tokens']} for Anthropic")
         
         return filtered
 
     def _check_json_mode(self, kwargs: Dict[str, Any]) -> Optional[str]:
         """Check if JSON mode is requested and return appropriate system instruction"""
+        # Only proceed if the model supports JSON mode according to config
+        if not self.supports_feature("json_mode"):
+            log.debug(f"Model {self.model} does not support JSON mode according to configuration")
+            return None
+        
         # Check for OpenAI-style response_format
         response_format = kwargs.get("response_format")
         if isinstance(response_format, dict) and response_format.get("type") == "json_object":
@@ -259,11 +292,14 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
         
         return content_item
 
-    @staticmethod
     async def _split_for_anthropic_async(
+        self,
         messages: List[Dict[str, Any]]
     ) -> tuple[str, List[Dict[str, Any]]]:
-        """Separate system text & convert ChatML list to Anthropic format with async vision support."""
+        """
+        Separate system text & convert ChatML list to Anthropic format with async vision support.
+        Uses configuration to validate vision support.
+        """
         sys_txt: List[str] = []
         out: List[Dict[str, Any]] = []
 
@@ -318,7 +354,24 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
                         "content": [{"type": "text", "text": cont}]
                     })
                 elif isinstance(cont, list):
-                    # Multimodal content - convert universal format to Anthropic
+                    # Multimodal content - check if vision is supported
+                    has_vision_content = any(
+                        isinstance(item, dict) and item.get("type") == "image_url" 
+                        for item in cont
+                    )
+                    
+                    if has_vision_content and not self.supports_feature("vision"):
+                        log.warning(f"Vision content detected but model {self.model} doesn't support vision according to configuration")
+                        # Convert to text-only by filtering out images
+                        text_only_content = [
+                            item for item in cont 
+                            if not (isinstance(item, dict) and item.get("type") == "image_url")
+                        ]
+                        if text_only_content:
+                            out.append({"role": role, "content": text_only_content})
+                        continue
+                    
+                    # Process multimodal content - convert universal format to Anthropic
                     anthropic_content = []
                     for item in cont:
                         if isinstance(item, dict):
@@ -326,7 +379,7 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
                                 anthropic_content.append(item)
                             elif item.get("type") == "image_url":
                                 # Convert universal image_url to Anthropic format with async support
-                                anthropic_item = await AnthropicLLMClient._convert_universal_vision_to_anthropic_async(item)
+                                anthropic_item = await self._convert_universal_vision_to_anthropic_async(item)
                                 anthropic_content.append(anthropic_item)
                             else:
                                 # Pass through other formats
@@ -358,22 +411,31 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
         **extra,
     ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
-        Generate a completion with real streaming support, universal vision format, JSON mode, and system parameter support.
+        Configuration-aware completion generation.
         
-        • stream=False → returns awaitable that resolves to standardised dict
-        • stream=True  → returns async iterator that yields chunks in real-time
-        • Supports system parameter for system messages
-        • Supports JSON mode via response_format or _json_mode_instruction
-        • Uses universal image_url format for vision with automatic URL downloading
+        Uses configuration to validate:
+        - Tool support before processing tools
+        - Streaming support before enabling streaming
+        - JSON mode support before adding JSON instructions
+        - Vision support during message processing
         """
+
+        # Validate capabilities using configuration
+        if tools and not self.supports_feature("tools"):
+            log.warning(f"Tools provided but model {self.model} doesn't support tools according to configuration")
+            tools = None
+        
+        if stream and not self.supports_feature("streaming"):
+            log.warning(f"Streaming requested but model {self.model} doesn't support streaming according to configuration")
+            stream = False
 
         tools = self._sanitize_tool_names(tools)
         anth_tools = self._convert_tools(tools)
         
-        # Check for JSON mode and add to system prompt
+        # Check for JSON mode (using configuration validation)
         json_instruction = self._check_json_mode(extra)
         
-        # Filter parameters for Anthropic compatibility
+        # Filter parameters for Anthropic compatibility (using configuration limits)
         if max_tokens:
             extra["max_tokens"] = max_tokens
         filtered_params = self._filter_anthropic_params(extra)
@@ -394,7 +456,7 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
         filtered_params: Dict[str, Any]
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Real streaming using AsyncAnthropic with async vision processing.
+        Real streaming using AsyncAnthropic with configuration-aware vision processing.
         """
         try:
             # Handle system message and JSON instruction
@@ -468,7 +530,7 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
         anth_tools: List[Dict[str, Any]],
         filtered_params: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Non-streaming completion using async client with async vision processing."""
+        """Non-streaming completion using async client with configuration-aware vision processing."""
         try:
             # Handle system message and JSON instruction
             system_from_messages, msg_no_system = await self._split_for_anthropic_async(messages)
@@ -504,18 +566,3 @@ class AnthropicLLMClient(OpenAIStyleMixin, BaseLLMClient):
                 "tool_calls": [],
                 "error": True
             }
-
-    def get_model_info(self) -> Dict[str, Any]:
-        """Get information about the current model."""
-        return {
-            "provider": "anthropic",
-            "model": self.model,
-            "supports_streaming": True,
-            "supports_tools": True,
-            "supports_vision": True,
-            "supports_json_mode": True,
-            "supports_system_messages": True,
-            "supported_parameters": list(self.SUPPORTED_PARAMS),
-            "unsupported_parameters": list(self.UNSUPPORTED_PARAMS),
-            "vision_format": "universal_image_url",
-        }

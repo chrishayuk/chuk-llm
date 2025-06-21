@@ -1,12 +1,15 @@
 # chuk_llm/llm/providers/groq_client.py
 """
-Groq chat-completion adapter with enhanced function calling error handling
+Groq chat-completion adapter with unified configuration integration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Enhanced wrapper around `groq` SDK that gets all capabilities from
+unified YAML configuration and includes robust function calling error handling.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, AsyncIterator, Dict, List, Optional, Union
+from typing import Any, AsyncIterator, Dict, List, Optional, Union, Tuple
 import json
 
 from groq import AsyncGroq
@@ -14,14 +17,15 @@ from groq import AsyncGroq
 # providers
 from chuk_llm.llm.core.base import BaseLLMClient
 from ._mixins import OpenAIStyleMixin
+from ._config_mixin import ConfigAwareProviderMixin
 
 log = logging.getLogger(__name__)
 
 
-class GroqAILLMClient(OpenAIStyleMixin, BaseLLMClient):
+class GroqAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient):
     """
-    Adapter around `groq` SDK compatible with MCP-CLI's BaseLLMClient.
-    Enhanced with robust function calling error handling.
+    Configuration-aware adapter around `groq` SDK that gets all capabilities
+    from YAML configuration and includes enhanced function calling error handling.
     """
 
     def __init__(
@@ -30,6 +34,9 @@ class GroqAILLMClient(OpenAIStyleMixin, BaseLLMClient):
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
     ) -> None:
+        # Initialize the configuration mixin FIRST
+        ConfigAwareProviderMixin.__init__(self, "groq", model)
+        
         self.model = model
         
         # ✅ FIX: Provide correct default base URL for Groq
@@ -50,6 +57,166 @@ class GroqAILLMClient(OpenAIStyleMixin, BaseLLMClient):
             base_url=groq_base_url
         )
 
+    def get_model_info(self) -> Dict[str, Any]:
+        """
+        Get model info using configuration, with Groq-specific additions.
+        """
+        # Get base info from configuration
+        info = super().get_model_info()
+        
+        # Add Groq-specific metadata only if no error occurred
+        if not info.get("error"):
+            info.update({
+                "groq_specific": {
+                    "ultra_fast_inference": True,
+                    "openai_compatible": True,
+                    "function_calling_notes": "May require retry fallbacks for complex tool schemas",
+                    "model_family": self._detect_model_family(),
+                },
+                "api_base": groq_base_url if hasattr(self, 'groq_base_url') else "https://api.groq.com/openai/v1",
+                "parameter_mapping": {
+                    "temperature": "temperature",
+                    "max_tokens": "max_tokens",
+                    "top_p": "top_p",
+                    "stop": "stop",
+                    "stream": "stream"
+                },
+                "unsupported_parameters": [
+                    "frequency_penalty", "presence_penalty", "logit_bias",
+                    "user", "n", "best_of", "top_k", "seed", "response_format"
+                ]
+            })
+        
+        return info
+
+    def _detect_model_family(self) -> str:
+        """Detect model family for Groq-specific optimizations"""
+        model_lower = self.model.lower()
+        if "llama" in model_lower:
+            return "llama"
+        elif "mixtral" in model_lower:
+            return "mixtral"
+        elif "gemma" in model_lower:
+            return "gemma"
+        else:
+            return "unknown"
+
+    def _validate_request_with_config(
+        self, 
+        messages: List[Dict[str, Any]], 
+        tools: Optional[List[Dict[str, Any]]] = None,
+        stream: bool = False,
+        **kwargs
+    ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]], bool, Dict[str, Any]]:
+        """
+        Validate request against configuration before processing.
+        """
+        validated_messages = messages
+        validated_tools = tools
+        validated_stream = stream
+        validated_kwargs = kwargs.copy()
+        
+        # Check streaming support
+        if stream and not self.supports_feature("streaming"):
+            log.warning(f"Streaming requested but {self.model} doesn't support streaming according to configuration")
+            validated_stream = False
+        
+        # Check tool support with Groq-specific validation
+        if tools and not self.supports_feature("tools"):
+            log.warning(f"Tools provided but {self.model} doesn't support tools according to configuration")
+            validated_tools = None
+        elif tools:
+            # Validate tool schemas for Groq compatibility
+            validated_tools = self._validate_tools_for_groq(tools)
+        
+        # Check vision support
+        has_vision = any(
+            isinstance(msg.get("content"), list) and 
+            any(isinstance(item, dict) and item.get("type") == "image_url" for item in msg.get("content", []))
+            for msg in messages
+        )
+        if has_vision and not self.supports_feature("vision"):
+            log.warning(f"Vision content detected but {self.model} doesn't support vision according to configuration")
+        
+        # Validate parameters using configuration
+        validated_kwargs = self.validate_parameters(**validated_kwargs)
+        
+        # Remove unsupported parameters for Groq
+        unsupported = ["frequency_penalty", "presence_penalty", "logit_bias", 
+                      "user", "n", "best_of", "top_k", "seed", "response_format"]
+        for param in unsupported:
+            if param in validated_kwargs:
+                log.debug(f"Removing unsupported parameter for Groq: {param}")
+                validated_kwargs.pop(param)
+        
+        return validated_messages, validated_tools, validated_stream, validated_kwargs
+
+    def _validate_tools_for_groq(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Validate and potentially simplify tool schemas for better Groq compatibility.
+        """
+        validated_tools = []
+        
+        for tool in tools:
+            try:
+                # Validate basic tool structure
+                if not tool.get("function", {}).get("name"):
+                    log.warning("Skipping tool without name")
+                    continue
+                
+                # Simplify complex schemas that might cause Groq issues
+                simplified_tool = {
+                    "type": "function",
+                    "function": {
+                        "name": tool["function"]["name"],
+                        "description": tool["function"].get("description", ""),
+                        "parameters": self._simplify_schema_for_groq(
+                            tool["function"].get("parameters", {})
+                        )
+                    }
+                }
+                
+                validated_tools.append(simplified_tool)
+                
+            except Exception as e:
+                log.warning(f"Failed to validate tool for Groq: {tool.get('function', {}).get('name', 'unknown')}, error: {e}")
+                continue
+        
+        return validated_tools
+
+    def _simplify_schema_for_groq(self, schema: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Simplify complex JSON schemas that might cause Groq function calling issues.
+        """
+        if not isinstance(schema, dict):
+            return {"type": "object", "properties": {}}
+        
+        # Start with a clean schema
+        simplified = {
+            "type": schema.get("type", "object"),
+        }
+        
+        # Add properties if they exist
+        if "properties" in schema:
+            simplified["properties"] = {}
+            for prop_name, prop_def in schema["properties"].items():
+                # Simplify property definitions
+                if isinstance(prop_def, dict):
+                    simple_prop = {
+                        "type": prop_def.get("type", "string"),
+                    }
+                    if "description" in prop_def:
+                        simple_prop["description"] = prop_def["description"]
+                    simplified["properties"][prop_name] = simple_prop
+                else:
+                    simplified["properties"][prop_name] = {"type": "string"}
+        
+        # Add required fields if they exist
+        if "required" in schema and isinstance(schema["required"], list):
+            simplified["required"] = schema["required"]
+        
+        return simplified
+
     # ──────────────────────────────────────────────────────────────────
     # public API
     # ──────────────────────────────────────────────────────────────────
@@ -62,19 +229,25 @@ class GroqAILLMClient(OpenAIStyleMixin, BaseLLMClient):
         **kwargs: Any,
     ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
-        Real streaming support without buffering with enhanced error handling.
+        Configuration-aware completion with enhanced error handling for Groq.
         
         • stream=False → returns awaitable that resolves to single normalised dict
         • stream=True  → returns async iterator that yields chunks in real-time
         """
-        tools = self._sanitize_tool_names(tools)
+        # Validate request against configuration
+        validated_messages, validated_tools, validated_stream, validated_kwargs = self._validate_request_with_config(
+            messages, tools, stream, **kwargs
+        )
+        
+        # Sanitize tool names (from mixin)
+        validated_tools = self._sanitize_tool_names(validated_tools)
 
-        if stream:
+        if validated_stream:
             # Return async generator directly for real streaming
-            return self._stream_completion_async(messages, tools or [], **kwargs)
+            return self._stream_completion_async(validated_messages, validated_tools or [], **validated_kwargs)
 
         # non-streaming path
-        return self._regular_completion(messages, tools or [], **kwargs)
+        return self._regular_completion(validated_messages, validated_tools or [], **validated_kwargs)
 
     async def _stream_completion_async(
         self,
@@ -83,13 +256,17 @@ class GroqAILLMClient(OpenAIStyleMixin, BaseLLMClient):
         **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Real streaming using AsyncGroq with enhanced error handling.
+        Real streaming using AsyncGroq with configuration-aware error handling.
         """
         try:
-            log.debug("Starting Groq streaming...")
+            log.debug(f"Starting Groq streaming for model: {self.model}")
             
-            # Enhanced messages for better function calling with Groq
-            enhanced_messages = self._enhance_messages_for_groq(messages, tools)
+            # Enhanced messages for better function calling with Groq (only if tools supported)
+            if tools and self.supports_feature("tools"):
+                enhanced_messages = self._enhance_messages_for_groq(messages, tools)
+            else:
+                enhanced_messages = messages
+                tools = None  # Don't pass tools if not supported
             
             # Use async client for real streaming
             response_stream = await self.async_client.chat.completions.create(
@@ -189,8 +366,8 @@ class GroqAILLMClient(OpenAIStyleMixin, BaseLLMClient):
         try:
             log.debug(f"Groq regular completion - model: {self.model}, tools: {len(tools) if tools else 0}")
             
-            # Enhanced messages for better function calling with Groq
-            if tools:
+            # Enhanced messages for better function calling with Groq (only if tools supported)
+            if tools and self.supports_feature("tools"):
                 enhanced_messages = self._enhance_messages_for_groq(messages, tools)
                 
                 resp = await self.async_client.chat.completions.create(
@@ -208,7 +385,13 @@ class GroqAILLMClient(OpenAIStyleMixin, BaseLLMClient):
                     **kwargs
                 )
                 
-            return self._normalise_message(resp.choices[0].message)
+            result = self._normalise_message(resp.choices[0].message)
+            
+            log.debug(f"Groq completion result: "
+                     f"response={len(str(result.get('response', ''))) if result.get('response') else 0} chars, "
+                     f"tool_calls={len(result.get('tool_calls', []))}")
+            
+            return result
             
         except Exception as e:
             error_str = str(e)
@@ -253,7 +436,7 @@ class GroqAILLMClient(OpenAIStyleMixin, BaseLLMClient):
         Enhance messages with better instructions for Groq function calling.
         Groq models need explicit guidance for proper function calling.
         """
-        if not tools:
+        if not tools or not self.supports_feature("system_messages"):
             return messages
         
         enhanced_messages = messages.copy()
@@ -269,7 +452,7 @@ class GroqAILLMClient(OpenAIStyleMixin, BaseLLMClient):
             "4. Call functions when appropriate to help answer the user's question"
         )
         
-        # Add or enhance system message
+        # Add or enhance system message (only if system messages are supported)
         if enhanced_messages and enhanced_messages[0].get("role") == "system":
             enhanced_messages[0]["content"] = enhanced_messages[0]["content"] + "\n\n" + guidance
         else:

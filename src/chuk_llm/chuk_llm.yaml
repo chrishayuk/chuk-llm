@@ -320,7 +320,7 @@ mistral:
   default_model: "mistral-medium-2505"  # CHANGED: Use tools-capable model as default
   
   # All Mistral models support text
-  features: [text, streaming, tools, vision, system_messages, parallel_calls]
+  features: [text, streaming, system_messages, parallel_calls]
   max_context_length: 128000
   max_output_tokens: 8192
   rate_limits:
