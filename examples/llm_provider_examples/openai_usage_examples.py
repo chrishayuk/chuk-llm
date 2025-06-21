@@ -13,7 +13,7 @@ Requirements:
 
 Usage:
     python openai_example.py
-    python openai_example.py --model gpt-4.1
+    python openai_example.py --model gpt-4o
     python openai_example.py --skip-vision
 """
 
@@ -22,9 +22,10 @@ import argparse
 import os
 import sys
 import time
+import base64
 from typing import Dict, Any, List
 
-# dotenv
+# dotenv
 from dotenv import load_dotenv
 
 # load environment variables
@@ -37,18 +38,38 @@ if not os.getenv("OPENAI_API_KEY"):
     sys.exit(1)
 
 try:
-    from chuk_llm.llm.client import get_client
-    from chuk_llm.configuration.capabilities import CapabilityChecker
+    from chuk_llm.llm.client import get_client, get_provider_info
+    from chuk_llm.configuration import get_config, Feature
 except ImportError as e:
     print(f"❌ Import error: {e}")
     print("   Please make sure you're running from the chuk-llm directory")
     sys.exit(1)
 
+def create_test_image(color: str = "red", size: int = 15) -> str:
+    """Create a test image as base64 - tries PIL first, fallback to hardcoded"""
+    try:
+        from PIL import Image
+        import io
+        
+        # Create a colored square
+        img = Image.new('RGB', (size, size), color)
+        
+        # Convert to base64
+        buffer = io.BytesIO()
+        img.save(buffer, format='PNG')
+        img_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
+        
+        return img_data
+    except ImportError:
+        print("⚠️  PIL not available, using fallback image")
+        # Fallback: 15x15 red square (valid PNG)
+        return "iVBORw0KGgoAAAANSUhEUgAAAA8AAAAPCAYAAAA71pVKAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAdgAAAHYBTnsmCAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAABYSURBVCiRY2RgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBgZGBgYGAAAgAANgAOAUUe1wAAAABJRU5ErkJggg=="
+
 # =============================================================================
 # Example 1: Basic Text Completion
 # =============================================================================
 
-async def basic_text_example(model: str = "gpt-4.1"):
+async def basic_text_example(model: str = "gpt-4o-mini"):
     """Basic text completion example"""
     print(f"\n🤖 Basic Text Completion with {model}")
     print("=" * 60)
@@ -73,10 +94,16 @@ async def basic_text_example(model: str = "gpt-4.1"):
 # Example 2: Streaming Response
 # =============================================================================
 
-async def streaming_example(model: str = "gpt-4.1"):
+async def streaming_example(model: str = "gpt-4o-mini"):
     """Real-time streaming example"""
     print(f"\n⚡ Streaming Example with {model}")
     print("=" * 60)
+    
+    # Check streaming support
+    config = get_config()
+    if not config.supports_feature("openai", Feature.STREAMING, model):
+        print(f"⚠️  Model {model} doesn't support streaming")
+        return None
     
     client = get_client("openai", model=model)
     
@@ -105,18 +132,15 @@ async def streaming_example(model: str = "gpt-4.1"):
 # Example 3: Function Calling
 # =============================================================================
 
-async def function_calling_example(model: str = "gpt-4.1"):
+async def function_calling_example(model: str = "gpt-4o-mini"):
     """Function calling with tools"""
     print(f"\n🔧 Function Calling with {model}")
     print("=" * 60)
     
-    # Check if model supports tools first
-    can_handle, issues = CapabilityChecker.can_handle_request(
-        "openai", model, has_tools=True
-    )
-    
-    if not can_handle:
-        print(f"⚠️  Skipping function calling: {', '.join(issues)}")
+    # Check if model supports tools
+    config = get_config()
+    if not config.supports_feature("openai", Feature.TOOLS, model):
+        print(f"⚠️  Skipping function calling: Model {model} doesn't support tools")
         return None
     
     client = get_client("openai", model=model)
@@ -228,18 +252,17 @@ async def vision_example(model: str = "gpt-4o"):
     print("=" * 60)
     
     # Check if model supports vision
-    can_handle, issues = CapabilityChecker.can_handle_request(
-        "openai", model, has_vision=True
-    )
-    
-    if not can_handle:
-        print(f"⚠️  Skipping vision: {', '.join(issues)}")
+    config = get_config()
+    if not config.supports_feature("openai", Feature.VISION, model):
+        print(f"⚠️  Skipping vision: Model {model} doesn't support vision")
+        print(f"💡 Try a vision-capable model like: gpt-4o, gpt-4-turbo, gpt-4")
         return None
     
     client = get_client("openai", model=model)
     
-    # Simple test image (1x1 red pixel)
-    test_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+    # Create a proper test image
+    print("🖼️  Creating test image...")
+    test_image = create_test_image("blue", 20)
     
     messages = [
         {
@@ -247,7 +270,7 @@ async def vision_example(model: str = "gpt-4o"):
             "content": [
                 {
                     "type": "text",
-                    "text": "What do you see in this image? Please describe it in detail."
+                    "text": "What color is this square? Answer with just the color name."
                 },
                 {
                     "type": "image_url",
@@ -260,7 +283,7 @@ async def vision_example(model: str = "gpt-4o"):
     ]
     
     print("👀 Analyzing image...")
-    response = await client.create_completion(messages)
+    response = await client.create_completion(messages, max_tokens=50)
     
     print(f"✅ Vision response:")
     print(f"   {response['response']}")
@@ -271,10 +294,16 @@ async def vision_example(model: str = "gpt-4o"):
 # Example 5: JSON Mode
 # =============================================================================
 
-async def json_mode_example(model: str = "gpt-4.1"):
+async def json_mode_example(model: str = "gpt-4o-mini"):
     """JSON mode example with structured output"""
     print(f"\n📋 JSON Mode Example with {model}")
     print("=" * 60)
+    
+    # Check JSON mode support
+    config = get_config()
+    if not config.supports_feature("openai", Feature.JSON_MODE, model):
+        print(f"⚠️  Model {model} doesn't support JSON mode")
+        return None
     
     client = get_client("openai", model=model)
     
@@ -310,7 +339,7 @@ async def json_mode_example(model: str = "gpt-4.1"):
             print("⚠️  Response is not valid JSON")
         
     except Exception as e:
-        print(f"❌ JSON mode not supported or failed: {e}")
+        print(f"❌ JSON mode failed: {e}")
         # Fallback to regular request
         response = await client.create_completion(messages)
         print(f"📝 Fallback response: {response['response'][:200]}...")
@@ -318,7 +347,42 @@ async def json_mode_example(model: str = "gpt-4.1"):
     return response
 
 # =============================================================================
-# Example 6: Model Comparison
+# Example 6: Reasoning Models Test
+# =============================================================================
+
+async def reasoning_example(model: str = "o3-mini"):
+    """Test reasoning capabilities with O-series models"""
+    print(f"\n🧠 Reasoning Example with {model}")
+    print("=" * 60)
+    
+    # Check if model supports reasoning
+    config = get_config()
+    if not config.supports_feature("openai", Feature.REASONING, model):
+        print(f"⚠️  Model {model} doesn't have enhanced reasoning")
+        print(f"💡 Try a reasoning model like: o3, o3-mini, o1, o1-mini")
+        return None
+    
+    client = get_client("openai", model=model)
+    
+    messages = [
+        {
+            "role": "user", 
+            "content": "I have a 3-gallon jug and a 5-gallon jug. I need to measure exactly 4 gallons of water. How can I do this? Think through this step-by-step."
+        }
+    ]
+    
+    print("🧠 Processing reasoning task...")
+    start_time = time.time()
+    response = await client.create_completion(messages, max_tokens=500)
+    duration = time.time() - start_time
+    
+    print(f"✅ Reasoning response ({duration:.2f}s):")
+    print(f"   {response['response']}")
+    
+    return response
+
+# =============================================================================
+# Example 7: Model Comparison
 # =============================================================================
 
 async def model_comparison_example():
@@ -326,15 +390,13 @@ async def model_comparison_example():
     print(f"\n📊 Model Comparison")
     print("=" * 60)
     
+    # Updated model list based on current config
     models = [
-        "gpt-4.1",              # Latest GPT-4.1
-        "gpt-4.1-mini",         # GPT-4.1 Mini
-        "gpt-4.1-nano",         # GPT-4.1 Nano
+        "gpt-4.1-mini",         # Latest GPT-4.1 Mini
         "gpt-4o-mini",          # GPT-4o Mini
         "gpt-4o",               # GPT-4o
         "gpt-4-turbo",          # GPT-4 Turbo
         "gpt-3.5-turbo",        # GPT-3.5 Turbo
-        "gpt-4"                 # GPT-4
     ]
     
     prompt = "What is machine learning? (One sentence)"
@@ -368,7 +430,8 @@ async def model_comparison_example():
     print("\n📈 Results:")
     for model, result in results.items():
         status = "✅" if result["success"] else "❌"
-        print(f"   {status} {model}:")
+        model_short = model.replace("gpt-", "").replace("-turbo", "")
+        print(f"   {status} {model_short}:")
         print(f"      Time: {result['time']:.2f}s")
         print(f"      Length: {result['length']} chars")
         print(f"      Response: {result['response'][:80]}...")
@@ -377,50 +440,60 @@ async def model_comparison_example():
     return results
 
 # =============================================================================
-# Example 7: Multiple Models Test
+# Example 8: Feature Detection
 # =============================================================================
 
-async def multiple_models_example():
-    """Test multiple GPT models"""
-    print(f"\n🔄 Multiple Models Test")
+async def feature_detection_example(model: str = "gpt-4o-mini"):
+    """Detect and display model features"""
+    print(f"\n🔬 Feature Detection for {model}")
     print("=" * 60)
     
-    models_to_test = [
-        "gpt-4.1",              # Latest GPT-4.1
-        "gpt-4.1-mini",         # GPT-4.1 Mini
-        "gpt-4o",               # GPT-4o
-        "gpt-4o-mini",          # GPT-4o Mini
-        "gpt-4-turbo",          # GPT-4 Turbo
-        "gpt-3.5-turbo"         # GPT-3.5 Turbo
-    ]
+    # Get model info
+    try:
+        model_info = get_provider_info("openai", model)
+        
+        print("📋 Model Information:")
+        print(f"   Provider: {model_info['provider']}")
+        print(f"   Model: {model_info['model']}")
+        print(f"   Max Context: {model_info['max_context_length']:,} tokens")
+        print(f"   Max Output: {model_info['max_output_tokens']:,} tokens")
+        
+        print("\n🎯 Supported Features:")
+        for feature, supported in model_info['supports'].items():
+            status = "✅" if supported else "❌"
+            print(f"   {status} {feature}")
+        
+        print("\n📊 Rate Limits:")
+        for tier, limit in model_info['rate_limits'].items():
+            print(f"   {tier}: {limit} requests/min")
+        
+    except Exception as e:
+        print(f"⚠️  Could not get model info: {e}")
     
-    prompt = "Write a one-line explanation of neural networks."
+    # Test actual client info
+    try:
+        client = get_client("openai", model=model)
+        client_info = client.get_model_info()
+        
+        print(f"\n🔧 Client Features:")
+        print(f"   Streaming: {'✅' if client_info.get('supports_streaming') else '❌'}")
+        print(f"   Tools: {'✅' if client_info.get('supports_tools') else '❌'}")
+        print(f"   Vision: {'✅' if client_info.get('supports_vision') else '❌'}")
+        print(f"   JSON Mode: {'✅' if client_info.get('supports_json_mode') else '❌'}")
+        print(f"   System Messages: {'✅' if client_info.get('supports_system_messages') else '❌'}")
+        
+    except Exception as e:
+        print(f"⚠️  Could not get client info: {e}")
     
-    for model in models_to_test:
-        try:
-            print(f"🔄 Testing {model}...")
-            client = get_client("openai", model=model)
-            messages = [{"role": "user", "content": prompt}]
-            
-            start_time = time.time()
-            response = await client.create_completion(messages)
-            duration = time.time() - start_time
-            
-            print(f"✅ {model} ({duration:.2f}s):")
-            print(f"   {response['response'][:100]}...")
-            
-        except Exception as e:
-            print(f"❌ {model}: {str(e)}")
-    
-    return True
+    return model_info if 'model_info' in locals() else None
 
 # =============================================================================
-# Example 8: Simple Chat Interface
+# Example 9: Simple Chat Interface
 # =============================================================================
 
-async def simple_chat_example(model: str = "gpt-4.1"):
+async def simple_chat_example(model: str = "gpt-4o-mini"):
     """Simple chat interface simulation"""
-    print(f"\n💬 Simple Chat Interface")
+    print(f"\n💬 Simple Chat Interface with {model}")
     print("=" * 60)
     
     client = get_client("openai", model=model)
@@ -432,7 +505,9 @@ async def simple_chat_example(model: str = "gpt-4.1"):
         "Can you help me write a JavaScript function to sort an array?"
     ]
     
-    messages = []
+    messages = [
+        {"role": "system", "content": "You are a helpful and friendly AI assistant."}
+    ]
     
     for user_input in conversation:
         print(f"👤 User: {user_input}")
@@ -441,7 +516,7 @@ async def simple_chat_example(model: str = "gpt-4.1"):
         messages.append({"role": "user", "content": user_input})
         
         # Get response
-        response = await client.create_completion(messages)
+        response = await client.create_completion(messages, max_tokens=200)
         assistant_response = response.get("response", "No response")
         
         print(f"🤖 GPT: {assistant_response}")
@@ -453,37 +528,10 @@ async def simple_chat_example(model: str = "gpt-4.1"):
     return messages
 
 # =============================================================================
-# Example 9: Model Information
-# =============================================================================
-
-async def model_info_example(model: str = "gpt-4.1"):
-    """Get detailed model information"""
-    print(f"\n📋 Model Information for {model}")
-    print("=" * 60)
-    
-    client = get_client("openai", model=model)
-    
-    # Get model info from client
-    if hasattr(client, 'get_model_info'):
-        info = client.get_model_info()
-        print("🔍 Model details:")
-        for key, value in info.items():
-            print(f"   {key}: {value}")
-    
-    # Get capability info
-    model_info = CapabilityChecker.get_model_info("openai", model)
-    print(f"\n🎯 Capabilities:")
-    for key, value in model_info.items():
-        if key != "error":
-            print(f"   {key}: {value}")
-    
-    return model_info
-
-# =============================================================================
 # Example 10: Temperature and Parameters Test
 # =============================================================================
 
-async def parameters_example(model: str = "gpt-4.1"):
+async def parameters_example(model: str = "gpt-4o-mini"):
     """Test different parameters and settings"""
     print(f"\n🎛️  Parameters Test with {model}")
     print("=" * 60)
@@ -516,10 +564,106 @@ async def parameters_example(model: str = "gpt-4.1"):
         {"role": "user", "content": "Tell me about the ocean."}
     ]
     
-    response = await client.create_completion(messages, temperature=0.8)
+    response = await client.create_completion(messages, temperature=0.8, max_tokens=100)
     print(f"   {response['response']}")
     
     return True
+
+# =============================================================================
+# Example 11: Comprehensive Feature Test
+# =============================================================================
+
+async def comprehensive_test(model: str = "gpt-4o"):
+    """Test multiple features in one comprehensive example"""
+    print(f"\n🚀 Comprehensive Feature Test with {model}")
+    print("=" * 60)
+    
+    # Check what features this model supports
+    config = get_config()
+    supports_tools = config.supports_feature("openai", Feature.TOOLS, model)
+    supports_vision = config.supports_feature("openai", Feature.VISION, model)
+    
+    print(f"Model capabilities: Tools={supports_tools}, Vision={supports_vision}")
+    
+    if not supports_tools and not supports_vision:
+        print("⚠️  Model doesn't support tools or vision - using text-only test")
+        return await simple_chat_example(model)
+    
+    client = get_client("openai", model=model)
+    
+    # Define tools if supported
+    tools = None
+    if supports_tools:
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "analyze_content",
+                    "description": "Analyze and categorize content",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "content_type": {"type": "string"},
+                            "main_topics": {"type": "array", "items": {"type": "string"}},
+                            "complexity": {"type": "string", "enum": ["simple", "medium", "complex"]}
+                        },
+                        "required": ["content_type", "main_topics"]
+                    }
+                }
+            }
+        ]
+    
+    # Create content based on capabilities
+    if supports_vision:
+        print("🖼️  Creating test image...")
+        test_image = create_test_image("green", 25)
+        
+        messages = [
+            {
+                "role": "system",
+                "content": "You are an expert content analyst. Use the provided function when analyzing content."
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "Please analyze this image and the following text using the analyze_content function: 'This is a test of multimodal AI capabilities.'"
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{test_image}"
+                        }
+                    }
+                ]
+            }
+        ]
+    else:
+        messages = [
+            {
+                "role": "system",
+                "content": "You are an expert content analyst. Use the provided function when analyzing content."
+            },
+            {
+                "role": "user",
+                "content": "Please analyze this text using the analyze_content function: 'Artificial intelligence is transforming how we interact with technology through natural language processing and machine learning algorithms.'"
+            }
+        ]
+    
+    print("🔄 Testing comprehensive capabilities...")
+    
+    response = await client.create_completion(messages, tools=tools)
+    
+    if response.get("tool_calls"):
+        print(f"✅ Tool calls generated: {len(response['tool_calls'])}")
+        for tc in response["tool_calls"]:
+            print(f"   🔧 {tc['function']['name']}: {tc['function']['arguments'][:100]}...")
+    else:
+        print(f"ℹ️  Direct response: {response['response'][:150]}...")
+    
+    print("✅ Comprehensive test completed!")
+    return response
 
 # =============================================================================
 # Main Function
@@ -528,9 +672,10 @@ async def parameters_example(model: str = "gpt-4.1"):
 async def main():
     """Run all examples"""
     parser = argparse.ArgumentParser(description="OpenAI/GPT Provider Example Script")
-    parser.add_argument("--model", default="gpt-4.1", help="Model to use")
+    parser.add_argument("--model", default="gpt-4o-mini", help="Model to use (default: gpt-4o-mini)")
     parser.add_argument("--skip-vision", action="store_true", help="Skip vision examples")
     parser.add_argument("--skip-functions", action="store_true", help="Skip function calling")
+    parser.add_argument("--test-reasoning", action="store_true", help="Test reasoning models")
     parser.add_argument("--quick", action="store_true", help="Run only basic examples")
     
     args = parser.parse_args()
@@ -540,10 +685,35 @@ async def main():
     print(f"Using model: {args.model}")
     print(f"API Key: {'✅ Set' if os.getenv('OPENAI_API_KEY') else '❌ Missing'}")
     
+    # Show model capabilities
+    try:
+        config = get_config()
+        supports_tools = config.supports_feature("openai", Feature.TOOLS, args.model)
+        supports_vision = config.supports_feature("openai", Feature.VISION, args.model)
+        supports_reasoning = config.supports_feature("openai", Feature.REASONING, args.model)
+        supports_streaming = config.supports_feature("openai", Feature.STREAMING, args.model)
+        supports_json = config.supports_feature("openai", Feature.JSON_MODE, args.model)
+        
+        print(f"Model capabilities:")
+        print(f"  Tools: {'✅' if supports_tools else '❌'}")
+        print(f"  Vision: {'✅' if supports_vision else '❌'}")
+        print(f"  Reasoning: {'✅' if supports_reasoning else '❌'}")
+        print(f"  Streaming: {'✅' if supports_streaming else '❌'}")
+        print(f"  JSON Mode: {'✅' if supports_json else '❌'}")
+        
+    except Exception as e:
+        print(f"⚠️  Could not check capabilities: {e}")
+
+    # Focus on reasoning if requested
+    if args.test_reasoning:
+        await reasoning_example("o3-mini")
+        return
+
     examples = [
+        ("Feature Detection", lambda: feature_detection_example(args.model)),
         ("Basic Text", lambda: basic_text_example(args.model)),
         ("Streaming", lambda: streaming_example(args.model)),
-        ("Model Info", lambda: model_info_example(args.model)),
+        ("JSON Mode", lambda: json_mode_example(args.model)),
     ]
     
     if not args.quick:
@@ -554,11 +724,10 @@ async def main():
             examples.append(("Vision", lambda: vision_example("gpt-4o")))
         
         examples.extend([
-            ("JSON Mode", lambda: json_mode_example(args.model)),
             ("Model Comparison", model_comparison_example),
-            ("Multiple Models", multiple_models_example),
             ("Simple Chat", lambda: simple_chat_example(args.model)),
             ("Parameters Test", lambda: parameters_example(args.model)),
+            ("Comprehensive Test", lambda: comprehensive_test("gpt-4o")),
         ])
     
     # Run examples
@@ -595,8 +764,16 @@ async def main():
     if successful == total:
         print(f"\n🎉 All examples completed successfully!")
         print(f"🔗 OpenAI/GPT provider is working perfectly with chuk-llm!")
+        print(f"✨ Features tested: {args.model} capabilities")
     else:
         print(f"\n⚠️  Some examples failed. Check your API key and model access.")
+        
+        # Show model recommendations
+        print(f"\n💡 Model Recommendations:")
+        print(f"   • For general use: gpt-4o-mini, gpt-4o")
+        print(f"   • For vision: gpt-4o, gpt-4-turbo")
+        print(f"   • For reasoning: o3-mini, o3, o1-mini")
+        print(f"   • For cost-effective: gpt-4o-mini, gpt-3.5-turbo")
 
 if __name__ == "__main__":
     try:

@@ -27,6 +27,7 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
         api_base: Optional[str] = None,
     ) -> None:
         self.model = model
+        self.api_base = api_base
         
         # Use AsyncOpenAI for real streaming support
         self.async_client = openai.AsyncOpenAI(
@@ -39,6 +40,48 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
             api_key=api_key, 
             base_url=api_base
         ) if api_base else openai.OpenAI(api_key=api_key)
+
+    def get_model_info(self) -> Dict[str, Any]:
+        """Get information about the current model and provider capabilities"""
+        # Determine provider based on api_base
+        provider = "openai"
+        if self.api_base:
+            if "deepseek" in self.api_base.lower():
+                provider = "deepseek"
+            elif "groq" in self.api_base.lower():
+                provider = "groq"
+            elif "together" in self.api_base.lower():
+                provider = "together"
+            elif "perplexity" in self.api_base.lower():
+                provider = "perplexity"
+            # Add more provider detection as needed
+        
+        # Basic capabilities - can be enhanced based on model/provider
+        supports_tools = True
+        supports_vision = False
+        supports_streaming = True
+        supports_json_mode = True
+        supports_system_messages = True
+        
+        # Adjust based on provider
+        if provider == "deepseek":
+            supports_tools = False  # DeepSeek doesn't support function calling yet
+            supports_vision = False
+        
+        # Adjust based on model name
+        if "vision" in self.model.lower() or "gpt-4o" in self.model.lower():
+            supports_vision = True
+        
+        return {
+            "provider": provider,
+            "model": self.model,
+            "api_base": self.api_base,
+            "supports_streaming": supports_streaming,
+            "supports_tools": supports_tools,
+            "supports_vision": supports_vision,
+            "supports_json_mode": supports_json_mode,
+            "supports_system_messages": supports_system_messages,
+        }
 
     def _normalise_message(self, msg) -> Dict[str, Any]:
         """
@@ -56,6 +99,10 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
             content = msg.message.content
         elif isinstance(msg, dict):
             content = msg.get('content')
+        
+        # Handle empty/None content - this might be the issue with DeepSeek
+        if content is None:
+            content = ""
         
         # Extract tool calls
         raw_tool_calls = None
@@ -96,6 +143,12 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
             "tool_calls": tool_calls
         }
         
+        # Debug logging for DeepSeek issues
+        if content == "" or content is None:
+            log.warning(f"Empty content detected - original message type: {type(msg)}")
+            if hasattr(msg, '__dict__'):
+                log.debug(f"Message attributes: {list(msg.__dict__.keys())}")
+        
         log.debug(f"Normalized message: content={'None' if content is None else f'{len(str(content))} chars'}, tool_calls={len(tool_calls)}")
         return result
 
@@ -109,6 +162,8 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
         """
         try:
             chunk_count = 0
+            total_content = ""  # Track total content for debugging
+            
             async for chunk in async_stream:
                 chunk_count += 1
                 
@@ -125,6 +180,7 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
                         delta = choice.delta
                         if hasattr(delta, 'content') and delta.content:
                             content = delta.content
+                            total_content += content
                         
                         # Handle tool calls in delta
                         if hasattr(delta, 'tool_calls') and delta.tool_calls:
@@ -146,6 +202,7 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
                         message = choice.message
                         if hasattr(message, 'content') and message.content:
                             content = message.content
+                            total_content += content
                         
                         if hasattr(message, 'tool_calls') and message.tool_calls:
                             # Use the existing normalization logic
@@ -162,9 +219,9 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
                 if normalize_chunk:
                     result = normalize_chunk(result, chunk)
                 
-                # Debug logging for first few chunks
-                if chunk_count <= 5:
-                    log.debug(f"Chunk {chunk_count}: content_len={len(content)}, tool_calls={len(tool_calls)}")
+                # Debug logging for first few chunks and issues
+                if chunk_count <= 5 or (chunk_count % 50 == 0):
+                    log.debug(f"Chunk {chunk_count}: content_len={len(content)}, total_content_len={len(total_content)}, tool_calls={len(tool_calls)}")
                 
                 # Only yield if there's actual content or tool calls
                 if content or tool_calls:
@@ -172,6 +229,11 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
                 elif chunk_count <= 3:
                     # For first few chunks, yield even if empty (helps with timing)
                     yield result
+            
+            # Log final statistics
+            log.debug(f"Streaming completed: {chunk_count} chunks, {len(total_content)} total characters")
+            if len(total_content) == 0:
+                log.warning("Streaming completed but no content was received - possible API issue")
                         
         except Exception as e:
             log.error(f"Error in streaming: {e}")
@@ -215,6 +277,9 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
         """
         try:
             log.debug(f"Starting streaming for model: {self.model}")
+            log.debug(f"Messages: {len(messages)} messages")
+            log.debug(f"Tools: {len(tools) if tools else 0} tools")
+            log.debug(f"Kwargs: {list(kwargs.keys())}")
             
             # Make direct async call for real streaming
             response_stream = await self.async_client.chat.completions.create(
@@ -246,6 +311,9 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
         """Non-streaming completion using async client."""
         try:
             log.debug(f"Starting non-streaming completion for model: {self.model}")
+            log.debug(f"Messages: {len(messages)} messages")
+            log.debug(f"Tools: {len(tools) if tools else 0} tools")
+            log.debug(f"Kwargs: {list(kwargs.keys())}")
             
             resp = await self.async_client.chat.completions.create(
                 model=self.model,
@@ -255,9 +323,23 @@ class OpenAILLMClient(OpenAIStyleMixin, BaseLLMClient):
                 **kwargs
             )
             
+            # Debug the raw response
+            if hasattr(resp, 'choices') and resp.choices:
+                choice = resp.choices[0]
+                log.debug(f"Response choice type: {type(choice)}")
+                if hasattr(choice, 'message'):
+                    log.debug(f"Message type: {type(choice.message)}")
+                    log.debug(f"Message content: {getattr(choice.message, 'content', 'NO CONTENT')}")
+            
             # Use the normalization method
             result = self._normalise_message(resp.choices[0].message)
             log.debug(f"Non-streaming result: {result}")
+            
+            # Additional check for empty responses
+            if not result.get("response") and not result.get("tool_calls"):
+                log.warning("Empty response received from API")
+                result["response"] = "[No response received from API]"
+            
             return result
             
         except Exception as e:

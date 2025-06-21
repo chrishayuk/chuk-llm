@@ -681,3 +681,105 @@ watsonx:
       features: [text, streaming, tools, parallel_calls]
       max_context_length: 131072  # 128k
       max_output_tokens: 8192
+
+# Perplexity AI - OpenAI-compatible with search capabilities
+perplexity:
+  inherits: "openai"
+  client_class: "chuk_llm.llm.providers.openai_client.OpenAILLMClient"
+  api_key_env: "PERPLEXITY_API_KEY"
+  api_base: "https://api.perplexity.ai"
+  default_model: "sonar-pro"
+  
+  # Standard features only
+  features: [text, streaming, json_mode, system_messages, vision]
+  max_context_length: 127072
+  max_output_tokens: 4096
+  rate_limits:
+    tier_0: 5    # sonar-deep-research only
+    tier_1: 50   # Most models
+    tier_2: 50   # Most models (increases for deep-research)
+    tier_3: 50   # Most models (increases for deep-research)
+    tier_4: 50   # Most models (increases for deep-research)
+    tier_5: 50   # Most models (increases for deep-research)
+    default: 50
+  
+  models:
+    # Current Perplexity Models (as of latest tier info)
+    - "sonar-deep-research"      # 5 RPM, beta features
+    - "sonar-reasoning-pro"      # 50 RPM, full features
+    - "sonar-reasoning"          # 50 RPM, full features
+    - "sonar-pro"               # 50 RPM, full features
+    - "sonar"                   # 50 RPM, full features
+    - "r1-1776"                 # 50 RPM, offline chat (no search)
+  
+  model_aliases:
+    # Simple aliases
+    pro: "sonar-pro"
+    reasoning: "sonar-reasoning"
+    reasoning_pro: "sonar-reasoning-pro"
+    deep: "sonar-deep-research"
+    research: "sonar-deep-research"
+    offline: "r1-1776"
+    
+    # Capability aliases
+    search: "sonar-pro"
+    chat: "r1-1776"
+    latest: "sonar-reasoning-pro"
+    default: "sonar-pro"
+    
+    # Tier-based aliases
+    tier0: "sonar-deep-research"
+    tier1_plus: "sonar-pro"
+  
+  model_capabilities:
+    # Deep Research - limited RPM, full beta features
+    - pattern: "sonar-deep-research"
+      features: [text, streaming, json_mode, system_messages]
+      max_context_length: 127072
+      max_output_tokens: 4096
+      rate_limits:
+        tier_0: 5
+        tier_1: 10  # Estimated increase
+        tier_2: 15  # Estimated increase
+        tier_3: 20  # Estimated increase
+        tier_4: 30  # Estimated increase
+        tier_5: 50  # Estimated increase
+    
+    # Reasoning models - full features including vision
+    - pattern: "sonar-reasoning.*"
+      features: [text, streaming, json_mode, system_messages, vision]
+      max_context_length: 127072
+      max_output_tokens: 4096
+    
+    # Standard Sonar models - full features including vision
+    - pattern: "sonar-pro|sonar$"
+      features: [text, streaming, json_mode, system_messages, vision]
+      max_context_length: 127072
+      max_output_tokens: 4096
+    
+    # R1 offline model - no search/vision features
+    - pattern: "r1-1776"
+      features: [text, streaming, json_mode, system_messages]
+      max_context_length: 127072
+      max_output_tokens: 4096
+
+  extra:
+    # Beta features available by tier
+    beta_features:
+      tier_0:
+        - "related_questions"      # sonar-deep-research only
+        - "structured_outputs"     # sonar-deep-research only
+      tier_1_plus:
+        - "images"                 # sonar models except r1-1776
+        - "related_questions"      # sonar models except r1-1776
+        - "search_domain_filter"   # sonar models except r1-1776
+        - "structured_outputs"     # all models
+    
+    # Model-specific notes
+    model_notes:
+      "r1-1776": "Offline chat model - no search subsystem, no image search, no related questions, no domain filter"
+      "sonar-deep-research": "Research-focused with lowest rate limits but increases with tier"
+      "sonar-reasoning-pro": "Premium reasoning with full beta features"
+      "sonar-reasoning": "Standard reasoning with full beta features"
+      "sonar-pro": "Professional search with full beta features"
+      "sonar": "Standard search with full beta features"
