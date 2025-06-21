@@ -146,7 +146,7 @@ wheels = [
 
 [[package]]
 name = "chuk-llm"
-version = "0.4"
+version = "0.5"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
@@ -154,6 +154,7 @@ dependencies = [
     { name = "chuk-ai-session-manager" },
     { name = "google-genai" },
     { name = "groq" },
+    { name = "httpx" },
     { name = "ibm-watsonx-ai" },
     { name = "mistralai" },
     { name = "numpy" },
@@ -163,6 +164,11 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "tiktoken" },
+]
+
+[package.optional-dependencies]
+cli = [
+    { name = "rich" },
 ]
 
 [package.dev-dependencies]
@@ -180,6 +186,7 @@ requires-dist = [
     { name = "chuk-ai-session-manager", specifier = ">=0.5" },
     { name = "google-genai", specifier = ">=1.15.0" },
     { name = "groq", specifier = ">=0.25.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "ibm-watsonx-ai", specifier = ">=1.3.20" },
     { name = "mistralai", specifier = ">=1.7.1" },
     { name = "numpy", specifier = ">=2.2.6" },
@@ -188,6 +195,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=11.2.1" },
     { name = "python-dotenv", specifier = ">=1.1.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
+    { name = "rich", marker = "extra == 'cli'", specifier = ">=14.0.0" },
     { name = "tiktoken", specifier = ">=0.9.0" },
 ]
 

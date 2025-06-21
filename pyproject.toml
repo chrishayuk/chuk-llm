@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chuk-llm"
-version = "0.5"
+version = "0.6"
 description = "Add your description here"
 readme = "README.md"
 authors = [
@@ -17,6 +17,7 @@ dependencies = [
     "chuk-ai-session-manager>=0.5",
     "google-genai>=1.15.0",
     "groq>=0.25.0",
+    "httpx>=0.28.1",
     "ibm-watsonx-ai>=1.3.20",
     "mistralai>=1.7.1",
     "numpy>=2.2.6",
@@ -31,6 +32,14 @@ dependencies = [
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["chuk_llm*"]
+
+# CRITICAL: Include package data files (YAML configurations)
+[tool.setuptools.package-data]
+chuk_llm = ["*.yaml", "*.yml"]
+
+# Alternative approach - include all data files
+# [tool.setuptools]
+# include-package-data = true
 
 [tool.pytest.ini_options]
 # Changed from strict to auto mode to avoid fixture warnings
@@ -51,10 +60,20 @@ addopts = [
     "--disable-warnings",  # This will suppress most warnings
 ]
 
+# CLI entry point
+[project.scripts]
+chuk-llm = "chuk_llm.cli:main"
+
 [dependency-groups]
 dev = [
     "pytest-asyncio>=0.26.0",
     "pytest>=8.3.5",
     "pytest-cov>=6.1.1",
+    "rich>=14.0.0",
+]
+
+# Optional dependencies for enhanced CLI experience
+[project.optional-dependencies]
+cli = [
     "rich>=14.0.0",
 ]

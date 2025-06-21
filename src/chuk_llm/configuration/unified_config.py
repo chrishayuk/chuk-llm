@@ -23,6 +23,24 @@ try:
 except ImportError:
     _dotenv_available = False
 
+# Modern package resource handling
+try:
+    from importlib.resources import files
+    _importlib_resources_available = True
+except ImportError:
+    try:
+        from importlib_resources import files
+        _importlib_resources_available = True
+    except ImportError:
+        _importlib_resources_available = False
+
+# Fallback package resource handling
+try:
+    import pkg_resources
+    _pkg_resources_available = True
+except ImportError:
+    _pkg_resources_available = False
+
 from .models import Feature, ModelCapabilities, ProviderConfig
 from .discovery import ConfigDiscoveryMixin
 from .validator import ConfigValidator
@@ -73,40 +91,219 @@ class UnifiedConfigManager(ConfigDiscoveryMixin):
         else:
             logger.debug("No .env file found in standard locations")
     
-    def _find_config_file(self) -> Optional[Path]:
-        """Find YAML configuration file in correct priority order"""
+    def _find_config_files(self) -> tuple[Optional[Path], Optional[Path]]:
+        """Find configuration files - returns (user_config, package_config)"""
+        user_config = None
+        package_config = None
+        
+        # 1. Look for user configuration files (these override/replace)
         if self.config_path:
             path = Path(self.config_path)
             if path.exists():
-                return path
+                user_config = path
         
-        candidates = [
-            # 1. Environment variable with location of chuk_llm.yaml
-            os.getenv("CHUK_LLM_CONFIG"),
+        if not user_config:
+            user_candidates = [
+                # Environment variable with location
+                os.getenv("CHUK_LLM_CONFIG"),
+                
+                # Working directory of consuming project
+                "chuk_llm.yaml",      # REPLACES package config completely
+                "providers.yaml",     # EXTENDS package config (inherits + overrides)
+                "llm_config.yaml",    # EXTENDS package config
+                "config/chuk_llm.yaml",
+                Path.home() / ".chuk_llm" / "config.yaml",
+            ]
             
-            # 2. Working directory of consuming project
-            "chuk_llm.yaml",
-            
-            # 3. ChukLLM hosted file in chuk_llm/chuk_llm.yaml
-            Path(__file__).parent.parent / "chuk_llm.yaml",
-            
-            # Additional fallbacks (keeping existing behavior)
-            "providers.yaml", 
-            "llm_config.yaml",
-            "config/chuk_llm.yaml",
-            Path(__file__).parent.parent / "providers.yaml",
-            Path.home() / ".chuk_llm" / "config.yaml",
-        ]
+            for candidate in user_candidates:
+                if candidate:
+                    path = Path(candidate).expanduser().resolve()
+                    if path.exists():
+                        logger.info(f"Found user config file: {path}")
+                        user_config = path
+                        break
         
-        for candidate in candidates:
-            if candidate:
-                path = Path(candidate).expanduser().resolve()
-                if path.exists():
-                    logger.info(f"Found config file: {path}")
-                    return path
+        # 2. Always try to get package config as baseline
+        package_config = self._get_package_config_path()
+        if package_config:
+            package_config = Path(package_config)
+            
+        return user_config, package_config
+
+    def _load_yaml_files(self) -> Dict:
+        """Load YAML configuration with inheritance logic"""
+        if not yaml:
+            logger.warning("PyYAML not available, using built-in defaults only")
+            return {}
         
-        logger.warning("No configuration file found in any standard location")
+        user_config_file, package_config_file = self._find_config_files()
+        
+        config = {}
+        
+        # 1. Start with package config as baseline (if available)
+        if package_config_file and package_config_file.exists():
+            try:
+                package_config = self._load_single_yaml(package_config_file)
+                if package_config:
+                    config.update(package_config)
+                    logger.info(f"Loaded package config from {package_config_file}")
+            except Exception as e:
+                logger.error(f"Failed to load package config from {package_config_file}: {e}")
+        
+        # 2. Handle user config based on filename
+        if user_config_file:
+            try:
+                user_config = self._load_single_yaml(user_config_file)
+                if user_config:
+                    filename = user_config_file.name
+                    
+                    if filename == "chuk_llm.yaml":
+                        # COMPLETE REPLACEMENT - ignore package config
+                        logger.info(f"chuk_llm.yaml found - replacing package config completely")
+                        config = user_config
+                    else:
+                        # INHERITANCE MODE - merge with package config
+                        logger.info(f"{filename} found - extending package config")
+                        config = self._merge_configs(config, user_config)
+                    
+                    logger.info(f"Loaded user config from {user_config_file}")
+            except Exception as e:
+                logger.error(f"Failed to load user config from {user_config_file}: {e}")
+        
+        if not config:
+            logger.info("No configuration files found, using built-in defaults")
+        
+        return config
+
+    def _load_single_yaml(self, config_file: Path) -> Dict:
+        """Load a single YAML file"""
+        # Handle package resource files specially
+        if self._is_package_resource_path(config_file):
+            return self._load_package_yaml()
+        
+        # Regular file loading
+        with open(config_file, 'r', encoding='utf-8') as f:
+            return yaml.safe_load(f) or {}
+
+    def _merge_configs(self, base_config: Dict, user_config: Dict) -> Dict:
+        """Merge user config into base config with intelligent merging"""
+        merged = base_config.copy()
+        
+        for key, value in user_config.items():
+            if key.startswith("__"):
+                # Global sections - merge intelligently
+                if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+                    # Merge global sections (like __global__, __global_aliases__)
+                    merged[key].update(value)
+                else:
+                    # Replace if not both dicts
+                    merged[key] = value
+            else:
+                # Provider sections
+                if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+                    # Merge provider config - user overrides base
+                    provider_config = merged[key].copy()
+                    
+                    # Handle special cases for lists that should be extended vs replaced
+                    for sub_key, sub_value in value.items():
+                        if sub_key == "models" and isinstance(sub_value, list) and isinstance(provider_config.get(sub_key), list):
+                            # EXTEND models list (unique values only)
+                            existing_models = set(provider_config[sub_key])
+                            new_models = [m for m in sub_value if m not in existing_models]
+                            provider_config[sub_key].extend(new_models)
+                        elif sub_key == "model_aliases" and isinstance(sub_value, dict) and isinstance(provider_config.get(sub_key), dict):
+                            # MERGE model aliases
+                            provider_config[sub_key].update(sub_value)
+                        elif sub_key == "features" and isinstance(sub_value, list) and isinstance(provider_config.get(sub_key), list):
+                            # EXTEND features list (unique values only)
+                            existing_features = set(provider_config[sub_key])
+                            new_features = [f for f in sub_value if f not in existing_features]
+                            provider_config[sub_key].extend(new_features)
+                        elif sub_key == "rate_limits" and isinstance(sub_value, dict) and isinstance(provider_config.get(sub_key), dict):
+                            # MERGE rate limits
+                            provider_config[sub_key].update(sub_value)
+                        elif sub_key == "extra" and isinstance(sub_value, dict) and isinstance(provider_config.get(sub_key), dict):
+                            # DEEP MERGE extra config
+                            provider_config[sub_key] = self._deep_merge_dict(provider_config[sub_key], sub_value)
+                        else:
+                            # REPLACE for other fields
+                            provider_config[sub_key] = sub_value
+                    
+                    merged[key] = provider_config
+                else:
+                    # Replace entire provider config if not both dicts
+                    merged[key] = value
+        
+        return merged
+
+    def _deep_merge_dict(self, base: Dict, override: Dict) -> Dict:
+        """Deep merge two dictionaries"""
+        result = base.copy()
+        
+        for key, value in override.items():
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = self._deep_merge_dict(result[key], value)
+            else:
+                result[key] = value
+        
+        return result
+
+    def _get_package_config_path(self) -> Optional[str]:
+        """Get the path to the packaged chuk_llm.yaml file"""
+        # Try modern importlib.resources first
+        if _importlib_resources_available:
+            try:
+                package_files = files('chuk_llm')
+                config_file = package_files / 'chuk_llm.yaml'
+                if config_file.is_file():
+                    # Return a temporary path for importlib.resources
+                    return str(config_file)
+            except Exception as e:
+                logger.debug(f"importlib.resources method failed: {e}")
+        
+        # Fallback to pkg_resources
+        if _pkg_resources_available:
+            try:
+                if pkg_resources.resource_exists('chuk_llm', 'chuk_llm.yaml'):
+                    return pkg_resources.resource_filename('chuk_llm', 'chuk_llm.yaml')
+            except Exception as e:
+                logger.debug(f"pkg_resources method failed: {e}")
+        
         return None
+
+    def _is_package_resource_path(self, config_file: Path) -> bool:
+        """Check if this is a package resource path that needs special handling"""
+        config_str = str(config_file)
+        # Check for importlib.resources paths (they often contain special markers)
+        return (not config_file.exists() and 
+                ('chuk_llm' in config_str or 'importlib' in config_str))
+
+    def _load_package_yaml(self) -> Dict:
+        """Load YAML from package resources"""
+        # Try modern importlib.resources first
+        if _importlib_resources_available:
+            try:
+                package_files = files('chuk_llm')
+                config_file = package_files / 'chuk_llm.yaml'
+                if config_file.is_file():
+                    content = config_file.read_text(encoding='utf-8')
+                    config = yaml.safe_load(content) or {}
+                    logger.info("Loaded configuration from package resources (importlib)")
+                    return config
+            except Exception as e:
+                logger.debug(f"importlib.resources loading failed: {e}")
+        
+        # Fallback to pkg_resources
+        if _pkg_resources_available:
+            try:
+                content = pkg_resources.resource_string('chuk_llm', 'chuk_llm.yaml').decode('utf-8')
+                config = yaml.safe_load(content) or {}
+                logger.info("Loaded configuration from package resources (pkg_resources)")
+                return config
+            except Exception as e:
+                logger.debug(f"pkg_resources loading failed: {e}")
+        
+        return {}
 
     def _parse_features(self, features_data: Any) -> Set[Feature]:
         """Parse features from YAML data"""
@@ -143,25 +340,8 @@ class UnifiedConfigManager(ConfigDiscoveryMixin):
         return capabilities
     
     def _load_yaml(self) -> Dict:
-        """Load YAML configuration"""
-        if not yaml:
-            logger.warning("PyYAML not available, using built-in defaults only")
-            return {}
-        
-        config_file = self._find_config_file()
-        if not config_file:
-            logger.info("No configuration file found, using built-in defaults")
-            return {}
-        
-        try:
-            with open(config_file, 'r', encoding='utf-8') as f:
-                config = yaml.safe_load(f) or {}
-            
-            logger.info(f"Loaded configuration from {config_file}")
-            return config
-        except Exception as exc:
-            logger.error(f"Failed to load config from {config_file}: {exc}")
-            return {}
+        """Load YAML configuration with inheritance support"""
+        return self._load_yaml_files()
     
     def _process_config(self, config: Dict):
         """Process YAML configuration and merge with defaults"""

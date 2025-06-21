@@ -4,6 +4,9 @@ include README.md
 # Include package files
 recursive-include src/chuk_llm *.py
 
+# Include YAML configuration files - CRITICAL for package distribution
+recursive-include src/chuk_llm *.yaml *.yml
+
 # Include any resources
 recursive-include src/chuk_llm/resources *.json *.txt
 
