@@ -1,13 +1,23 @@
 # chuk_llm
 
-A unified, production-ready Python library for Large Language Model (LLM) providers with real-time streaming, function calling, middleware support, automatic session tracking, dynamic model discovery, and intelligent system prompt generation.
+A unified, production-ready Python library for Large Language Model (LLM) providers with real-time streaming, function calling, middleware support, automatic session tracking, dynamic model discovery, intelligent system prompt generation, and a powerful CLI.
 
 ## 🚀 QuickStart
 
 ### Installation
 
 ```bash
-pip install chuk_llm chuk-ai-session-manager
+# Core functionality with session tracking (memory storage)
+pip install chuk_llm
+
+# With Redis for persistent sessions
+pip install chuk_llm[redis]
+
+# With enhanced CLI experience
+pip install chuk_llm[cli]
+
+# Full installation
+pip install chuk_llm[all]
 ```
 
 ### API Keys Setup
@@ -29,11 +39,12 @@ answer = quick_question("What is 2+2?")
 print(answer)  # "2 + 2 equals 4."
 
 # Provider-specific functions (auto-generated!)
-from chuk_llm import ask_openai_sync, ask_claude_sync, ask_groq_sync
+from chuk_llm import ask_openai_sync, ask_claude_sync, ask_groq_sync, ask_watsonx_sync
 
 openai_response = ask_openai_sync("Tell me a joke")
 claude_response = ask_claude_sync("Explain quantum computing") 
 groq_response = ask_groq_sync("What's the weather like?")
+watsonx_response = ask_watsonx_sync("Write enterprise Python code")
 
 # Configure once, use everywhere
 configure(provider="anthropic", temperature=0.7)
@@ -46,6 +57,57 @@ for provider, response in results.items():
     print(f"{provider}: {response}")
 ```
 
+### 🖥️ Command Line Interface (CLI)
+
+ChukLLM includes a powerful CLI for quick AI interactions from your terminal:
+
+```bash
+# Quick questions using global aliases
+chuk-llm ask_granite "What is Python?"
+chuk-llm ask_claude "Explain quantum computing"
+chuk-llm ask_gpt "Write a haiku about code"
+
+# General ask command with provider selection
+chuk-llm ask "What is machine learning?" --provider openai --model gpt-4o-mini
+
+# JSON responses for structured output
+chuk-llm ask "List 3 Python libraries" --json --provider openai
+
+# Provider and model management
+chuk-llm providers              # Show all available providers
+chuk-llm models ollama          # Show models for specific provider
+chuk-llm test anthropic         # Test provider connection
+chuk-llm discover ollama        # Discover new Ollama models
+
+# Configuration and diagnostics
+chuk-llm config                 # Show current configuration
+chuk-llm functions              # List all auto-generated functions
+chuk-llm aliases                # Show available global aliases
+chuk-llm help                   # Comprehensive help
+
+# Use with uvx for zero-install usage
+uvx chuk-llm ask_granite "What is Python?"
+uvx chuk-llm providers
+```
+
+#### CLI Features
+
+- **🎯 Global Aliases**: Quick commands like `ask_granite`, `ask_claude`, `ask_gpt`
+- **🌊 Real-time Streaming**: See responses as they're generated
+- **🔧 Provider Management**: Test, discover, and configure providers
+- **📊 Rich Output**: Beautiful tables and formatting (with `[cli]` extra)
+- **🔍 Discovery Integration**: Find and use new Ollama models instantly
+- **⚡ Fast Feedback**: Immediate responses with connection testing
+- **🎨 Quiet/Verbose Modes**: Control output detail with `--quiet` or `--verbose`
+
+#### CLI Installation Options
+
+| Command | CLI Features | Use Case |
+|---------|-------------|----------|
+| `pip install chuk_llm` | Basic CLI | Quick terminal usage |
+| `pip install chuk_llm[cli]` | Enhanced CLI with rich formatting | Beautiful terminal experience |
+| `pip install chuk_llm[all]` | Enhanced CLI + Redis + All features | Complete installation |
+
 ### Async API - Production Performance (3-7x faster!)
 
 ```python
@@ -57,11 +119,12 @@ async def main():
     response = await ask("Hello!")
     
     # Provider-specific async functions
-    from chuk_llm import ask_openai, ask_claude, ask_groq
+    from chuk_llm import ask_openai, ask_claude, ask_groq, ask_watsonx
     
     openai_response = await ask_openai("Tell me a joke")
     claude_response = await ask_claude("Explain quantum computing")
     groq_response = await ask_groq("What's the weather like?")
+    watsonx_response = await ask_watsonx("Generate enterprise documentation")
     
     # Real-time streaming (token by token)
     print("Streaming: ", end="", flush=True)
@@ -88,7 +151,7 @@ asyncio.run(main())
 
 ### 🧠 Intelligent System Prompt Generation - NEW!
 
-ChukLLM now features an advanced system prompt generator that automatically creates optimized prompts based on provider capabilities, tools, and context:
+ChukLLM features an advanced system prompt generator that automatically creates optimized prompts based on provider capabilities, tools, and context:
 
 ```python
 from chuk_llm import ask_sync
@@ -137,31 +200,16 @@ response = ask_openai_sync("Explain quantum physics", tools=tools)
 from chuk_llm import ask_groq_sync
 response = ask_groq_sync("Explain quantum physics", tools=tools)
 # System prompt: "You are an intelligent assistant with function calling capabilities. Take advantage of ultra-fast inference..."
-```
 
-#### Custom System Prompt Templates
-
-```python
-from chuk_llm.llm.system_prompt_generator import SystemPromptGenerator
-
-# Create custom templates
-generator = SystemPromptGenerator(provider="openai", model="gpt-4o")
-
-# Generate context-aware prompts
-prompt = generator.generate_prompt(
-    tools=tools,
-    user_system_prompt="You are a helpful coding assistant specializing in Python.",
-    json_mode=True
-)
-
-print(prompt)
-# Output: Comprehensive system prompt optimized for OpenAI, with tool instructions, 
-# JSON mode guidance, and custom specialization
+# IBM Granite gets enterprise-optimized prompts
+from chuk_llm import ask_watsonx_sync
+response = ask_watsonx_sync("Explain quantum physics", tools=tools)
+# System prompt: "You are an enterprise AI assistant with function calling capabilities. Provide professional, accurate responses..."
 ```
 
 ### 🔍 Dynamic Model Discovery for Ollama - NEW!
 
-ChukLLM now automatically discovers and generates functions for Ollama models in real-time:
+ChukLLM automatically discovers and generates functions for Ollama models in real-time:
 
 ```python
 # Start Ollama with some models
@@ -178,77 +226,55 @@ from chuk_llm import (
 
 # Use immediately without any configuration
 response = ask_ollama_llama3_2_sync("Write a Python function to sort a list")
-vision_response = ask_ollama_llama3_2_sync("Describe this image", image="photo.jpg")
 
 # Trigger discovery manually to refresh available models
 from chuk_llm.api.providers import trigger_ollama_discovery_and_refresh
 new_functions = trigger_ollama_discovery_and_refresh()
 print(f"Discovered {len(new_functions)} new functions!")
 
-# Universal discovery for any provider
-from chuk_llm.api.discovery import discover_models_sync, show_discovered_models_sync
-
-# Discover Ollama models with capability inference
-models = discover_models_sync("ollama")
-for model in models:
-    print(f"📦 {model['name']}: {', '.join(model['features'])}")
-
-# Show detailed discovery results
-show_discovered_models_sync("ollama")
-# Output:
-# 🔍 Discovered 8 Ollama Models
-# ========================
-# 📁 Llama Models (3):
-#   • llama3.2:latest
-#     Size: 2.0GB | Context: 128000 | Features: text, streaming, tools
-#   • llama3.2:1b  
-#     Size: 1.3GB | Context: 128000 | Features: text, streaming
+# CLI discovery
+# chuk-llm discover ollama
+# chuk-llm functions
 ```
 
-#### Discovery Configuration
+### 🎯 Automatic Session Tracking
+
+ChukLLM includes automatic session tracking powered by `chuk-ai-session-manager`. Every API call is automatically tracked for complete observability:
 
 ```python
-# Configure discovery behavior in chuk_llm.yaml
-# ollama:
-#   dynamic_discovery:
-#     enabled: true
-#     cache_timeout: 300
-#     auto_update_on_startup: true
-#     inference_config:
-#       default_features: ["text", "streaming"]
-#       family_rules:
-#         llama:
-#           features: ["text", "streaming", "tools", "reasoning"]
-#           context_rules:
-#             "llama.*3\.[23]": 128000
-#         qwen:
-#           features: ["text", "streaming", "tools", "reasoning"]
+from chuk_llm import ask, get_session_stats, get_session_history
 
-# Manual discovery with custom configuration
-from chuk_llm.api.discovery import update_provider_configuration_sync
+# All calls are automatically tracked
+await ask("What's the capital of France?")
+await ask("What's 2+2?")
 
-result = update_provider_configuration_sync(
-    "ollama",
-    inference_config={
-        "family_rules": {
-            "llama": {
-                "features": ["text", "streaming", "tools", "vision", "reasoning"],
-                "patterns": ["llama.*"]
-            }
-        }
-    }
-)
+# Get comprehensive analytics
+stats = await get_session_stats()
+print(f"📊 Tracked {stats['total_messages']} messages")
+print(f"💰 Total cost: ${stats['estimated_cost']:.6f}")
 
-print(f"✅ Updated {result['text_models']} models")
+# View complete history
+history = await get_session_history()
+for msg in history:
+    print(f"{msg['role']}: {msg['content'][:50]}...")
 ```
 
-### 🎭 Enhanced Conversations - NEW!
+**Session Storage Options:**
+- **Memory (default)**: Fast, no persistence, no extra dependencies
+- **Redis**: Persistent, requires `pip install chuk_llm[redis]`
 
-ChukLLM now supports advanced conversation features for building sophisticated dialogue systems:
+```bash
+# Configure session storage
+export SESSION_PROVIDER=memory  # Default
+export SESSION_PROVIDER=redis   # Requires [redis] extra
+export SESSION_REDIS_URL=redis://localhost:6379/0
+```
+
+### 🎭 Enhanced Conversations
+
+ChukLLM supports advanced conversation features for building sophisticated dialogue systems:
 
 #### 1. Conversation Branching
-Explore different conversation paths without affecting the main thread:
-
 ```python
 async with conversation() as chat:
     await chat.say("Let's plan a vacation")
@@ -256,94 +282,23 @@ async with conversation() as chat:
     # Branch to explore Japan
     async with chat.branch() as japan_branch:
         await japan_branch.say("Tell me about visiting Japan")
-        await japan_branch.say("What about costs?")
         # This conversation stays isolated
     
-    # Branch to explore Italy
-    async with chat.branch() as italy_branch:
-        await italy_branch.say("Tell me about visiting Italy")
-        await italy_branch.say("Best time to visit?")
-    
     # Main conversation doesn't know about branches
-    await chat.say("I've decided on Japan!")  # AI won't know why!
+    await chat.say("I've decided on Japan!")
 ```
 
 #### 2. Conversation Persistence
-Save and resume conversations across sessions:
-
 ```python
 # Start a conversation
 async with conversation() as chat:
     await chat.say("I'm learning Python")
-    await chat.say("I know JavaScript already")
-    
-    # Save for later
     conversation_id = await chat.save()
-    print(f"Saved as: {conversation_id}")
 
 # Resume days later
 async with conversation(resume_from=conversation_id) as chat:
     response = await chat.say("What should I learn next?")
     # AI remembers your background!
-```
-
-#### 3. Multi-Modal Conversations
-Send images along with text (requires vision-capable models):
-
-```python
-async with conversation(model="gpt-4o") as chat:
-    # Send an image
-    await chat.say("What's in this diagram?", image="architecture.png")
-    
-    # Continue with context
-    await chat.say("Can you explain the database layer?")
-    # AI remembers the image context!
-```
-
-#### 4. Conversation Utilities
-Built-in tools for analysis and summarization:
-
-```python
-async with conversation() as chat:
-    # Have a detailed discussion
-    await chat.say("Let's discuss machine learning")
-    await chat.say("Explain neural networks")
-    await chat.say("What about transformers?")
-    await chat.say("How do they relate to LLMs?")
-    
-    # Get a summary
-    summary = await chat.summarize(max_length=200)
-    print(f"Summary: {summary}")
-    
-    # Extract key points
-    points = await chat.extract_key_points()
-    for point in points:
-        print(f"• {point}")
-    
-    # Get statistics
-    stats = await chat.get_session_stats()
-    print(f"Cost so far: ${stats['estimated_cost']:.6f}")
-```
-
-#### 5. Stateless Context
-Add context to one-off questions without maintaining conversation state:
-
-```python
-# Quick context for a single question
-response = await ask(
-    "What's the capital?",
-    context="We're discussing France and its major cities"
-)
-
-# Provide conversation history for context
-response = await ask(
-    "What should I do next?",
-    previous_messages=[
-        {"role": "user", "content": "I'm making a cake"},
-        {"role": "assistant", "content": "Great! First, preheat your oven to 350°F..."},
-        {"role": "user", "content": "Done, and I've mixed the dry ingredients"}
-    ]
-)
 ```
 
 ### 103+ Auto-Generated Functions
@@ -352,13 +307,10 @@ ChukLLM automatically creates functions for every provider and model, including 
 
 ```python
 # Base provider functions
-from chuk_llm import ask_openai, ask_anthropic, ask_groq, ask_ollama
+from chuk_llm import ask_openai, ask_anthropic, ask_groq, ask_ollama, ask_watsonx
 
 # Model-specific functions (auto-generated from config + discovery)
-from chuk_llm import ask_openai_gpt4o, ask_claude_sonnet, ask_ollama_llama3_2
-
-# Convenient aliases
-from chuk_llm import ask_gpt4o, ask_claude
+from chuk_llm import ask_openai_gpt4o, ask_claude_sonnet, ask_ollama_llama3_2, ask_watsonx_granite
 
 # All with sync, async, and streaming variants!
 from chuk_llm import (
@@ -367,147 +319,6 @@ from chuk_llm import (
     ask_groq_sync,           # Sync version
     ask_ollama_llama3_2_sync # Auto-discovered local model
 )
-
-# Real-time function generation for new models
-# When you pull a new Ollama model:
-# ollama pull mistral:7b-instruct
-
-# ChukLLM automatically generates:
-from chuk_llm import ask_ollama_mistral_7b_instruct_sync  # Available immediately!
-```
-
-### Discovery & Utilities
-
-```python
-import chuk_llm
-
-# See all available providers and models (including discovered)
-chuk_llm.show_providers()
-
-# See all 103+ auto-generated functions (updates dynamically)
-chuk_llm.show_functions()
-
-# Comprehensive diagnostics
-chuk_llm.print_diagnostics()
-
-# Test connections
-from chuk_llm import test_connection_sync
-result = test_connection_sync("anthropic")
-print(f"✅ {result['provider']}: {result['duration']:.2f}s")
-
-# Trigger Ollama model discovery
-from chuk_llm.api.providers import trigger_ollama_discovery_and_refresh
-new_functions = trigger_ollama_discovery_and_refresh()
-print(f"🔍 Discovered {len(new_functions)} new Ollama functions")
-```
-
-### 🎯 Automatic Session Tracking (NEW!)
-
-ChukLLM now includes automatic session tracking powered by `chuk-ai-session-manager`. Every API call is automatically tracked for complete observability - no code changes needed!
-
-```python
-from chuk_llm import ask, conversation, get_session_stats, get_session_history
-
-# Example 1: ask() is stateless but still tracked
-await ask("What's the capital of France?")  # Response: "The capital of France is Paris"
-await ask("What's 2+2?")                    # Response: "2+2 equals 4"
-
-# These are independent calls, but both are tracked!
-stats = await get_session_stats()
-print(f"📊 Tracked {stats['total_messages']} messages")
-print(f"💰 Total cost: ${stats['estimated_cost']:.6f}")
-
-# Example 2: For contextual conversations, use conversation()
-async with conversation() as conv:
-    await conv.say("What's the capital of France?")
-    await conv.say("Tell me more about it")  # This WILL understand "it" = Paris
-    
-    # Session tracking happens automatically here too!
-    if conv.has_session:
-        stats = await conv.get_session_stats()
-        print(f"💬 Conversation cost: ${stats['estimated_cost']:.6f}")
-```
-
-**Key Points:**
-- ✅ `ask()` - Stateless calls, each independent, but ALL tracked
-- ✅ `conversation()` - Stateful dialogue, maintains context, also tracked
-- ✅ Both contribute to the same session for analytics
-
-**Automatic Features:**
-- ✅ **Zero Configuration** - Works out of the box
-- 📊 **Token Tracking** - Monitor usage in real-time
-- 💰 **Cost Estimation** - Track spending across providers
-- 🔄 **Infinite Context** - Automatic conversation segmentation
-- 📝 **Full History** - Complete audit trail
-- 🛠️ **Tool Tracking** - Function calls logged automatically
-
-**Session Analytics:**
-```python
-# After using ask() or conversation()
-stats = await get_session_stats()
-print(f"📊 Session {stats['session_id'][:8]}...")
-print(f"   Messages: {stats['total_messages']}")
-print(f"   Tokens: {stats['total_tokens']}")
-print(f"   Cost: ${stats['estimated_cost']:.6f}")
-
-# View the history (you'll see all calls)
-history = await get_session_history()
-for msg in history:
-    print(f"{msg['role']}: {msg['content'][:50]}...")
-```
-
-**Session Management:**
-```python
-from chuk_llm import (
-    get_current_session_id,  # Get current session ID
-    reset_session,           # Start a new session
-    disable_sessions,        # Turn off tracking
-    enable_sessions          # Turn on tracking
-)
-
-# Check current session
-session_id = get_current_session_id()
-print(f"Current session: {session_id}")
-
-# Start fresh
-reset_session()
-
-# Disable if needed (or set CHUK_LLM_DISABLE_SESSIONS=true)
-disable_sessions()
-```
-
-### 🌳 Hierarchical Sessions - Branched Conversations
-
-ChukLLM supports hierarchical sessions for complex conversation flows, A/B testing, and parallel exploration:
-
-```python
-from chuk_llm import conversation
-from chuk_ai_session_manager import SessionManager
-
-# Start main conversation
-async with conversation() as main_conv:
-    await main_conv.say("I need help planning a vacation")
-    main_session_id = main_conv.session_id
-    
-    # Branch 1: Explore Japan
-    japan_session = SessionManager(parent_session_id=main_session_id)
-    async with conversation(session_id=japan_session.session_id) as japan_conv:
-        await japan_conv.say("Tell me about visiting Japan")
-        japan_cost = (await japan_conv.get_session_stats())['estimated_cost']
-    
-    # Branch 2: Explore Italy  
-    italy_session = SessionManager(parent_session_id=main_session_id)
-    async with conversation(session_id=italy_session.session_id) as italy_conv:
-        await italy_conv.say("Tell me about visiting Italy")
-        italy_cost = (await italy_conv.get_session_stats())['estimated_cost']
-    
-    # Continue main thread with decision
-    await main_conv.say("I'll choose Japan! Plan a 10-day trip.")
-
-# Session hierarchy:
-# └── Main conversation (vacation planning)
-#     ├── Branch 1 (Japan exploration)
-#     └── Branch 2 (Italy exploration)
 ```
 
 ### Performance Demo
@@ -546,12 +357,85 @@ asyncio.run(performance_demo())
 ✅ **3-7x Performance Boost** - Concurrent requests vs sequential  
 ✅ **Real-time Streaming** - Token-by-token output as it's generated  
 ✅ **Memory Management** - Stateful conversations with context  
-✅ **Enhanced Conversations** - Branching, persistence, multi-modal support  
 ✅ **Automatic Session Tracking** - Zero-config usage analytics & cost monitoring  
 ✅ **Dynamic Model Discovery** - Automatically detect and generate functions for new models  
 ✅ **Intelligent System Prompts** - Provider-optimized prompts with tool integration  
+✅ **Powerful CLI** - Terminal access with streaming and discovery  
 ✅ **Production Ready** - Error handling, retries, connection pooling  
 ✅ **Developer Friendly** - Simple sync for scripts, powerful async for apps  
+
+## 📦 Installation
+
+### Basic Installation
+
+```bash
+# Core functionality with session tracking (memory storage)
+pip install chuk_llm
+
+# Session tracking is included by default!
+# chuk-ai-session-manager is a core dependency
+```
+
+### Production Installation
+
+```bash
+# With Redis support for persistent session storage
+pip install chuk_llm[redis]
+
+# This adds Redis support to the included session manager
+```
+
+### Enhanced Installation
+
+```bash
+# Enhanced CLI experience with rich formatting
+pip install chuk_llm[cli]
+
+# Full installation with all features
+pip install chuk_llm[all]
+
+# Development installation
+pip install chuk_llm[dev]
+```
+
+### Installation Matrix
+
+| Command | Session Storage | CLI Features | Use Case |
+|---------|----------------|--------------|----------|
+| `pip install chuk_llm` | Memory (included) | Basic | Development, scripting |
+| `pip install chuk_llm[redis]` | Memory + Redis | Basic | Production apps |
+| `pip install chuk_llm[cli]` | Memory (included) | Enhanced | CLI tools |
+| `pip install chuk_llm[all]` | Memory + Redis | Enhanced | Full features |
+
+### Session Storage Configuration
+
+```bash
+# Default: Memory storage (fast, no persistence)
+export SESSION_PROVIDER=memory
+
+# Production: Redis storage (persistent, requires redis extra)
+export SESSION_PROVIDER=redis
+export SESSION_REDIS_URL=redis://localhost:6379/0
+
+# Disable session tracking entirely
+export CHUK_LLM_DISABLE_SESSIONS=true
+```
+
+### Provider-Specific Dependencies
+
+All major LLM providers are included by default. Optional dependencies are only for storage and CLI enhancements:
+
+```bash
+# Providers included out of the box:
+# ✅ OpenAI (GPT-4, GPT-3.5)
+# ✅ Anthropic (Claude 3.5 Sonnet, Haiku)  
+# ✅ Google Gemini (2.0 Flash, 1.5 Pro)
+# ✅ Groq (Llama models with ultra-fast inference)
+# ✅ Perplexity (Real-time web search)
+# ✅ Ollama (Local models with dynamic discovery)
+# ✅ IBM watsonx & Granite (Enterprise models)
+# ✅ Mistral AI
+```
 
 ## 🚀 Features
 
@@ -562,6 +446,8 @@ asyncio.run(performance_demo())
 - **Groq** - Lightning-fast inference with Llama models
 - **Perplexity** - Real-time web search with Sonar models
 - **Ollama** - Local model deployment with dynamic discovery
+- **IBM Watson** - Enterprise Granite models with SOC2 compliance
+- **Mistral AI** - Efficient European LLM models
 
 ### Core Capabilities
 - 🌊 **Real-time Streaming** - True streaming without buffering
@@ -577,6 +463,7 @@ asyncio.run(performance_demo())
 ### Advanced Features
 - **🧠 Intelligent System Prompts** - Provider-optimized prompt generation
 - **🔍 Dynamic Model Discovery** - Automatic detection of new models (Ollama, HuggingFace, etc.)
+- **🖥️ Powerful CLI** - Terminal interface with streaming and rich formatting
 - **Vision Support** - Image analysis across compatible providers
 - **JSON Mode** - Structured output generation
 - **Real-time Web Search** - Live information retrieval with citations
@@ -587,14 +474,14 @@ asyncio.run(performance_demo())
 - **Infinite Context** - Automatic conversation segmentation for long chats
 - **Conversation History** - Full audit trail of all interactions
 
-### Enhanced Conversation Features (NEW!)
+### Enhanced Conversation Features
 - **🌿 Conversation Branching** - Explore multiple paths without affecting main thread
 - **💾 Conversation Persistence** - Save and resume conversations across sessions
 - **🖼️ Multi-Modal Support** - Send images with text in conversations
 - **📊 Built-in Utilities** - Summarize, extract key points, get statistics
 - **🎯 Stateless Context** - Add context to one-off questions without state
 
-### Dynamic Discovery Features (NEW!)
+### Dynamic Discovery Features
 - **🔍 Real-time Model Detection** - Automatically discover new Ollama models
 - **⚡ Function Generation** - Create provider functions on-demand
 - **🧠 Capability Inference** - Automatically detect model features and limitations
@@ -602,30 +489,91 @@ asyncio.run(performance_demo())
 - **🔄 Cache Management** - Intelligent caching with automatic refresh
 - **📊 Discovery Analytics** - Statistics and insights about discovered models
 
-## 📦 Installation
+## 🖥️ CLI Guide
+
+### Quick Commands
 
 ```bash
-pip install chuk_llm
+# Global alias commands (fastest way)
+chuk-llm ask_granite "What is Python?"
+chuk-llm ask_claude "Explain quantum computing"
+chuk-llm ask_gpt "Write a haiku about programming"
+chuk-llm ask_llama "What is machine learning?"
+
+# General ask with provider selection
+chuk-llm ask "Your question" --provider openai --model gpt-4o-mini
+
+# JSON responses for structured data
+chuk-llm ask "List 3 Python libraries" --json --provider openai
 ```
 
-### With Session Tracking (Recommended)
+### Provider Management
+
 ```bash
-pip install chuk_llm chuk-ai-session-manager
+# List all available providers
+chuk-llm providers
+
+# Show models for a specific provider
+chuk-llm models ollama
+chuk-llm models anthropic
+
+# Test provider connection
+chuk-llm test openai
+chuk-llm test ollama
+
+# Discover new models (especially useful for Ollama)
+chuk-llm discover ollama
 ```
 
-### Optional Dependencies
+### Configuration and Diagnostics
+
 ```bash
-# For all providers with session tracking
-pip install chuk_llm[all] chuk-ai-session-manager
+# Show current configuration
+chuk-llm config
 
-# For specific providers
-pip install chuk_llm[openai]       # OpenAI support
-pip install chuk_llm[anthropic]    # Anthropic support  
-pip install chuk_llm[google]       # Google Gemini support
-pip install chuk_llm[groq]         # Groq support
-pip install chuk_llm[perplexity]   # Perplexity support
-pip install chuk_llm[ollama]       # Ollama support
+# List all auto-generated functions
+chuk-llm functions
+
+# Show global aliases
+chuk-llm aliases
+
+# Comprehensive help
+chuk-llm help
 ```
+
+### CLI Options
+
+```bash
+# Verbose mode (show provider details)
+chuk-llm ask_claude "Hello" --verbose
+
+# Quiet mode (minimal output)
+chuk-llm providers --quiet
+
+# Disable streaming
+chuk-llm ask "Question" --provider openai --no-stream
+```
+
+### Examples with uvx (Zero Install)
+
+```bash
+# Use without installing globally
+uvx chuk-llm ask_granite "What is Python?"
+uvx chuk-llm providers
+uvx chuk-llm discover ollama
+uvx chuk-llm test anthropic
+```
+
+### CLI Features
+
+- **🎯 Global Aliases**: Pre-configured shortcuts for popular models
+- **🌊 Real-time Streaming**: See responses as they're generated
+- **🔧 Provider Testing**: Verify connections and configurations
+- **🔍 Model Discovery**: Find and use new Ollama models instantly
+- **📊 Rich Formatting**: Beautiful tables and output (with `[cli]` extra)
+- **⚡ Fast Feedback**: Quick responses and error reporting
+- **🎨 Output Control**: Verbose, quiet, and no-stream modes
+- **🔄 Function Listing**: See all available auto-generated functions
 
 ## 🚀 Quick Start
 
@@ -643,10 +591,11 @@ response = ask_sync("Tell me a joke")
 print(response)
 
 # Provider-specific functions (including auto-discovered Ollama models)
-from chuk_llm import ask_openai_sync, ask_claude_sync, ask_ollama_llama3_2_sync
+from chuk_llm import ask_openai_sync, ask_claude_sync, ask_ollama_llama3_2_sync, ask_watsonx_sync
 openai_joke = ask_openai_sync("Tell me a dad joke")
 claude_explanation = ask_claude_sync("Explain quantum computing")
 local_response = ask_ollama_llama3_2_sync("Write Python code to read a CSV")
+enterprise_response = ask_watsonx_sync("Generate enterprise security documentation")
 ```
 
 ### Async Usage
@@ -673,70 +622,6 @@ async def main():
 asyncio.run(main())
 ```
 
-### Dynamic Ollama Discovery
-
-```python
-# Start with a fresh Ollama installation
-# ollama pull llama3.2
-# ollama pull qwen2.5:7b
-# ollama pull deepseek-coder
-
-# ChukLLM automatically discovers and generates functions!
-from chuk_llm.api.providers import trigger_ollama_discovery_and_refresh
-
-# Manually trigger discovery (happens automatically too)
-new_functions = trigger_ollama_discovery_and_refresh()
-print(f"🔍 Generated {len(new_functions)} new functions")
-
-# Use the auto-generated functions immediately
-from chuk_llm import (
-    ask_ollama_llama3_2_sync,        # Auto-generated!
-    ask_ollama_qwen2_5_7b_sync,      # Auto-generated!
-    ask_ollama_deepseek_coder_sync   # Auto-generated!
-)
-
-response = ask_ollama_llama3_2_sync("Explain machine learning")
-code = ask_ollama_deepseek_coder_sync("Write a Python sorting function")
-translation = ask_ollama_qwen2_5_7b_sync("Translate 'hello' to Chinese")
-
-# Show all discovered models
-from chuk_llm.api.discovery import show_discovered_models_sync
-show_discovered_models_sync("ollama")
-```
-
-### Smart System Prompts
-
-```python
-from chuk_llm import ask_sync
-
-# Tools example - system prompt automatically optimized for function calling
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "search_web",
-            "description": "Search the web for current information",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search query"}
-                }
-            }
-        }
-    }
-]
-
-# Each provider gets optimized system prompts automatically
-claude_response = ask_claude_sync("What's the latest AI news?", tools=tools)
-# Gets Claude-optimized system prompt with tool instructions
-
-openai_response = ask_openai_sync("What's the latest AI news?", tools=tools) 
-# Gets OpenAI-optimized system prompt with function calling guidelines
-
-groq_response = ask_groq_sync("What's the latest AI news?", tools=tools)
-# Gets Groq-optimized system prompt emphasizing fast inference
-```
-
 ### Real-time Web Search with Perplexity
 
 ```python
@@ -746,15 +631,8 @@ from chuk_llm import ask_perplexity_sync
 response = ask_perplexity_sync("What are the latest AI developments this week?")
 print(response)  # Includes real-time web search results with citations
 
-# Async version  
-import asyncio
-from chuk_llm import ask_perplexity
-
-async def search_example():
-    response = await ask_perplexity("What are the latest AI developments this week?")
-    print(response)
-    
-asyncio.run(search_example())
+# CLI version
+# chuk-llm ask_perplexity "What are the latest AI developments?"
 ```
 
 ### Streaming Responses
@@ -798,16 +676,6 @@ tools = [
 
 response = ask_sync("What's the weather in Paris?", tools=tools)
 print(response)  # ChukLLM handles tool calling automatically
-
-# Async version
-import asyncio
-from chuk_llm import ask
-
-async def function_calling_example():
-    response = await ask("What's the weather in Paris?", tools=tools)
-    print(response)
-
-asyncio.run(function_calling_example())
 ```
 
 ## 🔧 Configuration
@@ -829,6 +697,10 @@ export OLLAMA_API_BASE="http://localhost:11434"
 
 # Session tracking
 export CHUK_LLM_DISABLE_SESSIONS="false"  # Set to "true" to disable
+
+# Session storage
+export SESSION_PROVIDER="memory"  # or "redis"
+export SESSION_REDIS_URL="redis://localhost:6379/0"
 
 # Discovery settings
 export CHUK_LLM_DISCOVERY_CACHE_TIMEOUT="300"  # Cache timeout in seconds
@@ -855,168 +727,7 @@ config = get_current_config()
 print(f"Using {config['provider']} with {config['model']}")
 ```
 
-### YAML Configuration
-
-Create a `chuk_llm.yaml` file for advanced configuration:
-
-```yaml
-# chuk_llm.yaml
-__global__:
-  active_provider: anthropic
-  default_timeout: 30
-
-anthropic:
-  api_key_env: ANTHROPIC_API_KEY
-  default_model: claude-3-5-sonnet-20241022
-  models:
-    - claude-3-5-sonnet-20241022
-    - claude-3-5-haiku-20241022
-  features: [text, streaming, tools, vision, json_mode]
-
-ollama:
-  api_base: http://localhost:11434
-  default_model: llama3.2
-  features: [text, streaming, system_messages]
-  # Enable dynamic discovery
-  dynamic_discovery:
-    enabled: true
-    cache_timeout: 300
-    auto_update_on_startup: true
-    inference_config:
-      default_features: [text, streaming]
-      family_rules:
-        llama:
-          features: [text, streaming, tools, reasoning]
-          patterns: ["llama.*"]
-          context_rules:
-            "llama.*3\.[23]": 128000
-        qwen:
-          features: [text, streaming, tools, reasoning]
-          patterns: ["qwen.*"]
-          context_length: 32768
-```
-
 ## 🛠️ Advanced Usage
-
-### Enhanced Conversation Examples
-
-```python
-import asyncio
-from chuk_llm import conversation
-
-async def advanced_conversation_demo():
-    # 1. Branching conversations
-    async with conversation() as chat:
-        await chat.say("Let's discuss AI")
-        
-        # Explore a tangent
-        async with chat.branch() as tangent:
-            await tangent.say("What about AI ethics?")
-            ethics_response = await tangent.say("Tell me more")
-        
-        # Main thread continues unaware
-        await chat.say("What are the main applications?")
-    
-    # 2. Persistent conversations
-    conversation_id = None
-    async with conversation() as chat:
-        await chat.say("I'm building a web app")
-        await chat.say("Using Python and React")
-        conversation_id = await chat.save()
-    
-    # Resume later
-    async with conversation(resume_from=conversation_id) as chat:
-        response = await chat.say("What database should I use?")
-        # AI remembers your tech stack!
-    
-    # 3. Multi-modal with utilities
-    async with conversation(model="gpt-4o") as chat:
-        await chat.say("Analyze this UI", image="screenshot.png")
-        await chat.say("How can I improve the layout?")
-        
-        # Get insights
-        summary = await chat.summarize()
-        key_points = await chat.extract_key_points()
-        
-        print(f"Summary: {summary}")
-        for point in key_points:
-            print(f"• {point}")
-
-asyncio.run(advanced_conversation_demo())
-```
-
-### Dynamic Discovery Examples
-
-```python
-import asyncio
-from chuk_llm.api.discovery import discover_models, update_provider_configuration
-
-async def discovery_examples():
-    # 1. Discover all available Ollama models
-    models = await discover_models("ollama")
-    print(f"Found {len(models)} Ollama models:")
-    for model in models[:5]:  # Show first 5
-        print(f"  📦 {model['name']}: {', '.join(model['features'])}")
-    
-    # 2. Update provider configuration with discovered models
-    result = await update_provider_configuration("ollama")
-    if result['success']:
-        print(f"✅ Updated configuration with {result['text_models']} models")
-    
-    # 3. Custom discovery configuration
-    custom_result = await update_provider_configuration(
-        "ollama",
-        inference_config={
-            "family_rules": {
-                "reasoning": {
-                    "features": ["text", "streaming", "reasoning"],
-                    "patterns": [".*reasoning.*", ".*qwq.*", ".*o1.*"]
-                }
-            }
-        }
-    )
-
-asyncio.run(discovery_examples())
-
-# Sync versions available too
-from chuk_llm.api.discovery import discover_models_sync, show_discovered_models_sync
-
-models = discover_models_sync("ollama")
-show_discovered_models_sync("ollama")
-```
-
-### System Prompt Customization
-
-```python
-from chuk_llm.llm.system_prompt_generator import SystemPromptGenerator
-
-# Create a custom generator
-generator = SystemPromptGenerator(provider="openai", model="gpt-4o")
-
-# Generate different types of prompts
-tools = [{"type": "function", "function": {"name": "calculate", "description": "Do math"}}]
-
-# Default prompt
-basic_prompt = generator.generate_prompt()
-
-# With tools
-tools_prompt = generator.generate_prompt(tools=tools)
-
-# With custom system message
-custom_prompt = generator.generate_prompt(
-    tools=tools,
-    user_system_prompt="You are a math tutor specializing in calculus.",
-    json_mode=True
-)
-
-# Minimal template
-minimal_prompt = generator.generate_prompt(
-    template_name="minimal",
-    user_system_prompt="Be concise."
-)
-
-print("Generated prompts:", custom_prompt)
-```
 
 ### Session Analytics & Monitoring
 
@@ -1037,7 +748,6 @@ async def analytics_example():
     print(f"   Total messages: {stats['total_messages']}")
     print(f"   Total tokens: {stats['total_tokens']}")
     print(f"   Estimated cost: ${stats['estimated_cost']:.6f}")
-    print(f"   Average tokens/message: {stats['average_tokens_per_message']}")
     
     # Get conversation history
     history = await get_session_history()
@@ -1050,130 +760,6 @@ async def analytics_example():
 asyncio.run(analytics_example())
 ```
 
-### Low-Level API
-
-For maximum control, use the low-level client API:
-
-```python
-import asyncio
-from chuk_llm.llm.client import get_client
-
-async def low_level_examples():
-    # Get a client for any provider
-    client = get_client("openai", model="gpt-4o-mini")
-    
-    # Basic completion with full control
-    response = await client.create_completion([
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "Hello! How are you?"}
-    ])
-    print(response["response"])
-    
-    # Streaming with low-level control
-    messages = [
-        {"role": "user", "content": "Write a short story about AI"}
-    ]
-    
-    async for chunk in client.create_completion(messages, stream=True):
-        if chunk.get("response"):
-            print(chunk["response"], end="", flush=True)
-    
-    # Function calling with full control
-    tools = [
-        {
-            "type": "function", 
-            "function": {
-                "name": "get_weather",
-                "description": "Get weather information",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "location": {"type": "string", "description": "City name"}
-                    },
-                    "required": ["location"]
-                }
-            }
-        }
-    ]
-    
-    response = await client.create_completion(
-        messages=[{"role": "user", "content": "What's the weather in Paris?"}],
-        tools=tools,
-        temperature=0.7,
-        max_tokens=150
-    )
-    
-    if response.get("tool_calls"):
-        for tool_call in response["tool_calls"]:
-            print(f"Function: {tool_call['function']['name']}")
-            print(f"Arguments: {tool_call['function']['arguments']}")
-
-asyncio.run(low_level_examples())
-```
-
-### Perplexity Web Search (Low-Level)
-
-```python
-import asyncio
-from chuk_llm.llm.client import get_client
-
-async def perplexity_low_level():
-    # Use Perplexity for real-time web information
-    client = get_client("perplexity", model="sonar-pro")
-    
-    messages = [
-        {"role": "user", "content": "What are the latest developments in AI today?"}
-    ]
-    
-    response = await client.create_completion(messages)
-    print(response["response"])  # Includes real-time web search results with citations
-
-asyncio.run(perplexity_low_level())
-```
-
-### Middleware Stack
-
-```python
-# ChukLLM automatically includes production-ready middleware
-from chuk_llm import ask_sync, get_metrics, health_check_sync
-
-# Use normally - middleware runs automatically
-response = ask_sync("Hello!")
-
-# Access built-in metrics
-metrics = get_metrics()
-print(f"Total requests: {metrics.get('total_requests', 0)}")
-
-# Health monitoring
-health = health_check_sync()
-print(f"Status: {health.get('status', 'unknown')}")
-
-# For advanced middleware control, use the low-level API:
-from chuk_llm.llm.core.enhanced_base import get_enhanced_client
-
-async def advanced_middleware():
-    client = get_enhanced_client(
-        provider="openai",
-        model="gpt-4o-mini",
-        enable_logging=True,
-        enable_metrics=True,
-        enable_caching=True
-    )
-    
-    # Use with full middleware stack
-    response = await client.create_completion([
-        {"role": "user", "content": "Hello!"}
-    ])
-    
-    # Access detailed metrics
-    if hasattr(client, 'middleware_stack'):
-        for middleware in client.middleware_stack.middlewares:
-            if hasattr(middleware, 'get_metrics'):
-                print(middleware.get_metrics())
-
-asyncio.run(advanced_middleware())
-```
-
 ### Multi-Provider Comparison
 
 ```python
@@ -1182,29 +768,11 @@ from chuk_llm import compare_providers
 # Compare responses across providers (including local Ollama models)
 results = compare_providers(
     "Explain quantum computing",
-    providers=["openai", "anthropic", "perplexity", "groq", "ollama"]
+    providers=["openai", "anthropic", "perplexity", "groq", "ollama", "watsonx"]
 )
 
 for provider, response in results.items():
     print(f"{provider}: {response[:100]}...")
-```
-
-### Real-time Information with Perplexity
-
-```python
-import asyncio
-from chuk_llm import ask_perplexity
-
-async def current_events_example():
-    # Perplexity excels at current information
-    response = await ask_perplexity(
-        "What are the latest tech industry layoffs this week?",
-        model="sonar-reasoning-pro"
-    )
-    print("Real-time information with citations:")
-    print(response)
-
-asyncio.run(current_events_example())
 ```
 
 ### Performance Monitoring
@@ -1245,7 +813,7 @@ async def benchmark_providers():
     # Quality comparison
     comparison = compare_providers(
         "Explain machine learning in simple terms",
-        ["openai", "anthropic", "groq", "ollama"]
+        ["openai", "anthropic", "groq", "ollama", "watsonx"]
     )
     
     print("\nQuality Comparison:")
@@ -1266,8 +834,8 @@ chuk_llm.show_providers()
 # See all auto-generated functions (updates with discovery)
 chuk_llm.show_functions()
 
-# Get comprehensive diagnostics
-chuk_llm.print_diagnostics()
+# Get comprehensive diagnostics (including session info)
+chuk_llm.print_full_diagnostics()
 
 # Test specific provider capabilities
 from chuk_llm import test_connection_sync
@@ -1299,6 +867,42 @@ print(f"🔍 Generated {len(new_functions)} new Ollama functions")
 - **Llama 3.1** - llama-3.1-70b-versatile, llama-3.1-8b-instant
 - **Mixtral** - mixtral-8x7b-32768
 
+### IBM watsonx & Granite 🏢
+IBM's enterprise-grade AI models optimized for business applications with 131K context length:
+
+#### Granite Models
+- **ibm/granite-3-3-8b-instruct** - Latest Granite 3.3 8B instruction model (default)
+- **ibm/granite-3-2b-instruct** - Efficient 2B parameter model for lightweight deployment
+- **ibm/granite-vision-3-2-2b-instruct** - Vision-capable Granite for multimodal tasks
+
+#### Meta Llama Models (via IBM)
+- **meta-llama/llama-4-maverick-17b-128e-instruct-fp8** - Latest Llama 4 Maverick (17B params)
+- **meta-llama/llama-4-scout-17b-16e-instruct** - Llama 4 Scout specialized model
+- **meta-llama/llama-3-3-70b-instruct** - Llama 3.3 70B for complex reasoning
+- **meta-llama/llama-3-405b-instruct** - Massive 405B parameter model
+- **meta-llama/llama-3-2-90b-vision-instruct** - 90B vision-capable model
+- **meta-llama/llama-3-2-11b-vision-instruct** - 11B vision model
+- **meta-llama/llama-3-2-3b-instruct** - Efficient 3B model
+- **meta-llama/llama-3-2-1b-instruct** - Ultra-lightweight 1B model
+
+#### Mistral Models (via IBM)
+- **mistralai/mistral-large-2** - Latest Mistral Large with advanced capabilities
+- **mistralai/mistral-medium-2505** - Balanced performance and efficiency
+- **mistralai/mistral-small-3-1-24b-instruct-2503** - Compact 24B instruction model
+- **mistralai/pixtral-12b** - Vision-capable Mistral model
+
+#### Model Aliases
+ChukLLM provides convenient aliases for IBM watsonx models:
+```python
+# These are equivalent:
+ask_watsonx_granite()  # → ibm/granite-3-3-8b-instruct
+ask_watsonx_vision()   # → ibm/granite-vision-3-2-2b-instruct  
+ask_watsonx_llama4()   # → meta-llama/llama-4-maverick-17b-128e-instruct-fp8
+ask_watsonx_mistral()  # → mistralai/mistral-large-2
+```
+
+*Enterprise features: SOC2 compliance, data residency controls, fine-tuning capabilities, 131K context length*
+
 ### Perplexity 🔍
 Perplexity offers specialized models optimized for real-time web search and reasoning with citations.
 
@@ -1312,13 +916,6 @@ Perplexity offers specialized models optimized for real-time web search and reas
 - **sonar-reasoning-pro** - Expert reasoning with Chain of Thought (CoT) and search capabilities
 - **sonar-reasoning** - Fast real-time reasoning model for quick problem-solving
 
-#### Research Models
-- **sonar-research** - Deep research model conducting exhaustive searches and comprehensive reports
-
-#### Chat Models (No Search)
-- **llama-3.1-sonar-small-128k-chat** - 8B parameter chat model without web search
-- **llama-3.1-sonar-large-128k-chat** - 70B parameter chat model without web search
-
 ### Ollama 🔍
 - **Dynamic Discovery** - Any compatible GGUF model automatically detected
 - **Popular Models** - Llama 3.2, Qwen 2.5, DeepSeek-Coder, Mistral, Phi, Code Llama, etc.
@@ -1331,108 +928,6 @@ Example discovered Ollama models:
 📦 deepseek-coder:6.7b - Features: text, streaming, tools
 📦 mistral:7b-instruct - Features: text, streaming, tools
 📦 phi3:mini - Features: text, streaming, reasoning
-```
-
-## 🏗️ Architecture
-
-### Core Components
-
-- **`BaseLLMClient`** - Abstract interface for all providers
-- **`MiddlewareStack`** - Request/response processing pipeline
-- **`UnifiedConfigManager`** - Configuration management with discovery support
-- **`ConnectionPool`** - HTTP connection optimization
-- **`SystemPromptGenerator`** - Dynamic, provider-optimized prompt generation
-- **`SessionManager`** - Automatic conversation tracking (via chuk-ai-session-manager)
-- **`ConversationContext`** - Advanced conversation state management
-- **`UniversalModelDiscoveryManager`** - Dynamic model detection and capability inference
-
-### Provider Implementations
-
-Each provider implements the `BaseLLMClient` interface with:
-- Standardized message format (ChatML)
-- Real-time streaming support
-- Function calling normalization
-- Error handling and retries
-- Automatic session tracking
-- Provider-optimized system prompts
-
-### Discovery System
-
-```python
-# Discovery architecture example
-from chuk_llm.llm.discovery.engine import UniversalModelDiscoveryManager
-from chuk_llm.llm.discovery.providers import DiscovererFactory
-
-# Create a discoverer for any provider
-discoverer = DiscovererFactory.create_discoverer("ollama", api_base="http://localhost:11434")
-
-# Universal manager handles capability inference
-manager = UniversalModelDiscoveryManager("ollama", discoverer)
-
-# Discover and infer capabilities
-models = await manager.discover_models()
-for model in models:
-    print(f"{model.name}: {[f.value for f in model.capabilities]}")
-```
-
-### System Prompt Generation
-
-```python
-# System prompt generation example
-from chuk_llm.llm.system_prompt_generator import SystemPromptGenerator
-
-# Provider-aware generation
-generator = SystemPromptGenerator(provider="anthropic", model="claude-3-5-sonnet")
-
-# Automatic optimization based on provider and context
-prompt = generator.generate_prompt(
-    tools=tools,
-    json_mode=True,
-    user_system_prompt="You are a helpful coding assistant."
-)
-# Returns Claude-optimized prompt with tool instructions and JSON mode guidance
-```
-
-### Middleware System
-
-```python
-# Custom middleware example
-from chuk_llm.llm.middleware import Middleware
-
-class CustomMiddleware(Middleware):
-    async def process_request(self, messages, tools=None, **kwargs):
-        # Pre-process request
-        return messages, tools, kwargs
-    
-    async def process_response(self, response, duration, is_streaming=False):
-        # Post-process response
-        return response
-```
-
-## 🧪 Testing & Diagnostics
-
-```python
-import asyncio
-from chuk_llm import test_connection, health_check, print_diagnostics
-
-async def run_diagnostics():
-    # Test connection to specific provider
-    result = await test_connection("anthropic")
-    print(f"Connection test: {result['success']}")
-    
-    # System health check
-    health = await health_check()
-    print(f"System status: {health['status']}")
-    
-    # Comprehensive diagnostics
-    print_diagnostics()
-    
-    # Test Ollama discovery
-    from chuk_llm.api.discovery import discover_models
-    models = await discover_models("ollama")
-    print(f"Discovered {len(models)} Ollama models")
-
-asyncio.run(run_diagnostics())
 ```
 
 ## 📈 Performance
@@ -1455,14 +950,11 @@ Provider Comparison (avg response time):
 └── Discovery: <0.1s (cached model detection)
 ```
 
-### Real-time Web Search Performance
-Perplexity's Sonar models deliver blazing fast search results at 1200 tokens per second, nearly 10x faster than comparable models like Gemini 2.0 Flash.
-
-### Dynamic Discovery Performance
-- **Ollama Model Detection**: ~100ms (cached), ~500ms (fresh API call)
-- **Function Generation**: ~50ms per model
-- **Capability Inference**: ~10ms per model
-- **Cache Refresh**: 5 minutes default, configurable
+### CLI Performance
+- **Real-time streaming**: See responses as they're generated
+- **Instant discovery**: Find new Ollama models in ~100ms (cached)
+- **Fast provider testing**: Connection tests in ~1-2 seconds
+- **Rich formatting**: Enhanced output with zero performance impact
 
 ## 🔒 Security & Safety
 
@@ -1474,6 +966,30 @@ Perplexity's Sonar models deliver blazing fast search results at 1200 tokens per
 - **Session data privacy** - All tracking data stays local
 - **Discovery security** - Safe model detection without code execution
 
+## 🛡️ Error Handling
+
+```python
+from chuk_llm import (
+    SessionManagerError,
+    SessionNotFound,
+    TokenLimitExceeded
+)
+
+try:
+    session_id = await track_conversation("Hello", "Hi there")
+except SessionNotFound as e:
+    print(f"Session not found: {e}")
+except TokenLimitExceeded as e:
+    print(f"Token limit exceeded: {e}")
+except SessionManagerError as e:
+    print(f"General session error: {e}")
+```
+
+## 🔄 Dependencies
+
+- **Required**: `chuk-ai-session-manager` (session tracking), `pydantic` (data models), plus LLM provider SDKs
+- **Optional**: `redis` (Redis storage), `rich` (enhanced CLI)
+
 ## 🤝 Contributing
 
 1. Fork the repository
@@ -1484,11 +1000,9 @@ Perplexity's Sonar models deliver blazing fast search results at 1200 tokens per
 
 ### Adding New Providers
 
-```python
-# ChukLLM automatically detects new providers from configuration
-# Just add to your chuk_llm.yaml:
+ChukLLM automatically detects new providers from configuration. Just add to your `chuk_llm.yaml`:
 
-# chuk_llm.yaml
+```yaml
 newprovider:
   api_key_env: NEWPROVIDER_API_KEY
   api_base: https://api.newprovider.com
@@ -1497,41 +1011,20 @@ newprovider:
   dynamic_discovery:
     enabled: true
     discoverer_type: openai  # Use OpenAI-compatible discovery
-
-# ChukLLM will automatically generate:
-# - ask_newprovider()
-# - ask_newprovider_sync() 
-# - stream_newprovider()
-# - ask_newprovider_new_model_name()
 ```
 
-### Adding New Discoverers
-
-```python
-# Add a new discovery provider
-from chuk_llm.llm.discovery.providers import DiscovererFactory
-from chuk_llm.llm.discovery.engine import BaseModelDiscoverer
-
-class CustomDiscoverer(BaseModelDiscoverer):
-    async def discover_models(self):
-        # Your discovery logic here
-        return models
-
-# Register it
-DiscovererFactory.register_discoverer("custom", CustomDiscoverer)
-```
+ChukLLM will automatically generate all the functions and CLI commands!
 
 ## 📚 Documentation
 
 - [API Reference](docs/api.md)
+- [CLI Guide](docs/cli.md)
 - [Provider Guide](docs/providers.md)
 - [Discovery System](docs/discovery.md)
 - [System Prompts](docs/system-prompts.md)
-- [Middleware Development](docs/middleware.md)
 - [Configuration Guide](docs/configuration.md)
-- [Benchmarking Guide](docs/benchmarking.md)
 - [Session Tracking Guide](docs/sessions.md)
-- [Enhanced Conversations Guide](docs/conversations.md)
+- [Performance Guide](docs/performance.md)
 
 ## 📄 License
 
@@ -1540,8 +1033,10 @@ MIT License - see [LICENSE](LICENSE) file for details.
 ## 🙏 Acknowledgments
 
 - OpenAI for the ChatML format and function calling standards
+- Anthropic for Claude's excellent developer experience
 - CHUK AI for session management and analytics
+- The open source community for inspiration and feedback
 
 ---
 
-**chuk_llm** - Unified LLM interface for production applications with intelligent system prompts, dynamic discovery, and automatic session tracking
+**chuk_llm** - Unified LLM interface for production applications with intelligent system prompts, dynamic discovery, automatic session tracking, and a powerful CLI.

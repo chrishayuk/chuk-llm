@@ -132,21 +132,27 @@ wheels = [
 
 [[package]]
 name = "chuk-ai-session-manager"
-version = "0.5"
+version = "0.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "chuk-sessions" },
     { name = "chuk-tool-processor" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c3/83/e9a5cd2d48d75493e23819d4c7d25abb71760451246c7d183b42f3a23bef/chuk_ai_session_manager-0.5.tar.gz", hash = "sha256:a1e1f5ef16f94c585c2377bc5c867b512a4b833fd7338f82144b6d18dd31eb4e", size = 83475 }
+sdist = { url = "https://files.pythonhosted.org/packages/66/24/01b8bd5e772fb578ec16ba3ae3b5553d656f6c1801030520d8a4bb54aa54/chuk_ai_session_manager-0.7.tar.gz", hash = "sha256:7d587177a4898e59a224e6c462f0a76e5262c68aa7bac9fcf667492d55e94b1e", size = 75486 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/52/7e/fdefd6fe4046fe2f2264f1e00f7995b8238fa4553c70187f4bc7af88d45e/chuk_ai_session_manager-0.5-py3-none-any.whl", hash = "sha256:bcbdc618102dd65f0207c993744c783ab42b0a20db0a433dad1b869ad66b4e9d", size = 47241 },
+    { url = "https://files.pythonhosted.org/packages/b6/fd/e7ef3fa16a116302083d0bf30fc3bd439ab540edbdb0008aa9ae7d9d73f4/chuk_ai_session_manager-0.7-py3-none-any.whl", hash = "sha256:8c49bb7f4194b34d50eca3604e9aa28166bcca1e6b89548456dccbd2d0b1dee2", size = 43301 },
+]
+
+[package.optional-dependencies]
+redis = [
+    { name = "chuk-sessions", extra = ["redis"] },
+    { name = "redis" },
 ]
 
 [[package]]
 name = "chuk-llm"
-version = "0.6"
+version = "0.7"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
@@ -167,8 +173,21 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+all = [
+    { name = "chuk-ai-session-manager", extra = ["redis"] },
+    { name = "rich" },
+]
 cli = [
     { name = "rich" },
+]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "rich" },
+]
+redis = [
+    { name = "chuk-ai-session-manager", extra = ["redis"] },
 ]
 
 [package.dev-dependencies]
@@ -183,7 +202,9 @@ dev = [
 requires-dist = [
     { name = "anthropic", specifier = ">=0.51.0" },
     { name = "asyncio", specifier = ">=3.4.3" },
-    { name = "chuk-ai-session-manager", specifier = ">=0.5" },
+    { name = "chuk-ai-session-manager", specifier = ">=0.7" },
+    { name = "chuk-ai-session-manager", extras = ["redis"], marker = "extra == 'all'", specifier = ">=0.7" },
+    { name = "chuk-ai-session-manager", extras = ["redis"], marker = "extra == 'redis'", specifier = ">=0.7" },
     { name = "google-genai", specifier = ">=1.15.0" },
     { name = "groq", specifier = ">=0.25.0" },
     { name = "httpx", specifier = ">=0.28.1" },
@@ -192,10 +213,15 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.2.6" },
     { name = "ollama", specifier = ">=0.4.8" },
     { name = "openai", specifier = ">=1.79.0" },
-    { name = "pillow", specifier = ">=11.2.1" },
+    { name = "pillow", specifier = ">=11.2.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.5" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.26.0" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.1.1" },
     { name = "python-dotenv", specifier = ">=1.1.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
+    { name = "rich", marker = "extra == 'all'", specifier = ">=14.0.0" },
     { name = "rich", marker = "extra == 'cli'", specifier = ">=14.0.0" },
+    { name = "rich", marker = "extra == 'dev'", specifier = ">=14.0.0" },
     { name = "tiktoken", specifier = ">=0.9.0" },
 ]
 
@@ -223,15 +249,19 @@ wheels = [
 
 [[package]]
 name = "chuk-sessions"
-version = "0.3"
+version = "0.4.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "pyyaml" },
-    { name = "redis" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/dd/f2/aba8f1a52821cdcb8bf08ae2d3170ade01886f9836e7e0a48350426dbec9/chuk_sessions-0.3-py3-none-any.whl", hash = "sha256:220cdf1347cce5900da6a2132ba681e8e4ab16125d6934f53416beb42d10c601", size = 12187 },
+    { url = "https://files.pythonhosted.org/packages/b1/a2/f32790a996b7b25b527c2d237232ee3805b25d27da4af7e882b992606ccd/chuk_sessions-0.4.1-py3-none-any.whl", hash = "sha256:422a263d558177e1622aa9ac29e20403f76f57fce7e196da997ba738e7ff4857", size = 12768 },
+]
+
+[package.optional-dependencies]
+redis = [
+    { name = "redis" },
 ]
 
 [[package]]

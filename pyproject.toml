@@ -4,17 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chuk-llm"
-version = "0.6"
-description = "Add your description here"
+version = "0.7"
+description = "A unified, production-ready Python library for Large Language Model (LLM) providers with real-time streaming, function calling, middleware support, automatic session tracking, dynamic model discovery, and intelligent system prompt generation."
 readme = "README.md"
 authors = [
   { name = "Chris Hay", email = "chrishayuk@somejunkmailbox.com" }
 ]
 requires-python = ">=3.11"
+
+# Core dependencies - includes session tracking by default
 dependencies = [
     "anthropic>=0.51.0",
     "asyncio>=3.4.3",
-    "chuk-ai-session-manager>=0.5",
+    "chuk-ai-session-manager>=0.7",
     "google-genai>=1.15.0",
     "groq>=0.25.0",
     "httpx>=0.28.1",
@@ -23,10 +25,36 @@ dependencies = [
     "numpy>=2.2.6",
     "ollama>=0.4.8",
     "openai>=1.79.0",
-    "pillow>=11.2.1",
+    "pillow>=11.2.0",
     "python-dotenv>=1.1.0",
     "pyyaml>=6.0.2",
     "tiktoken>=0.9.0",
+]
+
+# Optional dependencies
+[project.optional-dependencies]
+# Redis support for persistent session storage
+redis = [
+    "chuk-ai-session-manager[redis]>=0.7",
+]
+
+# Enhanced CLI experience
+cli = [
+    "rich>=14.0.0",
+]
+
+# Development dependencies
+dev = [
+    "pytest-asyncio>=0.26.0",
+    "pytest>=8.3.5",
+    "pytest-cov>=6.1.1",
+    "rich>=14.0.0",
+]
+
+# All optional features
+all = [
+    "chuk-ai-session-manager[redis]>=0.7",
+    "rich>=14.0.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -36,10 +64,6 @@ include = ["chuk_llm*"]
 # CRITICAL: Include package data files (YAML configurations)
 [tool.setuptools.package-data]
 chuk_llm = ["*.yaml", "*.yml"]
-
-# Alternative approach - include all data files
-# [tool.setuptools]
-# include-package-data = true
 
 [tool.pytest.ini_options]
 # Changed from strict to auto mode to avoid fixture warnings
@@ -69,11 +93,5 @@ dev = [
     "pytest-asyncio>=0.26.0",
     "pytest>=8.3.5",
     "pytest-cov>=6.1.1",
-    "rich>=14.0.0",
-]
-
-# Optional dependencies for enhanced CLI experience
-[project.optional-dependencies]
-cli = [
     "rich>=14.0.0",
 ]

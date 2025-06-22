@@ -4,10 +4,22 @@ ChukLLM - A clean, intuitive Python library for LLM interactions
 ================================================================
 
 Main package initialization with automatic session tracking support.
+
+Installation Options:
+    pip install chuk_llm                    # Core with session tracking (memory)
+    pip install chuk_llm[redis]             # Production (Redis sessions)  
+    pip install chuk_llm[cli]               # Enhanced CLI
+    pip install chuk_llm[all]               # All features
+
+Session Storage:
+    Session tracking included by default with chuk-ai-session-manager
+    Memory (default): Fast, no persistence, no extra dependencies
+    Redis: Persistent, requires [redis] extra
+    Configure with SESSION_PROVIDER environment variable
 """
 
 # Version
-__version__ = "0.2.0"
+__version__ = "0.7"
 
 # Core API imports
 from .api import (
@@ -98,8 +110,38 @@ from .api.show_info import (
     show_config,
 )
 
+# Session utilities
+try:
+    from .api.session_utils import (
+        check_session_backend_availability,
+        validate_session_configuration,
+        get_session_recommendations,
+        auto_configure_sessions,
+        print_session_diagnostics,
+    )
+    SESSION_UTILS_AVAILABLE = True
+except ImportError:
+    SESSION_UTILS_AVAILABLE = False
+    # Create stub functions
+    def check_session_backend_availability():
+        return {"error": "Session utilities not available"}
+    def validate_session_configuration():
+        return False
+    def get_session_recommendations():
+        return ["Session utilities not available"]
+    def auto_configure_sessions():
+        return False
+    def print_session_diagnostics():
+        print("Session diagnostics not available")
+
 # Get all API exports including provider functions
 from .api import __all__ as api_exports
+
+# Enhanced diagnostics function
+def print_full_diagnostics():
+    """Print comprehensive ChukLLM diagnostics including session info."""
+    print_diagnostics()  # Existing function
+    print_session_diagnostics()  # Session-specific diagnostics
 
 # Define what's exported
 __all__ = [
@@ -130,8 +172,16 @@ __all__ = [
     "test_all_providers",
     "test_all_providers_sync",
     "print_diagnostics",
+    "print_full_diagnostics",
     "cleanup",
     "cleanup_sync",
+    
+    # Session utilities
+    "check_session_backend_availability",
+    "validate_session_configuration", 
+    "get_session_recommendations",
+    "auto_configure_sessions",
+    "print_session_diagnostics",
     
     # Show functions
     "show_providers",
@@ -140,3 +190,10 @@ __all__ = [
     "show_capabilities",
     "show_config",
 ]
+
+# Auto-configure sessions on import (optional)
+try:
+    if SESSION_UTILS_AVAILABLE:
+        auto_configure_sessions()
+except Exception:
+    pass  # Silent fail for auto-configuration
