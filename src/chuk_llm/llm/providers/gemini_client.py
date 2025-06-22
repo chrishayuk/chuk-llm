@@ -667,11 +667,11 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
             extra["max_tokens"] = max_tokens
         filtered_params = self._filter_gemini_params(extra)
 
-        # ––– streaming: use async streaming -------------------------
+        # --- streaming: use async streaming -------------------------
         if stream:
             return self._stream_completion_async(system, json_instruction, messages, gemini_tools, filtered_params)
 
-        # ––– non-streaming: use async client ------------------------------
+        # --- non-streaming: use async client ------------------------------
         return self._regular_completion_async(system, json_instruction, messages, gemini_tools, filtered_params)
 
     async def _stream_completion_async(

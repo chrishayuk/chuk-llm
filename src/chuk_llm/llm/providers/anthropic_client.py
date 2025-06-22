@@ -38,12 +38,12 @@ if os.getenv("LOGLEVEL"):
 # ────────────────────────── helpers ──────────────────────────
 
 
-def _safe_get(obj: Any, key: str, default: Any = None) -> Any:  # noqa: D401 – util
+def _safe_get(obj: Any, key: str, default: Any = None) -> Any:  # noqa: D401 - util
     """Get *key* from dict **or** attribute-style object; fallback to *default*."""
     return obj.get(key, default) if isinstance(obj, dict) else getattr(obj, key, default)
 
 
-def _parse_claude_response(resp) -> Dict[str, Any]:  # noqa: D401 – small helper
+def _parse_claude_response(resp) -> Dict[str, Any]:  # noqa: D401 - small helper
     """Convert Claude response → standard `{response, tool_calls}` dict."""
     tool_calls: List[Dict[str, Any]] = []
 
@@ -202,8 +202,8 @@ class AnthropicLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClie
                         "input_schema": fn.get("parameters") or fn.get("input_schema") or {},
                     }
                 )
-            except Exception as exc:  # pragma: no cover – permissive fallback
-                log.debug("Tool schema error (%s) – using permissive schema", exc)
+            except Exception as exc:  # pragma: no cover - permissive fallback
+                log.debug("Tool schema error (%s) - using permissive schema", exc)
                 converted.append(
                     {
                         "name": fn.get("name", f"tool_{uuid.uuid4().hex[:6]}"),
@@ -440,11 +440,11 @@ class AnthropicLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClie
             extra["max_tokens"] = max_tokens
         filtered_params = self._filter_anthropic_params(extra)
 
-        # ––– streaming: use real async streaming -------------------------
+        # --- streaming: use real async streaming -------------------------
         if stream:
             return self._stream_completion_async(system, json_instruction, messages, anth_tools, filtered_params)
 
-        # ––– non-streaming: use async client ------------------------------
+        # --- non-streaming: use async client ------------------------------
         return self._regular_completion_async(system, json_instruction, messages, anth_tools, filtered_params)
 
     async def _stream_completion_async(

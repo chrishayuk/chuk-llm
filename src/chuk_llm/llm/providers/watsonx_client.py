@@ -35,12 +35,12 @@ if os.getenv("LOGLEVEL"):
 # ────────────────────────── helpers ──────────────────────────
 
 
-def _safe_get(obj: Any, key: str, default: Any = None) -> Any:  # noqa: D401 – util
+def _safe_get(obj: Any, key: str, default: Any = None) -> Any:  # noqa: D401 - util
     """Get *key* from dict **or** attribute-style object; fallback to *default*."""
     return obj.get(key, default) if isinstance(obj, dict) else getattr(obj, key, default)
 
 
-def _parse_watsonx_response(resp) -> Dict[str, Any]:  # noqa: D401 – small helper
+def _parse_watsonx_response(resp) -> Dict[str, Any]:  # noqa: D401 - small helper
     """Convert Watson X response → standard `{response, tool_calls}` dict."""
     tool_calls: List[Dict[str, Any]] = []
     
@@ -277,8 +277,8 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
                         "parameters": fn.get("parameters") or fn.get("input_schema") or {},
                     }
                 })
-            except Exception as exc:  # pragma: no cover – permissive fallback
-                log.debug("Tool schema error (%s) – using permissive schema", exc)
+            except Exception as exc:  # pragma: no cover - permissive fallback
+                log.debug("Tool schema error (%s) - using permissive schema", exc)
                 converted.append({
                     "type": "function",
                     "function": {
@@ -441,11 +441,11 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
 
         log.debug(f"Watson X payload: model={self.model}, messages={len(formatted_messages)}, tools={len(watsonx_tools)}")
 
-        # ––– streaming: use Watson X streaming -------------------------
+        # --- streaming: use Watson X streaming -------------------------
         if validated_stream:
             return self._stream_completion_async(formatted_messages, watsonx_tools, validated_kwargs)
 
-        # ––– non-streaming: use regular completion ----------------------
+        # --- non-streaming: use regular completion ----------------------
         return self._regular_completion(formatted_messages, watsonx_tools, validated_kwargs)
 
     async def _stream_completion_async(

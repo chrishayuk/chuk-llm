@@ -29,7 +29,7 @@ sys.modules["google.genai.types"] = types_mod
 setattr(genai_mod, "types", types_mod)
 
 # Provide *minimal* class stubs used by the adapter's helper code. We keep
-# them extremely simple – they only need to accept the constructor args.
+# them extremely simple - they only need to accept the constructor args.
 
 class _Simple:
     def __init__(self, **kwargs):

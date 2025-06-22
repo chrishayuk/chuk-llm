@@ -217,7 +217,7 @@ class CapabilityTester:
     async def test_text_completion(self, provider: str, model: str, result_obj, tick_fn: Callable):
         """Test basic text completion with connection retry"""
         async def do_text_test(client):
-            messages = [{"role": "user", "content": "Why is testing LLM providers important? (3–4 sentences)"}]
+            messages = [{"role": "user", "content": "Why is testing LLM providers important? (3-4 sentences)"}]
             return await self.timed_execution(
                 result_obj, "text", 
                 client.create_completion(messages)

@@ -148,7 +148,7 @@ class DiagnosticDisplay:
     @staticmethod
     def _print_results_table(results: List[ProviderResult]):
         """Print the main results table"""
-        results_table = Table(title="🏆 LLM Provider Diagnostics – Final Results")
+        results_table = Table(title="🏆 LLM Provider Diagnostics - Final Results")
         results_table.add_column("Provider", style="cyan", min_width=12)
         results_table.add_column("Model(s)", style="blue", min_width=20)
         

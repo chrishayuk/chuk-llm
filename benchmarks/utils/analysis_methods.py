@@ -28,7 +28,7 @@ def show_test_by_test_leaderboards(self):
     """Print a detailed per-test leaderboard for every benchmarked test with TPS emphasis."""
     print("\n📊 TEST-BY-TEST LEADERBOARDS")
     print("=" * 110)
-    print("🎯 Each test reveals different model strengths – TPS and speed combined!")
+    print("🎯 Each test reveals different model strengths - TPS and speed combined!")
     print("📋 Metrics are from the SAME best-performing run per model per test\n")
 
     tests = {
@@ -40,13 +40,13 @@ def show_test_by_test_leaderboards(self):
     tests = sorted(tests)
 
     descriptions = {
-        "speed": "Quick response – raw latency",
-        "math": "Mathematical reasoning – accuracy + speed",
-        "creative": "Creative generation – quality + throughput",
-        "reasoning": "Logical thinking – complex problem solving",
-        "code": "Code generation – technical accuracy",
-        "instant": "Ultra-fast response – minimal latency",
-        "quick_math": "Basic calculations – speed + accuracy",
+        "speed": "Quick response - raw latency",
+        "math": "Mathematical reasoning - accuracy + speed",
+        "creative": "Creative generation - quality + throughput",
+        "reasoning": "Logical thinking - complex problem solving",
+        "code": "Code generation - technical accuracy",
+        "instant": "Ultra-fast response - minimal latency",
+        "quick_math": "Basic calculations - speed + accuracy",
     }
 
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
