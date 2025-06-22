@@ -63,6 +63,9 @@ class ConfigAwareProviderMixin:
                     "supports_vision": False,
                     "supports_json_mode": False,
                     "supports_system_messages": False,
+                    "supports_parallel_calls": False,
+                    "supports_multimodal": False,
+                    "supports_reasoning": False,
                 }
             
             model_caps = provider_config.get_model_capabilities(self.model)
@@ -74,7 +77,7 @@ class ConfigAwareProviderMixin:
                 "api_base": getattr(provider_config, 'api_base', None),
                 
                 # All capabilities from configuration
-                "features": [f.value for f in model_caps.features],
+                "features": [f.value if hasattr(f, 'value') else str(f) for f in model_caps.features],
                 "max_context_length": model_caps.max_context_length,
                 "max_output_tokens": model_caps.max_output_tokens,
                 
@@ -96,10 +99,11 @@ class ConfigAwareProviderMixin:
             }
             
         except Exception as e:
+            log.error(f"Configuration error for {self.provider_name}: {e}")
             return {
                 "provider": self.provider_name,
                 "model": self.model,
-                "error": f"Configuration error: {str(e)}",
+                "error": "Configuration not available",
                 "features": [],
                 "supports_text": False,
                 "supports_streaming": False,
@@ -107,9 +111,12 @@ class ConfigAwareProviderMixin:
                 "supports_vision": False,
                 "supports_json_mode": False,
                 "supports_system_messages": False,
+                "supports_parallel_calls": False,
+                "supports_multimodal": False,
+                "supports_reasoning": False,
             }
     
-    def supports_feature(self, feature_name: str) -> bool:
+    def supports_feature(self, feature_name) -> bool:
         """Check if this provider/model supports a specific feature"""
         try:
             from chuk_llm.configuration import Feature
@@ -143,14 +150,14 @@ class ConfigAwareProviderMixin:
         adjusted = kwargs.copy()
         
         # Validate max_tokens against model limits
-        if 'max_tokens' in adjusted:
+        if 'max_tokens' in adjusted and adjusted['max_tokens'] is not None:
             limit = self.get_max_tokens_limit()
             if limit and adjusted['max_tokens'] > limit:
                 log.debug(f"Capping max_tokens from {adjusted['max_tokens']} to {limit} for {self.provider_name}")
                 adjusted['max_tokens'] = limit
         
-        # Add default max_tokens if not specified
-        elif 'max_tokens' not in adjusted:
+        # Add default max_tokens if not specified or is None
+        elif 'max_tokens' not in adjusted or adjusted.get('max_tokens') is None:
             default_limit = self.get_max_tokens_limit()
             if default_limit:
                 adjusted['max_tokens'] = min(4096, default_limit)

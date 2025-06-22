@@ -16,7 +16,6 @@ import os
 
 # Import the module under test
 from chuk_llm.api import utils
-from chuk_llm.api.config import get_current_config
 from chuk_llm.api.utils import (
     get_metrics,
     health_check,
@@ -30,9 +29,6 @@ from chuk_llm.api.utils import (
     cleanup,
     cleanup_sync
 )
-
-
-# Don't add global pytestmark - let individual tests be marked as needed
 
 
 @pytest.fixture
@@ -730,13 +726,16 @@ class TestIntegration:
                 with patch('chuk_llm.api.utils.get_current_client_info', return_value=mock_client_info):
                     with patch('chuk_llm.api.utils.get_metrics', return_value=mock_metrics):
                         with patch('chuk_llm.api.utils.health_check_sync', return_value=mock_health):
-                            # Get individual components - these should now return our mocked values
+                            # THE FIX: Import get_current_config from the utils module to use the mocked version
+                            from chuk_llm.api.utils import get_current_config
+                            
+                            # These should now return our mocked values
                             config = get_current_config()
                             client_info = get_current_client_info()
                             metrics = get_metrics()
                             
                             # Verify components work with the actual return values
-                            assert config["provider"] == "openai"
+                            assert config["provider"] == "openai"  # This should now pass
                             assert client_info["status"] == "active"
                             assert metrics == {}  # Updated assertion
                             
@@ -748,10 +747,6 @@ class TestIntegration:
                             assert "active" in captured.out
                             assert "healthy" in captured.out
                             assert "No metrics available" in captured.out  # Should show this message
-
-
-# These were causing PytestReturnNotNoneWarning - removing them as they seem to be test artifacts
-# that call actual functions instead of testing them properly
 
 
 if __name__ == "__main__":
