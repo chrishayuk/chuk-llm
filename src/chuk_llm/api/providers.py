@@ -1,17 +1,26 @@
 # chuk_llm/api/providers.py
 """
-Dynamic provider function generation with live discovery support
-==============================================================
+Dynamic provider function generation with environment-controlled discovery
+========================================================================
 
 Generates functions like ask_openai_gpt4o(), ask_claude_sync(), etc.
 All models, aliases, and providers come from YAML configuration.
-NOW SUPPORTS LIVE DISCOVERY - functions are generated on-demand for discovered models.
+NOW SUPPORTS LIVE DISCOVERY with full environment variable controls.
+
+Environment Variables for Discovery Control:
+- CHUK_LLM_DISCOVERY_ENABLED=false          # Disable all discovery
+- CHUK_LLM_DISCOVERY_ON_STARTUP=false       # Disable startup discovery checks
+- CHUK_LLM_AUTO_DISCOVER=false              # Disable on-demand discovery
+- CHUK_LLM_OLLAMA_DISCOVERY=false           # Disable Ollama discovery only
+- CHUK_LLM_DISCOVERY_TIMEOUT=10             # Set discovery timeout
+- CHUK_LLM_DISCOVERY_QUICK_TIMEOUT=1.0      # Set quick check timeout
 """
 
 import asyncio
 import re
 import logging
 import warnings
+import os
 from typing import Dict, Optional, List, AsyncIterator, Union
 from pathlib import Path
 import base64
@@ -27,6 +36,41 @@ warnings.filterwarnings("ignore", message=".*Task exception was never retrieved.
 # Cache for generated functions
 _GENERATED_FUNCTIONS = {}
 _FUNCTION_CACHE_DIRTY = True
+
+
+def _env_bool(key: str, default: bool = False) -> bool:
+    """Parse boolean environment variable"""
+    value = os.getenv(key, '').lower()
+    if value in ('true', '1', 'yes', 'on', 'enabled'):
+        return True
+    elif value in ('false', '0', 'no', 'off', 'disabled'):
+        return False
+    else:
+        return default
+
+
+def _is_discovery_enabled(provider_name: str = None) -> bool:
+    """Check if discovery is enabled via environment variables"""
+    # Global check
+    if not _env_bool('CHUK_LLM_DISCOVERY_ENABLED', True):
+        return False
+    
+    # Provider-specific check
+    if provider_name:
+        provider_key = f'CHUK_LLM_{provider_name.upper()}_DISCOVERY'
+        return _env_bool(provider_key, True)
+    
+    return True
+
+
+def _is_startup_discovery_enabled() -> bool:
+    """Check if startup discovery is enabled"""
+    return _env_bool('CHUK_LLM_DISCOVERY_ON_STARTUP', True)
+
+
+def _is_auto_discover_enabled() -> bool:
+    """Check if auto discovery is enabled"""
+    return _env_bool('CHUK_LLM_AUTO_DISCOVER', True)
 
 
 def _run_sync(coro):
@@ -99,6 +143,84 @@ def _sanitize_name(name: str) -> str:
         sanitized = f"model_{sanitized}"
     
     return sanitized
+
+
+def _check_ollama_available_models(timeout: float = None) -> List[str]:
+    """Check what Ollama models are actually available locally (non-blocking)"""
+    # Check if Ollama discovery is disabled
+    if not _is_discovery_enabled('ollama'):
+        logger.debug("Ollama discovery disabled by environment variable")
+        return []
+    
+    # Use environment timeout or default
+    if timeout is None:
+        timeout = float(os.getenv('CHUK_LLM_DISCOVERY_QUICK_TIMEOUT', '2.0'))
+    
+    try:
+        import httpx
+        
+        # Quick check with timeout
+        with httpx.Client(timeout=timeout) as client:
+            try:
+                response = client.get("http://localhost:11434/api/tags")
+                if response.status_code == 200:
+                    data = response.json()
+                    available = [model['name'] for model in data.get('models', [])]
+                    logger.debug(f"Found {len(available)} available Ollama models")
+                    return available
+            except (httpx.ConnectError, httpx.TimeoutException):
+                logger.debug("Ollama not available or timeout - skipping model check")
+                return []
+            except Exception as e:
+                logger.debug(f"Error checking Ollama models: {e}")
+                return []
+                
+    except ImportError:
+        logger.debug("httpx not available - skipping Ollama model check")
+        return []
+    
+    return []
+
+
+def _get_safe_models_for_provider(provider_name: str, provider_config) -> List[str]:
+    """Get models that are safe to generate static functions for"""
+    config_models = provider_config.models.copy()
+    
+    if provider_name == "ollama":
+        # Check if startup discovery is enabled
+        if not _is_startup_discovery_enabled():
+            logger.info("Ollama startup discovery disabled - using configured models only")
+            return config_models  # Use all configured models without checking
+        
+        # For Ollama, only include models that are actually available
+        available_models = _check_ollama_available_models()
+        
+        if available_models:
+            # Filter to only include models that are actually downloaded
+            safe_models = []
+            for model in config_models:
+                # Check both exact match and :latest variants
+                model_base = model.replace(':latest', '') if model.endswith(':latest') else model
+                model_latest = f"{model_base}:latest"
+                
+                if (model in available_models or 
+                    model_base in available_models or 
+                    model_latest in available_models):
+                    safe_models.append(model)
+            
+            logger.info(f"Ollama: Using {len(safe_models)}/{len(config_models)} available models for static generation")
+            return safe_models
+        else:
+            # Ollama not available - use minimal set or empty
+            logger.info("Ollama not available - generating minimal static functions")
+            return []  # Will generate provider-level functions only
+    else:
+        # For non-Ollama providers, check if their discovery is enabled
+        if not _is_discovery_enabled(provider_name):
+            logger.debug(f"Discovery disabled for {provider_name} - using all configured models")
+        
+        # For non-Ollama providers, always use all configured models
+        return config_models
 
 
 def _prepare_vision_message(prompt: str, image: Union[str, Path, bytes], provider: str = None) -> Dict[str, any]:
@@ -450,6 +572,16 @@ def _generate_functions_for_models(provider_name: str, provider_config, models: 
 
 def _ensure_provider_models_current(provider_name: str) -> List[str]:
     """Ensure provider models are current (trigger discovery if needed)"""
+    # Check if auto-discovery is disabled globally
+    if not _is_auto_discover_enabled() or not _is_discovery_enabled(provider_name):
+        try:
+            config_manager = get_config()
+            provider_config = config_manager.get_provider(provider_name)
+            return provider_config.models
+        except Exception as e:
+            logger.debug(f"Could not get models for {provider_name}: {e}")
+            return []
+    
     try:
         config_manager = get_config()
         provider_config = config_manager.get_provider(provider_name)
@@ -462,7 +594,8 @@ def _ensure_provider_models_current(provider_name: str) -> List[str]:
                 
                 async def get_ollama_models():
                     try:
-                        async with httpx.AsyncClient(timeout=3.0) as client:
+                        timeout = float(os.getenv('CHUK_LLM_DISCOVERY_TIMEOUT', '3'))
+                        async with httpx.AsyncClient(timeout=timeout) as client:
                             response = await client.get("http://localhost:11434/api/tags")
                             if response.status_code == 200:
                                 data = response.json()
@@ -510,7 +643,7 @@ def _ensure_provider_models_current(provider_name: str) -> List[str]:
 
 
 def _generate_static_functions():
-    """Generate functions for static (YAML-configured) models"""
+    """Generate functions for static (YAML-configured) models with environment controls"""
     config_manager = get_config()
     functions = {}
     
@@ -533,15 +666,24 @@ def _generate_static_functions():
         functions[f"stream_{provider_name}"] = _create_stream_function(provider_name, supports_vision=provider_supports_vision)
         functions[f"ask_{provider_name}_sync"] = _create_sync_function(provider_name, supports_vision=provider_supports_vision)
         
-        # Get current models (including discovered ones)
-        current_models = _ensure_provider_models_current(provider_name)
+        # Get SAFE models for this provider (filtered for Ollama)
+        safe_models = _get_safe_models_for_provider(provider_name, provider_config)
         
-        # Generate functions for current models
-        model_functions = _generate_functions_for_models(provider_name, provider_config, current_models)
-        functions.update(model_functions)
+        if safe_models:
+            # Generate functions for safe models only
+            model_functions = _generate_functions_for_models(provider_name, provider_config, safe_models)
+            functions.update(model_functions)
+            logger.debug(f"Generated {len(model_functions)} model functions for {provider_name}")
+        else:
+            logger.debug(f"No safe models for {provider_name} - provider functions only")
         
-        # Alias functions from YAML model_aliases
+        # Alias functions from YAML model_aliases (only for safe models)
         for alias, actual_model in provider_config.model_aliases.items():
+            # Skip aliases that point to models we didn't include
+            if safe_models and actual_model not in safe_models:
+                logger.debug(f"Skipping alias {alias} -> {actual_model} (model not safe)")
+                continue
+                
             alias_suffix = _sanitize_name(alias)
             if alias_suffix:
                 # Check if the actual model supports vision
@@ -555,11 +697,18 @@ def _generate_static_functions():
     # Generate global alias functions from YAML
     global_aliases = config_manager.get_global_aliases()
     for alias_name, provider_model in global_aliases.items():
-        # Check if the aliased model supports vision
+        # Check if the aliased model is safe
         if '/' in provider_model:
             provider, model = provider_model.split('/', 1)
             try:
                 provider_config = config_manager.get_provider(provider)
+                safe_models = _get_safe_models_for_provider(provider, provider_config)
+                
+                # Skip global aliases that point to unsafe models
+                if provider == "ollama" and safe_models and model not in safe_models:
+                    logger.debug(f"Skipping global alias {alias_name} -> {provider_model} (model not safe)")
+                    continue
+                    
                 model_caps = provider_config.get_model_capabilities(model)
                 alias_supports_vision = Feature.VISION in model_caps.features
             except:
@@ -578,9 +727,143 @@ def _generate_functions():
     return _generate_static_functions()
 
 
+def _create_utility_functions():
+    """Create utility functions with discovery status"""
+    config_manager = get_config()
+    
+    def quick_question(question: str, provider: str = None) -> str:
+        """Quick one-off question using sync API"""
+        if not provider:
+            settings = config_manager.get_global_settings()
+            provider = settings.get("active_provider", "openai")
+        
+        from .sync import ask_sync
+        return ask_sync(question, provider=provider)
+    
+    def compare_providers(question: str, providers: List[str] = None) -> Dict[str, str]:
+        """Compare responses from multiple providers"""
+        if not providers:
+            all_providers = config_manager.get_all_providers()
+            providers = all_providers[:3] if len(all_providers) >= 3 else all_providers
+        
+        from .sync import ask_sync
+        results = {}
+        
+        for provider in providers:
+            try:
+                results[provider] = ask_sync(question, provider=provider)
+            except Exception as e:
+                results[provider] = f"Error: {str(e)}"
+        
+        return results
+    
+    def show_config():
+        """Show current configuration status including discovery settings"""
+        from chuk_llm.configuration.unified_config import get_config
+        config = get_config()
+        
+        print("🔧 ChukLLM Configuration")
+        print("=" * 50)
+        
+        # Discovery settings
+        print("\n🔍 Discovery Settings:")
+        discovery_enabled = _env_bool('CHUK_LLM_DISCOVERY_ENABLED', True)
+        startup_enabled = _env_bool('CHUK_LLM_DISCOVERY_ON_STARTUP', True)
+        auto_enabled = _env_bool('CHUK_LLM_AUTO_DISCOVER', True)
+        
+        print(f"  Global Discovery: {'✅ Enabled' if discovery_enabled else '❌ Disabled'}")
+        print(f"  Startup Check:    {'✅ Enabled' if startup_enabled else '❌ Disabled'}")
+        print(f"  Auto Discovery:   {'✅ Enabled' if auto_enabled else '❌ Disabled'}")
+        
+        timeout = os.getenv('CHUK_LLM_DISCOVERY_TIMEOUT', '5')
+        quick_timeout = os.getenv('CHUK_LLM_DISCOVERY_QUICK_TIMEOUT', '2.0')
+        print(f"  Timeout:          {timeout}s (quick: {quick_timeout}s)")
+        
+        providers = config.get_all_providers()
+        print(f"\n📦 Providers: {len(providers)}")
+        for provider_name in providers:
+            try:
+                provider = config.get_provider(provider_name)
+                has_key = "✅" if config.get_api_key(provider_name) else "❌"
+                discovery_status = "🔍" if _is_discovery_enabled(provider_name) else "🚫"
+                print(f"  {has_key} {discovery_status} {provider_name:<12} | {len(provider.models):2d} models | {len(provider.model_aliases):2d} aliases")
+            except Exception as e:
+                print(f"  ❌ 🚫 {provider_name:<12} | Error: {e}")
+        
+        aliases = config.get_global_aliases()
+        if aliases:
+            print(f"\n🌍 Global Aliases: {len(aliases)}")
+            for alias, target in list(aliases.items())[:5]:
+                print(f"  ask_{alias}() -> {target}")
+            if len(aliases) > 5:
+                print(f"  ... and {len(aliases) - 5} more")
+        
+        print(f"\n🎛️  Environment Controls:")
+        print(f"  CHUK_LLM_DISCOVERY_ENABLED={_env_bool('CHUK_LLM_DISCOVERY_ENABLED', True)}")
+        print(f"  CHUK_LLM_DISCOVERY_ON_STARTUP={_env_bool('CHUK_LLM_DISCOVERY_ON_STARTUP', True)}")
+        print(f"  CHUK_LLM_AUTO_DISCOVER={_env_bool('CHUK_LLM_AUTO_DISCOVER', True)}")
+        print(f"  CHUK_LLM_OLLAMA_DISCOVERY={_env_bool('CHUK_LLM_OLLAMA_DISCOVERY', True)}")
+        
+        # Show discovery methods
+        print(f"\n🎮 Discovery Control Methods:")
+        print(f"  # Disable all discovery")
+        print(f"  export CHUK_LLM_DISCOVERY_ENABLED=false")
+        print(f"  ")
+        print(f"  # Disable only Ollama discovery")
+        print(f"  export CHUK_LLM_OLLAMA_DISCOVERY=false")
+        print(f"  ")
+        print(f"  # Disable startup checks (but allow on-demand)")
+        print(f"  export CHUK_LLM_DISCOVERY_ON_STARTUP=false")
+    
+    def discover_and_refresh(provider: str = "ollama"):
+        """Discover models and refresh functions for a provider"""
+        if not _is_discovery_enabled(provider):
+            print(f"❌ Discovery disabled for {provider}")
+            print(f"   Set CHUK_LLM_{provider.upper()}_DISCOVERY=true to enable")
+            return {}
+        
+        return refresh_provider_functions(provider)
+    
+    def disable_discovery(provider: str = None):
+        """Disable discovery at runtime"""
+        if provider:
+            env_key = f'CHUK_LLM_{provider.upper()}_DISCOVERY'
+            os.environ[env_key] = 'false'
+            print(f"✅ Disabled discovery for {provider}")
+        else:
+            os.environ['CHUK_LLM_DISCOVERY_ENABLED'] = 'false'
+            print("✅ Disabled discovery globally")
+    
+    def enable_discovery(provider: str = None):
+        """Enable discovery at runtime"""
+        if provider:
+            env_key = f'CHUK_LLM_{provider.upper()}_DISCOVERY'
+            os.environ[env_key] = 'true'
+            print(f"✅ Enabled discovery for {provider}")
+        else:
+            os.environ['CHUK_LLM_DISCOVERY_ENABLED'] = 'true'
+            print("✅ Enabled discovery globally")
+    
+    return {
+        'quick_question': quick_question,
+        'compare_providers': compare_providers,
+        'show_config': show_config,
+        'discover_and_refresh': discover_and_refresh,
+        'refresh_provider_functions': refresh_provider_functions,
+        'trigger_ollama_discovery_and_refresh': trigger_ollama_discovery_and_refresh,
+        'disable_discovery': disable_discovery,
+        'enable_discovery': enable_discovery,
+    }
+
+
 def refresh_provider_functions(provider_name: str = None):
     """Refresh functions for a specific provider or all providers"""
     global _GENERATED_FUNCTIONS, _FUNCTION_CACHE_DIRTY
+    
+    # Check if discovery is allowed
+    if provider_name and not _is_discovery_enabled(provider_name):
+        logger.warning(f"Discovery disabled for {provider_name} by environment variable")
+        return {}
     
     config_manager = get_config()
     
@@ -589,12 +872,21 @@ def refresh_provider_functions(provider_name: str = None):
         try:
             provider_config = config_manager.get_provider(provider_name)
             
-            # Get current models (this will trigger discovery and API query for Ollama)
-            current_models = _ensure_provider_models_current(provider_name)
+            if provider_name == "ollama":
+                # For Ollama, force a fresh check of available models
+                timeout = float(os.getenv('CHUK_LLM_DISCOVERY_TIMEOUT', '5'))
+                current_models = _check_ollama_available_models(timeout=timeout)
+                if current_models:
+                    logger.info(f"Ollama refresh: found {len(current_models)} available models")
+                else:
+                    logger.info("Ollama refresh: no models available")
+            else:
+                # For other providers, get all configured models
+                current_models = provider_config.models
             
             logger.info(f"Generating functions for {len(current_models)} {provider_name} models")
             
-            # Generate functions for new models
+            # Generate functions for current models
             new_functions = _generate_functions_for_models(provider_name, provider_config, current_models)
             
             # Update the global functions dict
@@ -628,7 +920,7 @@ def refresh_provider_functions(provider_name: str = None):
             logger.error(f"Failed to refresh functions for {provider_name}: {e}")
             return {}
     else:
-        # Refresh all providers
+        # Refresh all providers using the smart static generation
         all_new_functions = _generate_static_functions()
         _GENERATED_FUNCTIONS.update(all_new_functions)
         _FUNCTION_CACHE_DIRTY = False
@@ -653,15 +945,25 @@ def refresh_provider_functions(provider_name: str = None):
 
 
 def trigger_ollama_discovery_and_refresh():
-    """Trigger Ollama model discovery and refresh functions"""
+    """Trigger Ollama model discovery and refresh functions with environment controls"""
+    if not _is_discovery_enabled('ollama'):
+        logger.warning("Ollama discovery disabled by environment variable CHUK_LLM_OLLAMA_DISCOVERY=false")
+        print("💡 To enable: export CHUK_LLM_OLLAMA_DISCOVERY=true")
+        return {}
+    
     try:
-        # This will trigger discovery for Ollama specifically
-        current_models = _ensure_provider_models_current("ollama")
+        # Check what's actually available right now
+        timeout = float(os.getenv('CHUK_LLM_DISCOVERY_TIMEOUT', '5'))
+        current_models = _check_ollama_available_models(timeout=timeout)
         
-        # Refresh functions for Ollama
+        if not current_models:
+            logger.warning("No Ollama models available - is Ollama running?")
+            return {}
+        
+        # Refresh functions for actually available models
         new_functions = refresh_provider_functions("ollama")
         
-        logger.info(f"Ollama discovery triggered: {len(current_models)} models, {len(new_functions)} functions generated")
+        logger.info(f"Ollama discovery: {len(current_models)} available models, {len(new_functions)} functions generated")
         return new_functions
         
     except Exception as e:
@@ -669,81 +971,17 @@ def trigger_ollama_discovery_and_refresh():
         return {}
 
 
-def _create_utility_functions():
-    """Create utility functions"""
-    config_manager = get_config()
-    
-    def quick_question(question: str, provider: str = None) -> str:
-        """Quick one-off question using sync API"""
-        if not provider:
-            settings = config_manager.get_global_settings()
-            provider = settings.get("active_provider", "openai")
-        
-        from .sync import ask_sync
-        return ask_sync(question, provider=provider)
-    
-    def compare_providers(question: str, providers: List[str] = None) -> Dict[str, str]:
-        """Compare responses from multiple providers"""
-        if not providers:
-            all_providers = config_manager.get_all_providers()
-            providers = all_providers[:3] if len(all_providers) >= 3 else all_providers
-        
-        from .sync import ask_sync
-        results = {}
-        
-        for provider in providers:
-            try:
-                results[provider] = ask_sync(question, provider=provider)
-            except Exception as e:
-                results[provider] = f"Error: {str(e)}"
-        
-        return results
-    
-    def show_config():
-        """Show current configuration status"""
-        from chuk_llm.configuration.unified_config import get_config
-        config = get_config()
-        
-        print("🔧 ChukLLM Configuration")
-        print("=" * 30)
-        
-        providers = config.get_all_providers()
-        print(f"📦 Providers: {len(providers)}")
-        for provider_name in providers:
-            try:
-                provider = config.get_provider(provider_name)
-                has_key = "✅" if config.get_api_key(provider_name) else "❌"
-                print(f"  {has_key} {provider_name:<12} | {len(provider.models):2d} models | {len(provider.model_aliases):2d} aliases")
-            except Exception as e:
-                print(f"  ❌ {provider_name:<12} | Error: {e}")
-        
-        aliases = config.get_global_aliases()
-        if aliases:
-            print(f"\n🌍 Global Aliases: {len(aliases)}")
-            for alias, target in list(aliases.items())[:5]:
-                print(f"  ask_{alias}() -> {target}")
-            if len(aliases) > 5:
-                print(f"  ... and {len(aliases) - 5} more")
-    
-    def discover_and_refresh(provider: str = "ollama"):
-        """Discover models and refresh functions for a provider"""
-        return refresh_provider_functions(provider)
-    
-    return {
-        'quick_question': quick_question,
-        'compare_providers': compare_providers,
-        'show_config': show_config,
-        'discover_and_refresh': discover_and_refresh,
-        'refresh_provider_functions': refresh_provider_functions,
-        'trigger_ollama_discovery_and_refresh': trigger_ollama_discovery_and_refresh,
-    }
+# Generate all functions at module import with environment controls
+startup_enabled = _is_startup_discovery_enabled()
+discovery_enabled = _env_bool('CHUK_LLM_DISCOVERY_ENABLED', True)
 
-
-# Generate all functions at module import
-logger.info("Generating dynamic provider functions from YAML...")
+if startup_enabled and discovery_enabled:
+    logger.info("Generating dynamic provider functions from YAML...")
+else:
+    logger.info("Generating static provider functions (discovery disabled)...")
 
 try:
-    # Generate provider functions
+    # Generate provider functions using smart generation
     _provider_functions = _generate_functions()
     
     # Generate utility functions
@@ -765,6 +1003,12 @@ try:
     
     logger.info(f"Generated {len(_all_functions)} total functions")
     
+    # Show discovery status
+    if not discovery_enabled:
+        logger.info("🚫 Discovery globally disabled (CHUK_LLM_DISCOVERY_ENABLED=false)")
+    elif not startup_enabled:
+        logger.info("🚫 Startup discovery disabled (CHUK_LLM_DISCOVERY_ON_STARTUP=false)")
+    
     # Log some examples
     examples = [name for name in __all__ 
                if any(x in name for x in ['gpt4', 'claude', 'llama']) 
@@ -775,7 +1019,7 @@ try:
 except Exception as e:
     logger.error(f"Error generating provider functions: {e}")
     # Fallback - at least provide utility functions
-    __all__ = ['show_config', 'refresh_provider_functions', 'trigger_ollama_discovery_and_refresh']
+    __all__ = ['show_config', 'refresh_provider_functions', 'trigger_ollama_discovery_and_refresh', 'disable_discovery', 'enable_discovery']
     
     def show_config():
         print(f"❌ Error loading configuration: {e}")
@@ -789,17 +1033,29 @@ except Exception as e:
         print(f"❌ Discovery not available: {e}")
         return {}
     
+    def disable_discovery(provider: str = None):
+        print("❌ Discovery control not available")
+    
+    def enable_discovery(provider: str = None):
+        print("❌ Discovery control not available")
+    
     globals()['show_config'] = show_config
     globals()['refresh_provider_functions'] = refresh_provider_functions
     globals()['trigger_ollama_discovery_and_refresh'] = trigger_ollama_discovery_and_refresh
+    globals()['disable_discovery'] = disable_discovery
+    globals()['enable_discovery'] = enable_discovery
 
 
-# Enhanced __getattr__ to support on-demand function generation
+# Enhanced __getattr__ to support on-demand function generation with environment controls
 def __getattr__(name):
     """Allow access to generated functions with on-demand discovery"""
     # First check if it's in our generated functions
     if name in _GENERATED_FUNCTIONS:
         return _GENERATED_FUNCTIONS[name]
+    
+    # Check if auto-discovery is disabled
+    if not _is_auto_discover_enabled():
+        raise AttributeError(f"module 'providers' has no attribute '{name}' (auto-discovery disabled)")
     
     # Check if it looks like a provider function we might need to generate
     if name.startswith(('ask_', 'stream_')) and ('_' in name[4:] if name.startswith('ask_') else '_' in name[7:]):
@@ -819,6 +1075,10 @@ def __getattr__(name):
         parts = base_name.split('_', 1)
         if len(parts) == 2:
             provider_name, model_part = parts
+            
+            # Check if discovery is enabled for this provider
+            if not _is_discovery_enabled(provider_name):
+                raise AttributeError(f"module 'providers' has no attribute '{name}' (discovery disabled for {provider_name})")
             
             # Try to refresh functions for this provider
             try:
