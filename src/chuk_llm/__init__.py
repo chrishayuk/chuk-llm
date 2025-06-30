@@ -18,8 +18,18 @@ Session Storage:
     Configure with SESSION_PROVIDER environment variable
 """
 
-# Version
-__version__ = "0.7"
+# Version - get from package metadata instead of hardcoding
+try:
+    from importlib.metadata import version
+    __version__ = version("chuk-llm")
+except ImportError:
+    # Fallback for Python < 3.8
+    try:
+        import pkg_resources
+        __version__ = pkg_resources.get_distribution("chuk-llm").version
+    except Exception:
+        # Last resort fallback
+        __version__ = "0.8.1"
 
 # Core API imports
 from .api import (
