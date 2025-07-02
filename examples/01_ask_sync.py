@@ -10,7 +10,7 @@ load_dotenv()
 from chuk_llm import (
     ask_sync, 
     ask_openai_sync, ask_anthropic_sync, ask_groq_sync,
-    ask_mistral_sync, ask_ollama_sync, ask_deepseek_sync
+    ask_mistral_sync, ask_granite_sync, ask_deepseek_sync
 )
 
 # Simple question
@@ -47,6 +47,6 @@ print(ask_deepseek_sync(question))
 print()
 
 # Ollama (local)
-print("Ollama:")
-print(ask_ollama_sync(question))
+print("Granite:")
+print(ask_granite_sync(question))
 print()
