@@ -24,6 +24,8 @@ pip install chuk_llm[all]
 
 ```bash
 export OPENAI_API_KEY="your-openai-key"
+export AZURE_OPENAI_API_KEY="your-azure-openai-key"
+export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com"
 export ANTHROPIC_API_KEY="your-anthropic-key"
 export GROQ_API_KEY="your-groq-key"
 # Add other provider keys as needed
@@ -39,20 +41,21 @@ answer = quick_question("What is 2+2?")
 print(answer)  # "2 + 2 equals 4."
 
 # Provider-specific functions (auto-generated!)
-from chuk_llm import ask_openai_sync, ask_claude_sync, ask_groq_sync, ask_watsonx_sync
+from chuk_llm import ask_openai_sync, ask_azure_openai_sync, ask_claude_sync, ask_groq_sync, ask_watsonx_sync
 
 openai_response = ask_openai_sync("Tell me a joke")
-claude_response = ask_claude_sync("Explain quantum computing") 
+azure_response = ask_azure_openai_sync("Explain quantum computing")
+claude_response = ask_claude_sync("Write a Python function") 
 groq_response = ask_groq_sync("What's the weather like?")
 watsonx_response = ask_watsonx_sync("Write enterprise Python code")
 
 # Configure once, use everywhere
-configure(provider="anthropic", temperature=0.7)
+configure(provider="azure_openai", temperature=0.7)
 response = ask_sync("Write a creative story opening")
 
 # Compare multiple providers
 from chuk_llm import compare_providers
-results = compare_providers("What is AI?", ["openai", "anthropic"])
+results = compare_providers("What is AI?", ["openai", "azure_openai", "anthropic"])
 for provider, response in results.items():
     print(f"{provider}: {response}")
 ```
@@ -66,17 +69,18 @@ ChukLLM includes a powerful CLI for quick AI interactions from your terminal:
 chuk-llm ask_granite "What is Python?"
 chuk-llm ask_claude "Explain quantum computing"
 chuk-llm ask_gpt "Write a haiku about code"
+chuk-llm ask_azure "Deploy models to Azure"
 
 # General ask command with provider selection
-chuk-llm ask "What is machine learning?" --provider openai --model gpt-4o-mini
+chuk-llm ask "What is machine learning?" --provider azure_openai --model gpt-4o-mini
 
 # JSON responses for structured output
-chuk-llm ask "List 3 Python libraries" --json --provider openai
+chuk-llm ask "List 3 Python libraries" --json --provider azure_openai
 
 # Provider and model management
 chuk-llm providers              # Show all available providers
-chuk-llm models ollama          # Show models for specific provider
-chuk-llm test anthropic         # Test provider connection
+chuk-llm models azure_openai    # Show models for Azure OpenAI
+chuk-llm test azure_openai      # Test Azure connection
 chuk-llm discover ollama        # Discover new Ollama models
 
 # Configuration and diagnostics
@@ -86,13 +90,13 @@ chuk-llm aliases                # Show available global aliases
 chuk-llm help                   # Comprehensive help
 
 # Use with uvx for zero-install usage
-uvx chuk-llm ask_granite "What is Python?"
+uvx chuk-llm ask_azure "What is Azure OpenAI?"
 uvx chuk-llm providers
 ```
 
 #### CLI Features
 
-- **🎯 Global Aliases**: Quick commands like `ask_granite`, `ask_claude`, `ask_gpt`
+- **🎯 Global Aliases**: Quick commands like `ask_granite`, `ask_claude`, `ask_gpt`, `ask_azure`
 - **🌊 Real-time Streaming**: See responses as they're generated
 - **🔧 Provider Management**: Test, discover, and configure providers
 - **📊 Rich Output**: Beautiful tables and formatting (with `[cli]` extra)
@@ -119,10 +123,11 @@ async def main():
     response = await ask("Hello!")
     
     # Provider-specific async functions
-    from chuk_llm import ask_openai, ask_claude, ask_groq, ask_watsonx
+    from chuk_llm import ask_openai, ask_azure_openai, ask_claude, ask_groq, ask_watsonx
     
     openai_response = await ask_openai("Tell me a joke")
-    claude_response = await ask_claude("Explain quantum computing")
+    azure_response = await ask_azure_openai("Explain quantum computing")
+    claude_response = await ask_claude("Write a Python function")
     groq_response = await ask_groq("What's the weather like?")
     watsonx_response = await ask_watsonx("Generate enterprise documentation")
     
@@ -132,7 +137,7 @@ async def main():
         print(chunk, end="", flush=True)
     
     # Conversations with memory
-    async with conversation(provider="anthropic") as chat:
+    async with conversation(provider="azure_openai") as chat:
         await chat.say("My name is Alice")
         response = await chat.say("What's my name?")
         # Remembers: "Your name is Alice"
@@ -195,6 +200,11 @@ response = ask_claude_sync("Explain quantum physics", tools=tools)
 from chuk_llm import ask_openai_sync
 response = ask_openai_sync("Explain quantum physics", tools=tools)
 # System prompt: "You are a helpful assistant with access to function calling capabilities..."
+
+# Azure OpenAI gets enterprise-optimized prompts
+from chuk_llm import ask_azure_openai_sync
+response = ask_azure_openai_sync("Explain quantum physics", tools=tools)
+# System prompt: "You are an enterprise AI assistant powered by Azure OpenAI. You have access to function calling capabilities..."
 
 # Groq gets ultra-fast inference optimized prompts
 from chuk_llm import ask_groq_sync
@@ -307,14 +317,15 @@ ChukLLM automatically creates functions for every provider and model, including 
 
 ```python
 # Base provider functions
-from chuk_llm import ask_openai, ask_anthropic, ask_groq, ask_ollama, ask_watsonx
+from chuk_llm import ask_openai, ask_azure_openai, ask_anthropic, ask_groq, ask_ollama, ask_watsonx
 
 # Model-specific functions (auto-generated from config + discovery)
-from chuk_llm import ask_openai_gpt4o, ask_claude_sonnet, ask_ollama_llama3_2, ask_watsonx_granite
+from chuk_llm import ask_openai_gpt4o, ask_azure_openai_gpt4o, ask_claude_sonnet, ask_ollama_llama3_2, ask_watsonx_granite
 
 # All with sync, async, and streaming variants!
 from chuk_llm import (
     ask_openai_sync,          # Synchronous
+    ask_azure_openai_sync,    # Azure OpenAI sync
     stream_anthropic,         # Async streaming  
     ask_groq_sync,           # Sync version
     ask_ollama_llama3_2_sync # Auto-discovered local model
@@ -428,6 +439,7 @@ All major LLM providers are included by default. Optional dependencies are only 
 ```bash
 # Providers included out of the box:
 # ✅ OpenAI (GPT-4, GPT-3.5)
+# ✅ Azure OpenAI (Enterprise GPT models with Azure security)
 # ✅ Anthropic (Claude 3.5 Sonnet, Haiku)  
 # ✅ Google Gemini (2.0 Flash, 1.5 Pro)
 # ✅ Groq (Llama models with ultra-fast inference)
@@ -441,6 +453,7 @@ All major LLM providers are included by default. Optional dependencies are only 
 
 ### Multi-Provider Support
 - **OpenAI** - GPT-4, GPT-3.5 with full API support
+- **Azure OpenAI** - Enterprise GPT models with Azure security and compliance features
 - **Anthropic** - Claude 3.5 Sonnet, Claude 3 Haiku
 - **Google Gemini** - Gemini 2.0 Flash, Gemini 1.5 Pro  
 - **Groq** - Lightning-fast inference with Llama models
@@ -498,13 +511,14 @@ All major LLM providers are included by default. Optional dependencies are only 
 chuk-llm ask_granite "What is Python?"
 chuk-llm ask_claude "Explain quantum computing"
 chuk-llm ask_gpt "Write a haiku about programming"
+chuk-llm ask_azure "Deploy models to Azure"
 chuk-llm ask_llama "What is machine learning?"
 
 # General ask with provider selection
-chuk-llm ask "Your question" --provider openai --model gpt-4o-mini
+chuk-llm ask "Your question" --provider azure_openai --model gpt-4o-mini
 
 # JSON responses for structured data
-chuk-llm ask "List 3 Python libraries" --json --provider openai
+chuk-llm ask "List 3 Python libraries" --json --provider azure_openai
 ```
 
 ### Provider Management
@@ -514,11 +528,11 @@ chuk-llm ask "List 3 Python libraries" --json --provider openai
 chuk-llm providers
 
 # Show models for a specific provider
-chuk-llm models ollama
+chuk-llm models azure_openai
 chuk-llm models anthropic
 
 # Test provider connection
-chuk-llm test openai
+chuk-llm test azure_openai
 chuk-llm test ollama
 
 # Discover new models (especially useful for Ollama)
@@ -551,17 +565,17 @@ chuk-llm ask_claude "Hello" --verbose
 chuk-llm providers --quiet
 
 # Disable streaming
-chuk-llm ask "Question" --provider openai --no-stream
+chuk-llm ask "Question" --provider azure_openai --no-stream
 ```
 
 ### Examples with uvx (Zero Install)
 
 ```bash
 # Use without installing globally
-uvx chuk-llm ask_granite "What is Python?"
+uvx chuk-llm ask_azure "What is Azure OpenAI?"
 uvx chuk-llm providers
 uvx chuk-llm discover ollama
-uvx chuk-llm test anthropic
+uvx chuk-llm test azure_openai
 ```
 
 ### CLI Features
@@ -591,8 +605,9 @@ response = ask_sync("Tell me a joke")
 print(response)
 
 # Provider-specific functions (including auto-discovered Ollama models)
-from chuk_llm import ask_openai_sync, ask_claude_sync, ask_ollama_llama3_2_sync, ask_watsonx_sync
+from chuk_llm import ask_openai_sync, ask_azure_openai_sync, ask_claude_sync, ask_ollama_llama3_2_sync, ask_watsonx_sync
 openai_joke = ask_openai_sync("Tell me a dad joke")
+azure_explanation = ask_azure_openai_sync("Explain Azure security features")
 claude_explanation = ask_claude_sync("Explain quantum computing")
 local_response = ask_ollama_llama3_2_sync("Write Python code to read a CSV")
 enterprise_response = ask_watsonx_sync("Generate enterprise security documentation")
@@ -614,7 +629,7 @@ async def main():
         print(chunk, end="", flush=True)
     
     # Conversations with memory
-    async with conversation(provider="anthropic") as chat:
+    async with conversation(provider="azure_openai") as chat:
         await chat.say("My name is Alice")
         response = await chat.say("What's my name?")
         # Remembers: "Your name is Alice"
@@ -685,6 +700,8 @@ print(response)  # ChukLLM handles tool calling automatically
 ```bash
 # API Keys
 export OPENAI_API_KEY="your-openai-key"
+export AZURE_OPENAI_API_KEY="your-azure-openai-key"
+export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com"
 export ANTHROPIC_API_KEY="your-anthropic-key"
 export GEMINI_API_KEY="your-google-key"
 export GROQ_API_KEY="your-groq-key"
@@ -713,8 +730,8 @@ from chuk_llm import configure, get_current_config
 
 # Simple configuration
 configure(
-    provider="anthropic",
-    model="claude-3-5-sonnet-20241022", 
+    provider="azure_openai",
+    model="gpt-4o-mini", 
     temperature=0.7
 )
 
@@ -768,7 +785,7 @@ from chuk_llm import compare_providers
 # Compare responses across providers (including local Ollama models)
 results = compare_providers(
     "Explain quantum computing",
-    providers=["openai", "anthropic", "perplexity", "groq", "ollama", "watsonx"]
+    providers=["openai", "azure_openai", "anthropic", "perplexity", "groq", "ollama", "watsonx"]
 )
 
 for provider, response in results.items():
@@ -813,7 +830,7 @@ async def benchmark_providers():
     # Quality comparison
     comparison = compare_providers(
         "Explain machine learning in simple terms",
-        ["openai", "anthropic", "groq", "ollama", "watsonx"]
+        ["openai", "azure_openai", "anthropic", "groq", "ollama", "watsonx"]
     )
     
     print("\nQuality Comparison:")
@@ -839,7 +856,7 @@ chuk_llm.print_full_diagnostics()
 
 # Test specific provider capabilities
 from chuk_llm import test_connection_sync
-result = test_connection_sync("anthropic")
+result = test_connection_sync("azure_openai")
 print(f"✅ {result['provider']}: {result['duration']:.2f}s")
 
 # Trigger Ollama discovery and see new functions
@@ -853,6 +870,32 @@ print(f"🔍 Generated {len(new_functions)} new Ollama functions")
 ### OpenAI
 - **GPT-4** - gpt-4o, gpt-4o-mini, gpt-4-turbo
 - **GPT-3.5** - gpt-3.5-turbo
+
+### Azure OpenAI 🏢
+Azure OpenAI provides enterprise-grade access to OpenAI models with enhanced security, compliance, and enterprise features:
+
+#### Enterprise GPT Models
+- **GPT-4** - gpt-4o, gpt-4o-mini, gpt-4-turbo (with enterprise security)
+- **GPT-3.5** - gpt-3.5-turbo (enterprise deployment)
+
+#### Azure-Specific Features
+- **🔒 Enterprise Security**: Private endpoints, VNet integration, data residency controls
+- **📊 Compliance**: SOC 2, HIPAA, PCI DSS, ISO 27001 certified
+- **🎯 Custom Deployments**: Deploy specific model versions with dedicated capacity
+- **📈 Advanced Monitoring**: Detailed usage analytics and audit logs
+- **🔧 Fine-tuning**: Custom model training on your enterprise data
+- **🌍 Global Availability**: Multiple Azure regions with data residency
+
+#### Model Aliases
+ChukLLM provides convenient aliases for Azure OpenAI:
+```python
+# These automatically use your Azure deployment:
+ask_azure_openai_gpt4o()     # → Your gpt-4o deployment
+ask_azure_openai_gpt4_mini() # → Your gpt-4o-mini deployment
+ask_azure_openai_gpt35()     # → Your gpt-3.5-turbo deployment
+```
+
+*Enterprise features: Private networking, audit logs, data residency, compliance certifications, custom deployments*
 
 ### Anthropic  
 - **Claude 3.5** - claude-3-5-sonnet-20241022, claude-3-5-haiku-20241022
@@ -898,144 +941,4 @@ ChukLLM provides convenient aliases for IBM watsonx models:
 ask_watsonx_granite()  # → ibm/granite-3-3-8b-instruct
 ask_watsonx_vision()   # → ibm/granite-vision-3-2-2b-instruct  
 ask_watsonx_llama4()   # → meta-llama/llama-4-maverick-17b-128e-instruct-fp8
-ask_watsonx_mistral()  # → mistralai/mistral-large-2
-```
-
-*Enterprise features: SOC2 compliance, data residency controls, fine-tuning capabilities, 131K context length*
-
-### Perplexity 🔍
-Perplexity offers specialized models optimized for real-time web search and reasoning with citations.
-
-#### Search Models (Online)
-- **sonar-pro** - Premier search model built on Llama 3.3 70B, optimized for answer quality and speed (1200 tokens/sec)
-- **sonar** - Cost-effective model for quick factual queries and current events
-- **llama-3.1-sonar-small-128k-online** - 8B parameter model with 128k context, web search enabled
-- **llama-3.1-sonar-large-128k-online** - 70B parameter model with 128k context, web search enabled
-
-#### Reasoning Models  
-- **sonar-reasoning-pro** - Expert reasoning with Chain of Thought (CoT) and search capabilities
-- **sonar-reasoning** - Fast real-time reasoning model for quick problem-solving
-
-### Ollama 🔍
-- **Dynamic Discovery** - Any compatible GGUF model automatically detected
-- **Popular Models** - Llama 3.2, Qwen 2.5, DeepSeek-Coder, Mistral, Phi, Code Llama, etc.
-- **Automatic Functions** - ChukLLM generates functions for all discovered models
-
-Example discovered Ollama models:
-```
-📦 llama3.2:latest - Features: text, streaming, tools, reasoning
-📦 qwen2.5:14b - Features: text, streaming, tools, reasoning, vision
-📦 deepseek-coder:6.7b - Features: text, streaming, tools
-📦 mistral:7b-instruct - Features: text, streaming, tools
-📦 phi3:mini - Features: text, streaming, reasoning
-```
-
-## 📈 Performance
-
-### Streaming Performance
-- **Zero-buffering streaming** - Chunks delivered in real-time
-- **Parallel requests** - Multiple concurrent streams
-- **Connection pooling** - Reduced latency
-- **Dynamic discovery** - Real-time model availability
-
-### Benchmarks
-```
-Provider Comparison (avg response time):
-├── Groq: 0.8s (ultra-fast inference)
-├── Perplexity: 1.0s (real-time search + generation)
-├── OpenAI: 1.2s (balanced performance)
-├── Anthropic: 1.5s (high quality)
-├── Gemini: 1.8s (multimodal)
-├── Ollama: 2.5s (local processing, varies by model)
-└── Discovery: <0.1s (cached model detection)
-```
-
-### CLI Performance
-- **Real-time streaming**: See responses as they're generated
-- **Instant discovery**: Find new Ollama models in ~100ms (cached)
-- **Fast provider testing**: Connection tests in ~1-2 seconds
-- **Rich formatting**: Enhanced output with zero performance impact
-
-## 🔒 Security & Safety
-
-- **API key management** - Environment variable support
-- **Request validation** - Input sanitization
-- **Error handling** - No sensitive data leakage
-- **Rate limiting** - Built-in provider limit awareness
-- **Tool name sanitization** - Safe function calling
-- **Session data privacy** - All tracking data stays local
-- **Discovery security** - Safe model detection without code execution
-
-## 🛡️ Error Handling
-
-```python
-from chuk_llm import (
-    SessionManagerError,
-    SessionNotFound,
-    TokenLimitExceeded
-)
-
-try:
-    session_id = await track_conversation("Hello", "Hi there")
-except SessionNotFound as e:
-    print(f"Session not found: {e}")
-except TokenLimitExceeded as e:
-    print(f"Token limit exceeded: {e}")
-except SessionManagerError as e:
-    print(f"General session error: {e}")
-```
-
-## 🔄 Dependencies
-
-- **Required**: `chuk-ai-session-manager` (session tracking), `pydantic` (data models), plus LLM provider SDKs
-- **Optional**: `redis` (Redis storage), `rich` (enhanced CLI)
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Ensure all tests pass
-5. Submit a pull request
-
-### Adding New Providers
-
-ChukLLM automatically detects new providers from configuration. Just add to your `chuk_llm.yaml`:
-
-```yaml
-newprovider:
-  api_key_env: NEWPROVIDER_API_KEY
-  api_base: https://api.newprovider.com
-  default_model: new-model-name
-  # Optional: Enable discovery
-  dynamic_discovery:
-    enabled: true
-    discoverer_type: openai  # Use OpenAI-compatible discovery
-```
-
-ChukLLM will automatically generate all the functions and CLI commands!
-
-## 📚 Documentation
-
-- [API Reference](docs/api.md)
-- [CLI Guide](docs/cli.md)
-- [Provider Guide](docs/providers.md)
-- [Discovery System](docs/discovery.md)
-- [System Prompts](docs/system-prompts.md)
-- [Configuration Guide](docs/configuration.md)
-- [Session Tracking Guide](docs/sessions.md)
-- [Performance Guide](docs/performance.md)
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- OpenAI for the ChatML format and function calling standards
-- CHUK AI for session management and analytics
-- The open source community for inspiration and feedback
-
----
-
-**chuk_llm** - Unified LLM interface for production applications with intelligent system prompts, dynamic discovery, automatic session tracking, and a powerful CLI.
+ask_watsonx_mistral()  # → mistralai/mistr

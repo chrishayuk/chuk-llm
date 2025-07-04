@@ -6,11 +6,12 @@ Enhanced wrapper around the official `openai` SDK that uses the unified
 configuration system for all capabilities instead of hardcoding.
 """
 from __future__ import annotations
-from typing import Any, AsyncIterator, Dict, List, Optional, Union
+from typing import Any, AsyncIterator, Dict, List, Optional, Union, Tuple
 import openai
 import logging
 import asyncio
 import time
+import re
 
 # mixins
 from chuk_llm.llm.providers._mixins import OpenAIStyleMixin
@@ -76,6 +77,10 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
         else:
             return "openai_compatible"
 
+    def detect_provider_name(self) -> str:
+        """Public method to detect provider name"""
+        return self.detected_provider
+
     def get_model_info(self) -> Dict[str, Any]:
         """
         Get model info using configuration, with OpenAI-specific additions.
@@ -101,6 +106,42 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
             })
         
         return info
+
+    def _sanitize_tool_names(self, tools: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
+        """
+        Sanitize tool names to be compatible with OpenAI API requirements.
+        Tool names must match ^[a-zA-Z0-9_-]{1,64}$ but some providers are stricter.
+        """
+        if not tools:
+            return tools
+        
+        sanitized_tools = []
+        for tool in tools:
+            if isinstance(tool, dict) and "function" in tool:
+                tool_copy = tool.copy()
+                func = tool_copy["function"].copy()
+                
+                original_name = func.get("name", "")
+                if original_name:
+                    # Replace invalid characters with underscores
+                    sanitized_name = re.sub(r'[^a-zA-Z0-9_]', '_', original_name)
+                    # Ensure it starts with a letter or underscore
+                    if sanitized_name and not sanitized_name[0].isalpha() and sanitized_name[0] != '_':
+                        sanitized_name = '_' + sanitized_name
+                    # Truncate to 64 characters
+                    sanitized_name = sanitized_name[:64]
+                    
+                    if sanitized_name != original_name:
+                        log.debug(f"Sanitized tool name: {original_name} -> {sanitized_name}")
+                    
+                    func["name"] = sanitized_name
+                
+                tool_copy["function"] = func
+                sanitized_tools.append(tool_copy)
+            else:
+                sanitized_tools.append(tool)
+        
+        return sanitized_tools
 
     def _normalize_message(self, msg) -> Dict[str, Any]:
         """

@@ -106,6 +106,11 @@ __global_aliases__:
   reasoning_free: mistral/magistral-small-2506
   sonnet: anthropic/claude-sonnet-4-20250514
   watsonx: watsonx/ibm/granite-3-3-8b-instruct
+  azure_gpt: azure_openai/gpt-4o-mini
+  azure_vision: azure_openai/gpt-4o
+  azure_reasoning: azure_openai/o3-mini
+  azure_turbo: azure_openai/gpt-4-turbo
+  azure_latest: azure_openai/gpt-4o-mini
 anthropic:
   api_key_env: ANTHROPIC_API_KEY
   client_class: chuk_llm.llm.providers.anthropic_client.AnthropicLLMClient
@@ -1508,3 +1513,186 @@ watsonx:
     default: 500
     enterprise: 2000
   watsonx_ai_url: https://us-south.ml.cloud.ibm.com
+azure_openai:
+  client_class: chuk_llm.llm.providers.azure_openai_client.AzureOpenAILLMClient
+  api_key_env: AZURE_OPENAI_API_KEY
+  api_key_fallback_env: AZURE_OPENAI_KEY
+  default_model: gpt-4o-mini
+  
+  # Azure-specific configuration
+  extra:
+    azure_endpoint_env: AZURE_OPENAI_BASE
+    api_version: "2024-02-01"
+    default_deployment_mapping: true  # Map model names to deployment names
+    
+    # Dynamic discovery for Azure OpenAI
+    dynamic_discovery:
+      enabled: true
+      discoverer_type: azure_openai
+      cache_timeout: 600
+      inference_config:
+        default_context_length: 128000
+        default_features:
+          - text
+          - streaming
+          - system_messages
+          - json_mode
+        default_max_output_tokens: 4096
+        
+        # Azure deployment patterns
+        deployment_rules:
+          gpt4_deployments:
+            base_context_length: 128000
+            base_max_output_tokens: 8192
+            features:
+              - text
+              - streaming
+              - tools
+              - vision
+              - parallel_calls
+              - json_mode
+              - system_messages
+            patterns:
+              - gpt-4
+              - gpt-4o
+              - gpt-4.1
+          
+          gpt35_deployments:
+            base_context_length: 16384
+            base_max_output_tokens: 4096
+            features:
+              - text
+              - streaming
+              - tools
+              - json_mode
+              - system_messages
+            patterns:
+              - gpt-3.5
+          
+          reasoning_deployments:
+            base_context_length: 200000
+            base_max_output_tokens: 32768
+            features:
+              - text
+              - streaming
+              - tools
+              - vision
+              - reasoning
+              - parallel_calls
+            patterns:
+              - o1
+              - o3
+              - o4
+  
+  # Baseline features (inherited by all models unless overridden)
+  features:
+    - text
+    - streaming
+    - system_messages
+    - json_mode
+  
+  max_context_length: 128000
+  max_output_tokens: 4096
+  
+  # Model aliases (can map to deployment names)
+  model_aliases:
+    gpt4: gpt-4
+    gpt4o: gpt-4o
+    gpt4o_mini: gpt-4o-mini
+    gpt35: gpt-3.5-turbo
+    latest: gpt-4o-mini
+    mini: gpt-4o-mini
+    turbo: gpt-4-turbo
+    reasoning: o3-mini
+    vision: gpt-4o
+    
+    # Azure deployment examples (customize for your deployments)
+    my_gpt4_deployment: gpt-4
+    my_gpt4o_deployment: gpt-4o
+    my_vision_deployment: gpt-4o
+  
+  # Model-specific capabilities
+  model_capabilities:
+    # O-series reasoning models
+    - pattern: "o[1-4].*"
+      features:
+        - text
+        - streaming
+        - tools
+        - vision
+        - reasoning
+        - parallel_calls
+      max_context_length: 200000
+      max_output_tokens: 32768
+    
+    # GPT-4o series
+    - pattern: "gpt-4o.*"
+      features:
+        - text
+        - streaming
+        - tools
+        - vision
+        - parallel_calls
+        - json_mode
+        - system_messages
+      max_context_length: 128000
+      max_output_tokens: 8192
+    
+    # GPT-4.1 series
+    - pattern: "gpt-4\\.1.*"
+      features:
+        - text
+        - streaming
+        - tools
+        - vision
+        - parallel_calls
+        - json_mode
+        - system_messages
+      max_context_length: 128000
+      max_output_tokens: 8192
+    
+    # GPT-4 Turbo and regular
+    - pattern: "gpt-4(-turbo|-preview)?$"
+      features:
+        - text
+        - streaming
+        - tools
+        - vision
+        - parallel_calls
+        - json_mode
+        - system_messages
+      max_context_length: 128000
+      max_output_tokens: 8192
+    
+    # GPT-3.5 Turbo
+    - pattern: "gpt-3\\.5-turbo.*"
+      features:
+        - text
+        - streaming
+        - tools
+        - json_mode
+        - system_messages
+      max_context_length: 16384
+      max_output_tokens: 4096
+  
+  # Available models (these would typically be discovered or configured per deployment)
+  models:
+    - gpt-4.1
+    - gpt-4.1-mini
+    - gpt-4o
+    - gpt-4o-mini
+    - gpt-4-turbo
+    - gpt-4
+    - gpt-3.5-turbo
+    - o1
+    - o1-mini
+    - o3
+    - o3-mini
+    - o4-mini
+  
+  # Rate limits (adjust based on your Azure subscription)
+  rate_limits:
+    default: 3000
+    tier_1: 1000
+    tier_2: 5000
+    premium: 10000
