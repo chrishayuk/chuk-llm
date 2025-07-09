@@ -13,6 +13,9 @@ pip install chuk_llm
 # With Redis for persistent sessions
 pip install chuk_llm[redis]
 
+# With watsonx
+pip install chuk_llm[watsonx]
+
 # With enhanced CLI experience
 pip install chuk_llm[cli]
 
