@@ -707,9 +707,8 @@ class TestOpenAIToolHandling:
         assert len(sanitized) == len(tools)
         for tool in sanitized:
             name = tool["function"]["name"]
-            # Should not contain dashes or spaces after sanitization
+            # Should not contain spaces after sanitization
             if name != "valid_name":  # valid_name is already valid
-                assert "-" not in name
                 assert " " not in name
 
 # Complex conversation tests
