@@ -124,7 +124,7 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
                 original_name = func.get("name", "")
                 if original_name:
                     # Replace invalid characters with underscores
-                    sanitized_name = re.sub(r'[^a-zA-Z0-9_]', '_', original_name)
+                    sanitized_name = re.sub(r'[^a-zA-Z0-9_-]', '_', original_name)
                     # Ensure it starts with a letter or underscore
                     if sanitized_name and not sanitized_name[0].isalpha() and sanitized_name[0] != '_':
                         sanitized_name = '_' + sanitized_name
