@@ -69,18 +69,20 @@ PROVIDER_REQUIREMENTS = {
         forbidden_chars={'.', ':', '@', '#', '$', '%', '^', '&', '*', '(', ')', '+', '=', '[', ']', '{', '}', '|', '\\', '/', '?', '<', '>', ',', ';', '"', "'", '`', '~'}
     ),
     
+    # OpenAI actually requires sanitization - dots and colons are forbidden
     "openai": ProviderToolRequirements(
-        pattern=r"^[a-zA-Z0-9_.-]{1,64}$",  # OpenAI is more flexible
+        pattern=r"^[a-zA-Z0-9_-]{1,64}$",  # Same as Mistral - no dots or colons
         max_length=64,
-        compatibility_level=CompatibilityLevel.NATIVE,
-        forbidden_chars={':', '@', '#', '$', '%', '^', '&', '*', '(', ')', '+', '=', '[', ']', '{', '}', '|', '\\', '/', '?', '<', '>', ',', ';', '"', "'", '`', '~'}
+        compatibility_level=CompatibilityLevel.SANITIZED,  # CHANGED from NATIVE to SANITIZED
+        forbidden_chars={'.', ':', '@', '#', '$', '%', '^', '&', '*', '(', ')', '+', '=', '[', ']', '{', '}', '|', '\\', '/', '?', '<', '>', ',', ';', '"', "'", '`', '~'}
     ),
     
+    # Azure OpenAI should match OpenAI requirements
     "azure_openai": ProviderToolRequirements(
-        pattern=r"^[a-zA-Z0-9_.-]{1,64}$",
+        pattern=r"^[a-zA-Z0-9_-]{1,64}$",  # Same as OpenAI
         max_length=64,
-        compatibility_level=CompatibilityLevel.NATIVE,
-        forbidden_chars={':', '@', '#', '$', '%', '^', '&', '*', '(', ')', '+', '=', '[', ']', '{', '}', '|', '\\', '/', '?', '<', '>', ',', ';', '"', "'", '`', '~'}
+        compatibility_level=CompatibilityLevel.SANITIZED,  # CHANGED from NATIVE to SANITIZED
+        forbidden_chars={'.', ':', '@', '#', '$', '%', '^', '&', '*', '(', ')', '+', '=', '[', ']', '{', '}', '|', '\\', '/', '?', '<', '>', ',', ';', '"', "'", '`', '~'}
     ),
     
     "gemini": ProviderToolRequirements(

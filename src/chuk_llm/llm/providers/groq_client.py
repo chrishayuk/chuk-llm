@@ -1,16 +1,23 @@
-# chuk_llm/llm/providers/groq_client.py
+# chuk_llm/llm/providers/groq_client.py - FIXED WITH ENHANCED CONTENT EXTRACTION
 """
 Groq chat-completion adapter with unified configuration integration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Enhanced wrapper around `groq` SDK that gets all capabilities from
-unified YAML configuration and includes robust function calling error handling.
+unified YAML configuration and includes universal tool name compatibility.
+
+CRITICAL FIXES:
+1. Enhanced content extraction that properly handles tool-only responses
+2. Reduced noisy warnings for normal tool-calling behavior
+3. Better logging for successful tool extraction
+4. Improved error handling and debugging information
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, AsyncIterator, Dict, List, Optional, Union, Tuple
+import uuid
 import json
+from typing import Any, AsyncIterator, Dict, List, Optional, Union, Tuple
 
 from groq import AsyncGroq
 
@@ -18,14 +25,21 @@ from groq import AsyncGroq
 from chuk_llm.llm.core.base import BaseLLMClient
 from ._mixins import OpenAIStyleMixin
 from ._config_mixin import ConfigAwareProviderMixin
+from ._tool_compatibility import ToolCompatibilityMixin
 
 log = logging.getLogger(__name__)
 
 
-class GroqAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient):
+class GroqAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAIStyleMixin, BaseLLMClient):
     """
     Configuration-aware adapter around `groq` SDK that gets all capabilities
-    from YAML configuration and includes enhanced function calling error handling.
+    from YAML configuration and includes universal tool name compatibility.
+    
+    Uses universal tool name compatibility system to handle any naming convention:
+    - stdio.read_query -> stdio_read_query (if needed)
+    - web.api:search -> web_api_search (if needed)
+    - database.sql.execute -> database_sql_execute (if needed)
+    - service:method -> service_method (if needed)
     """
 
     def __init__(
@@ -34,12 +48,13 @@ class GroqAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
     ) -> None:
-        # Initialize the configuration mixin FIRST
+        # Initialize ALL mixins including ToolCompatibilityMixin
         ConfigAwareProviderMixin.__init__(self, "groq", model)
+        ToolCompatibilityMixin.__init__(self, "groq")
         
         self.model = model
         
-        # ✅ FIX: Provide correct default base URL for Groq
+        # Provide correct default base URL for Groq
         groq_base_url = api_base or "https://api.groq.com/openai/v1"
         
         log.debug(f"Initializing Groq client with base_url: {groq_base_url}")
@@ -64,6 +79,9 @@ class GroqAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
         # Get base info from configuration
         info = super().get_model_info()
         
+        # Add tool compatibility info from universal system
+        tool_compatibility = self.get_tool_compatibility_info()
+        
         # Add Groq-specific metadata only if no error occurred
         if not info.get("error"):
             info.update({
@@ -73,6 +91,8 @@ class GroqAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
                     "function_calling_notes": "May require retry fallbacks for complex tool schemas",
                     "model_family": self._detect_model_family(),
                 },
+                # Universal tool compatibility info
+                **tool_compatibility,
                 "api_base": groq_base_url if hasattr(self, 'groq_base_url') else "https://api.groq.com/openai/v1",
                 "parameter_mapping": {
                     "temperature": "temperature",
@@ -100,6 +120,155 @@ class GroqAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
             return "gemma"
         else:
             return "unknown"
+
+    def _normalise_message(self, msg) -> Dict[str, Any]:
+        """
+        ENHANCED: Properly handle tool-only responses without noisy warnings.
+        
+        When LLMs make tool calls, they often don't include text content - this is 
+        normal and expected behavior. The previous version logged confusing warnings
+        about "no content found" when this is actually successful tool calling.
+        """
+        content = None
+        tool_calls = []
+        
+        # Enhanced content extraction with proper error handling
+        try:
+            # Method 1: Direct attribute access
+            if hasattr(msg, 'content') and msg.content is not None:
+                content = str(msg.content)
+                
+            # Method 2: Message wrapper access  
+            elif hasattr(msg, 'message') and hasattr(msg.message, 'content') and msg.message.content is not None:
+                content = str(msg.message.content)
+                
+            # Method 3: Dict access
+            elif isinstance(msg, dict) and 'content' in msg and msg['content'] is not None:
+                content = str(msg['content'])
+                
+        except Exception as e:
+            log.debug(f"Content extraction attempt failed (normal for tool-only responses): {e}")
+        
+        # Extract tool calls with enhanced error handling
+        try:
+            raw_tool_calls = None
+            
+            # Try multiple access patterns for tool calls
+            if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                raw_tool_calls = msg.tool_calls
+            elif hasattr(msg, 'message') and hasattr(msg.message, 'tool_calls') and msg.message.tool_calls:
+                raw_tool_calls = msg.message.tool_calls
+            elif isinstance(msg, dict) and msg.get('tool_calls'):
+                raw_tool_calls = msg['tool_calls']
+            
+            if raw_tool_calls:
+                for tc in raw_tool_calls:
+                    try:
+                        tc_id = getattr(tc, "id", None) or f"call_{uuid.uuid4().hex[:8]}"
+                        
+                        if hasattr(tc, 'function'):
+                            func = tc.function
+                            func_name = getattr(func, 'name', 'unknown_function')
+                            
+                            # Handle arguments with robust JSON processing
+                            args = getattr(func, 'arguments', '{}')
+                            try:
+                                if isinstance(args, str):
+                                    if args.strip():
+                                        parsed_args = json.loads(args)
+                                        args_j = json.dumps(parsed_args)
+                                    else:
+                                        args_j = "{}"
+                                elif isinstance(args, dict):
+                                    args_j = json.dumps(args)
+                                else:
+                                    args_j = "{}"
+                            except json.JSONDecodeError as je:
+                                log.debug(f"Invalid JSON in tool arguments, using empty dict: {args} - {je}")
+                                args_j = "{}"
+                            
+                            tool_calls.append({
+                                "id": tc_id,
+                                "type": "function",
+                                "function": {
+                                    "name": func_name,
+                                    "arguments": args_j,
+                                },
+                            })
+                        
+                    except Exception as e:
+                        log.debug(f"Failed to process individual tool call: {e}")
+                        continue
+                        
+        except Exception as e:
+            log.debug(f"Tool call extraction failed: {e}")
+        
+        # Determine response format and log appropriately
+        if tool_calls and not content:
+            # Tool-only response (normal for function calling)
+            log.debug(f"[Groq] Tool-only response with {len(tool_calls)} tool calls (no text content - this is normal)")
+            response_value = None
+        elif tool_calls and content:
+            # Mixed response with both content and tools
+            log.debug(f"[Groq] Mixed response: {len(content)} chars + {len(tool_calls)} tool calls")
+            response_value = content
+        elif content:
+            # Text-only response
+            log.debug(f"[Groq] Text-only response: {len(content)} characters")
+            response_value = content
+        else:
+            # Empty response
+            log.debug("[Groq] Empty response (no content or tool calls)")
+            response_value = ""
+        
+        result = {
+            "response": response_value,
+            "tool_calls": tool_calls
+        }
+        
+        return result
+
+    def _enhance_tool_call_logging(self, response: Dict[str, Any], name_mapping: Dict[str, str] = None):
+        """
+        Enhanced logging for tool call analysis and debugging.
+        """
+        if not response.get("tool_calls"):
+            if response.get("response"):
+                log.info(f"[Groq] Text response: {len(response['response'])} characters")
+            else:
+                log.debug(f"[Groq] Empty response")
+            return
+        
+        tool_calls = response["tool_calls"]
+        log.info(f"[Groq] Successfully extracted {len(tool_calls)} tool calls")
+        
+        for i, tc in enumerate(tool_calls):
+            func_name = tc.get("function", {}).get("name", "unknown")
+            func_args = tc.get("function", {}).get("arguments", "{}")
+            
+            # Show name restoration if applicable
+            if name_mapping:
+                original_name = None
+                for sanitized, orig in name_mapping.items():
+                    if orig == func_name:
+                        original_name = orig
+                        break
+                
+                if original_name and original_name != func_name:
+                    log.info(f"   {i+1}. {func_name} (restored from sanitized name)")
+                else:
+                    log.info(f"   {i+1}. {func_name}")
+            else:
+                log.info(f"   {i+1}. {func_name}")
+            
+            # Log parameter summary
+            try:
+                args_dict = json.loads(func_args) if isinstance(func_args, str) else func_args
+                if args_dict:
+                    param_summary = ", ".join([f"{k}={repr(v)[:50]}" for k, v in args_dict.items()])
+                    log.debug(f"      Parameters: {param_summary}")
+            except:
+                log.debug(f"      Raw arguments: {func_args[:100]}")
 
     def _validate_request_with_config(
         self, 
@@ -217,8 +386,50 @@ class GroqAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
         
         return simplified
 
+    def _prepare_messages_for_conversation(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        CRITICAL FIX: Prepare messages for conversation by sanitizing tool names in message history.
+        
+        This ensures tool names in assistant messages match the sanitized names sent to the API.
+        """
+        if not hasattr(self, '_current_name_mapping') or not self._current_name_mapping:
+            return messages
+        
+        prepared_messages = []
+        
+        for msg in messages:
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                # Sanitize tool names in assistant message tool calls
+                prepared_msg = msg.copy()
+                sanitized_tool_calls = []
+                
+                for tc in msg["tool_calls"]:
+                    tc_copy = tc.copy()
+                    original_name = tc["function"]["name"]
+                    
+                    # Find sanitized name from current mapping
+                    sanitized_name = None
+                    for sanitized, original in self._current_name_mapping.items():
+                        if original == original_name:
+                            sanitized_name = sanitized
+                            break
+                    
+                    if sanitized_name:
+                        tc_copy["function"] = tc["function"].copy()
+                        tc_copy["function"]["name"] = sanitized_name
+                        log.debug(f"Sanitized tool name in Groq conversation: {original_name} -> {sanitized_name}")
+                    
+                    sanitized_tool_calls.append(tc_copy)
+                
+                prepared_msg["tool_calls"] = sanitized_tool_calls
+                prepared_messages.append(prepared_msg)
+            else:
+                prepared_messages.append(msg)
+        
+        return prepared_messages
+
     # ──────────────────────────────────────────────────────────────────
-    # public API
+    # Enhanced public API using universal tool compatibility
     # ──────────────────────────────────────────────────────────────────
     def create_completion(
         self,
@@ -229,34 +440,45 @@ class GroqAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
         **kwargs: Any,
     ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
-        Configuration-aware completion with enhanced error handling for Groq.
+        Configuration-aware completion with universal tool name compatibility.
         
-        • stream=False → returns awaitable that resolves to single normalised dict
-        • stream=True  → returns async iterator that yields chunks in real-time
+        Uses universal tool name compatibility system to handle any naming convention:
+        - stdio.read_query -> stdio_read_query (sanitized and restored)
+        - web.api:search -> web_api_search (sanitized and restored)
+        - database.sql.execute -> database_sql_execute (sanitized and restored)
         """
         # Validate request against configuration
         validated_messages, validated_tools, validated_stream, validated_kwargs = self._validate_request_with_config(
             messages, tools, stream, **kwargs
         )
         
-        # Sanitize tool names (from mixin)
-        validated_tools = self._sanitize_tool_names(validated_tools)
+        # CRITICAL FIX: Apply universal tool name sanitization (stores mapping for restoration)
+        name_mapping = {}
+        if validated_tools:
+            validated_tools = self._sanitize_tool_names(validated_tools)
+            name_mapping = self._current_name_mapping
+            log.debug(f"Tool sanitization: {len(name_mapping)} tools processed for Groq compatibility")
+        
+        # CRITICAL FIX: Prepare messages for conversation (sanitize tool names in history)
+        if name_mapping:
+            validated_messages = self._prepare_messages_for_conversation(validated_messages)
 
         if validated_stream:
             # Return async generator directly for real streaming
-            return self._stream_completion_async(validated_messages, validated_tools or [], **validated_kwargs)
+            return self._stream_completion_async(validated_messages, validated_tools or [], name_mapping, **validated_kwargs)
 
         # non-streaming path
-        return self._regular_completion(validated_messages, validated_tools or [], **validated_kwargs)
+        return self._regular_completion(validated_messages, validated_tools or [], name_mapping, **validated_kwargs)
 
     async def _stream_completion_async(
         self,
         messages: List[Dict[str, Any]],
         tools: List[Dict[str, Any]],
+        name_mapping: Dict[str, str] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Real streaming using AsyncGroq with configuration-aware error handling.
+        Real streaming using AsyncGroq with universal tool name restoration.
         """
         try:
             log.debug(f"Starting Groq streaming for model: {self.model}")
@@ -287,14 +509,38 @@ class GroqAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
                     
                     # Extract content and tool calls
                     content = delta.content or ""
-                    tool_calls = getattr(delta, "tool_calls", [])
+                    tool_calls = []
+                    
+                    # Handle tool calls with universal name restoration
+                    if hasattr(delta, "tool_calls") and delta.tool_calls:
+                        for tc in delta.tool_calls:
+                            try:
+                                if hasattr(tc, 'function') and tc.function:
+                                    tool_calls.append({
+                                        "id": getattr(tc, 'id', f"call_{uuid.uuid4().hex[:8]}"),
+                                        "type": "function",
+                                        "function": {
+                                            "name": getattr(tc.function, 'name', ''),
+                                            "arguments": getattr(tc.function, 'arguments', '') or ""
+                                        }
+                                    })
+                            except Exception as e:
+                                log.debug(f"Error processing Groq streaming tool call: {e}")
+                                continue
+                    
+                    # Create result
+                    result = {
+                        "response": content,
+                        "tool_calls": tool_calls,
+                    }
+                    
+                    # CRITICAL: Restore tool names using universal restoration
+                    if name_mapping and tool_calls:
+                        result = self._restore_tool_names_in_response(result, name_mapping)
                     
                     # Only yield if we have actual content or tool calls
                     if content or tool_calls:
-                        yield {
-                            "response": content,
-                            "tool_calls": tool_calls,
-                        }
+                        yield result
                 
                 # Allow other async tasks to run periodically
                 if chunk_count % 10 == 0:
@@ -360,9 +606,10 @@ class GroqAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
         self,
         messages: List[Dict[str, Any]],
         tools: List[Dict[str, Any]],
+        name_mapping: Dict[str, str] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        """Non-streaming completion with enhanced Groq function calling error handling."""
+        """Non-streaming completion with enhanced tool extraction and logging."""
         try:
             log.debug(f"Groq regular completion - model: {self.model}, tools: {len(tools) if tools else 0}")
             
@@ -387,9 +634,12 @@ class GroqAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
                 
             result = self._normalise_message(resp.choices[0].message)
             
-            log.debug(f"Groq completion result: "
-                     f"response={len(str(result.get('response', ''))) if result.get('response') else 0} chars, "
-                     f"tool_calls={len(result.get('tool_calls', []))}")
+            # CRITICAL: Restore original tool names using universal restoration
+            if name_mapping and result.get("tool_calls"):
+                result = self._restore_tool_names_in_response(result, name_mapping)
+            
+            # Enhanced logging
+            self._enhance_tool_call_logging(result, name_mapping)
             
             return result
             
@@ -486,3 +736,10 @@ class GroqAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
             
         except (json.JSONDecodeError, TypeError, KeyError):
             return False
+
+    async def close(self):
+        """Cleanup resources"""
+        # Reset name mapping from universal system
+        self._current_name_mapping = {}
+        # Groq client cleanup if needed
+        pass

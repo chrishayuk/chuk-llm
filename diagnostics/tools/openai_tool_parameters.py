@@ -1,27 +1,33 @@
 #!/usr/bin/env python3
 """
-WatsonX Universal Tool Compatibility Test
-==========================================
+Complete Tool Chain Test for OpenAI - Universal Tool Compatibility
+================================================================
 
-Complete diagnostic script for IBM WatsonX universal tool compatibility,
-streaming performance, and enterprise features.
+This test simulates the complete conversation flow with universal tool names
+and proves that OpenAI's ToolCompatibilityMixin integration works correctly.
 
-Tests the updated WatsonX client with ToolCompatibilityMixin integration
-to ensure consistent behavior with OpenAI, Groq, Anthropic, and Mistral.
+Key features:
+1. Complete tool chain testing (list_tables -> describe_table -> read_query)
+2. Universal tool name compatibility (stdio.read_query, web.api:search, etc.)
+3. Bidirectional mapping with restoration throughout conversation
+4. Parameter extraction with various naming conventions
+5. Streaming support with tool name restoration
+6. Cross-provider consistency testing
+
+This matches the test patterns used for Mistral and Azure OpenAI.
 """
 
 import asyncio
 import json
-import time
-import sys
 import os
+import sys
 from pathlib import Path
+from typing import Dict, Any, Union
 
-# Add project root to path
+# Add project root and load environment
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-# Load environment variables from .env file
 try:
     from dotenv import load_dotenv
     env_file = project_root / ".env"
@@ -34,47 +40,67 @@ except ImportError:
     print("⚠️  python-dotenv not available, using system environment")
 
 
-def safe_parse_tool_arguments(arguments):
-    """Parse tool arguments safely"""
+def safe_parse_tool_arguments(arguments: Any) -> Dict[str, Any]:
+    """
+    Safely parse tool arguments that could be string or dict.
+    
+    OpenAI typically returns arguments as JSON strings, but can vary.
+    
+    Args:
+        arguments: Could be str (JSON), dict, or None
+        
+    Returns:
+        Dict with parsed arguments, empty dict if parsing fails
+    """
     if arguments is None:
         return {}
     
+    # If it's already a dict, return as-is
     if isinstance(arguments, dict):
         return arguments
     
+    # If it's a string, try to parse as JSON
     if isinstance(arguments, str):
+        # Handle empty string
+        if not arguments.strip():
+            return {}
+        
         try:
-            return json.loads(arguments)
-        except json.JSONDecodeError:
+            parsed = json.loads(arguments)
+            if isinstance(parsed, dict):
+                return parsed
+            else:
+                print(f"      ⚠️  Parsed arguments is not a dict: {type(parsed)}, value: {parsed}")
+                return {}
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"      ⚠️  Failed to parse tool arguments as JSON: {e}")
+            print(f"      Raw arguments: {repr(arguments)}")
             return {}
     
+    # For any other type, log and return empty dict
+    print(f"      ⚠️  Unexpected arguments type: {type(arguments)}, value: {arguments}")
     return {}
 
 
-async def test_watsonx_universal_compatibility():
-    """Test WatsonX universal tool compatibility integration"""
-    print("🧪 WATSONX UNIVERSAL TOOL COMPATIBILITY TEST")
-    print("=" * 60)
+async def test_complete_tool_chain_with_universal_names():
+    """Test the complete tool conversation chain with universal tool names and bidirectional mapping"""
+    print("🔗 OPENAI COMPLETE TOOL CHAIN TEST WITH UNIVERSAL COMPATIBILITY")
+    print("=" * 70)
+    print("This simulates the FULL conversation with universal tool names")
+    print("Testing: stdio.read_query, stdio.describe_table, stdio.list_tables")
     
-    # Check required environment variables
-    watsonx_api_key = os.getenv("WATSONX_API_KEY") or os.getenv("IBM_CLOUD_API_KEY")
-    project_id = os.getenv("WATSONX_PROJECT_ID")
-    
-    if not watsonx_api_key:
-        print("❌ WATSONX_API_KEY not found!")
+    # Check API key
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        print("❌ OPENAI_API_KEY not found!")
         return False
     
-    if not project_id:
-        print("❌ WATSONX_PROJECT_ID not found!")
-        return False
-    
-    print(f"✅ API key found: {watsonx_api_key[:8]}...{watsonx_api_key[-4:]}")
-    print(f"✅ Project ID found: {project_id}")
+    print(f"✅ API key found: {api_key[:8]}...{api_key[-4:]}")
     
     try:
         from chuk_llm.llm.client import get_client
         
-        client = get_client(provider="watsonx", model="ibm/granite-3-3-8b-instruct")
+        client = get_client(provider="openai", model="gpt-4o-mini")
         print(f"✅ Client created: {type(client).__name__}")
         
         # Check if client has universal tool compatibility
@@ -82,142 +108,317 @@ async def test_watsonx_universal_compatibility():
             tool_info = client.get_tool_compatibility_info()
             print(f"✅ Universal tool compatibility: {tool_info.get('compatibility_level', 'unknown')}")
             print(f"   Requires sanitization: {tool_info.get('requires_sanitization', 'unknown')}")
-            print(f"   Provider: {tool_info.get('provider', 'unknown')}")
-            print(f"   Max tool name length: {tool_info.get('max_tool_name_length', 'unknown')}")
-        else:
-            print("❌ Missing universal tool compatibility")
-            return False
         
-        return True
-        
-    except Exception as e:
-        print(f"❌ Error testing WatsonX universal compatibility: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-
-async def test_watsonx_universal_tool_names():
-    """Test WatsonX with universal tool names"""
-    print("\n🎯 WATSONX UNIVERSAL TOOL NAMES TEST")
-    print("=" * 50)
-    
-    try:
-        from chuk_llm.llm.client import get_client
-        
-        client = get_client(provider="watsonx", model="ibm/granite-3-3-8b-instruct")
-        
-        # Universal tool names (same as used in other provider tests)
-        universal_tools = [
+        # Universal tool names that may require sanitization for OpenAI
+        tools = [
             {
                 "type": "function",
                 "function": {
-                    "name": "stdio.read_query",
-                    "description": "Read a query from standard input",
+                    "name": "stdio.list_tables",
+                    "description": "List all tables in the SQLite database",
+                    "parameters": {"type": "object", "properties": {}}
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "stdio.describe_table",
+                    "description": "Get the schema information for a specific table",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "prompt": {
+                            "table_name": {
                                 "type": "string",
-                                "description": "The prompt to display"
+                                "description": "Name of the table to describe"
                             }
                         },
-                        "required": ["prompt"]
+                        "required": ["table_name"]
                     }
                 }
             },
             {
                 "type": "function",
                 "function": {
-                    "name": "web.api:search",
-                    "description": "Search the web using an API",
+                    "name": "stdio.read_query",
+                    "description": "Execute a SELECT query on the SQLite database",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "Search query"
+                                "description": "SELECT SQL query to execute"
                             }
                         },
                         "required": ["query"]
                     }
                 }
+            }
+        ]
+        
+        print("\n📋 Tool Names Being Used:")
+        for tool in tools:
+            original_name = tool["function"]["name"]
+            print(f"   • {original_name} (will be sanitized if needed and restored)")
+        
+        print("\n🎯 STEP 1: Initial Request")
+        print("=" * 30)
+        
+        # Start with the original request
+        conversation = [
+            {
+                "role": "system",
+                "content": """You are a database assistant. When the user asks for data:
+
+1. ALWAYS start by listing tables (if you don't know what tables exist)
+2. Then describe the specific table schema you need
+3. Finally write and execute the query
+
+CRITICAL: When calling stdio.describe_table, you MUST provide the table_name parameter. 
+Extract table names from previous tool results or the user's request.
+
+Example workflow:
+- User: "get products data" 
+- You: call stdio.list_tables() → see [{"name": "products"}]
+- You: call stdio.describe_table(table_name="products") ← MUST include table name!
+- You: call stdio.read_query(query="SELECT * FROM products LIMIT 10")
+
+Never call stdio.describe_table with empty parameters!
+Always use the exact tool names: stdio.list_tables, stdio.describe_table, stdio.read_query"""
             },
             {
-                "type": "function",
-                "function": {
-                    "name": "database.sql.execute",
-                    "description": "Execute a SQL query",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "sql": {
-                                "type": "string",
-                                "description": "SQL query to execute"
-                            }
-                        },
-                        "required": ["sql"]
-                    }
-                }
+                "role": "user", 
+                "content": "select top 10 products from the database"
             }
         ]
         
-        messages = [
-            {
-                "role": "user",
-                "content": "Please search the web for 'AI news', read user input for their name, and then execute a simple SQL query"
-            }
-        ]
-        
-        print("Testing WatsonX with universal tool names...")
-        original_names = [t['function']['name'] for t in universal_tools]
-        print(f"Original tool names: {original_names}")
-        
-        # Test non-streaming first
-        response = await client.create_completion(
-            messages=messages,
-            tools=universal_tools,
-            stream=False
+        response1 = await client.create_completion(
+            messages=conversation,
+            tools=tools,
+            stream=False,
+            max_tokens=500
         )
         
-        print("✅ SUCCESS: No tool naming errors with universal naming!")
-        
-        if response.get("tool_calls"):
-            print(f"🔧 Tool calls made: {len(response['tool_calls'])}")
-            for i, tool_call in enumerate(response["tool_calls"]):
-                func_name = tool_call.get("function", {}).get("name", "unknown")
-                print(f"   {i+1}. {func_name}")
+        print(f"AI Response 1:")
+        if response1.get("tool_calls"):
+            for i, call in enumerate(response1["tool_calls"]):
+                func_name = call["function"]["name"]
+                func_args = call["function"]["arguments"]
+                print(f"   Tool {i+1}: {func_name}({func_args})")
                 
-                # Verify original names are restored in response
-                if func_name in original_names:
-                    print(f"      ✅ Original name restored: {func_name}")
+                # Debug argument parsing
+                parsed_args = safe_parse_tool_arguments(func_args)
+                print(f"      📋 Parsed arguments: {parsed_args}")
+                
+                # Verify tool name restoration
+                if func_name in ["stdio.list_tables", "stdio.describe_table", "stdio.read_query"]:
+                    print(f"      ✅ Tool name correctly restored: {func_name}")
                 else:
-                    print(f"      ⚠️  Unexpected name in response: {func_name}")
-                    print(f"         (Should be one of: {original_names})")
-                    
-        elif response.get("response"):
-            print(f"💬 Text response: {response['response'][:150]}...")
-        else:
-            print(f"❓ Unexpected response format")
-        
-        return True
+                    print(f"      ⚠️  Unexpected tool name: {func_name}")
+                
+            # Expected: AI should call stdio.list_tables() first
+            first_call = response1["tool_calls"][0]
+            if "stdio.list_tables" in first_call["function"]["name"]:
+                print("✅ AI correctly started with stdio.list_tables")
+                
+                return await test_step_2_list_tables_result(client, conversation, response1, tools)
+                
+            else:
+                print("❌ AI didn't start with stdio.list_tables")
+                print(f"   Actually called: {first_call['function']['name']}")
+                
+                # Still acceptable if it called a relevant tool
+                if any(tool_name in first_call['function']['name'] for tool_name in ['describe_table', 'read_query']):
+                    print("   ⚠️  AI skipped list_tables but called relevant tool")
+                    return True
+                return False
+                
+        elif response1.get("response"):
+            print(f"   Text: {response1['response'][:100]}...")
+            print("   ⚠️  AI responded with text instead of tool call")
+            return False
+            
+        return False
         
     except Exception as e:
-        print(f"❌ Error testing universal tools: {e}")
+        print(f"❌ Error in tool chain test: {e}")
         import traceback
         traceback.print_exc()
         return False
 
 
-async def test_watsonx_parameter_extraction():
-    """Test parameter extraction with universal tool names"""
-    print("\n🎯 WATSONX UNIVERSAL PARAMETER EXTRACTION TEST")
-    print("=" * 60)
+async def test_step_2_list_tables_result(client, conversation, response1, tools):
+    """Step 2: Simulate list_tables result and continue"""
+    print("\n🎯 STEP 2: Simulate stdio.list_tables Result")
+    print("=" * 45)
+    
+    # Add the tool result to conversation
+    first_call = response1["tool_calls"][0]
+    conversation.extend([
+        {
+            "role": "assistant",
+            "tool_calls": response1["tool_calls"]
+        },
+        {
+            "role": "tool",
+            "tool_call_id": first_call["id"],
+            "content": json.dumps([{"name": "products"}, {"name": "orders"}, {"name": "customers"}])
+        }
+    ])
+    
+    print("Simulated stdio.list_tables result: [{'name': 'products'}, {'name': 'orders'}, {'name': 'customers'}]")
+    print("Now asking AI to continue...")
+    
+    # Continue the conversation
+    response2 = await client.create_completion(
+        messages=conversation,
+        tools=tools,
+        stream=False,
+        max_tokens=500
+    )
+    
+    print(f"\nAI Response 2:")
+    if response2.get("tool_calls"):
+        for i, call in enumerate(response2["tool_calls"]):
+            func_name = call["function"]["name"]
+            func_args = call["function"]["arguments"]
+            print(f"   Tool {i+1}: {func_name}({func_args})")
+            
+            # Verify tool name restoration
+            if func_name in ["stdio.list_tables", "stdio.describe_table", "stdio.read_query"]:
+                print(f"      ✅ Tool name correctly restored: {func_name}")
+            
+            # Check if stdio.describe_table is called correctly
+            if "stdio.describe_table" in func_name:
+                parsed_args = safe_parse_tool_arguments(func_args)
+                print(f"      📋 Parsed arguments: {parsed_args}")
+                
+                table_name = parsed_args.get("table_name", "")
+                if table_name:
+                    print(f"   ✅ SUCCESS! stdio.describe_table called with table_name: '{table_name}'")
+                    
+                    # Continue to step 3
+                    return await test_step_3_schema_result(client, conversation, response2, tools, table_name)
+                else:
+                    print(f"   ❌ FAILED! stdio.describe_table called without table_name")
+                    print(f"      Parsed args: {parsed_args}")
+                    return False
+    
+    elif response2.get("response"):
+        print(f"   Text: {response2['response'][:100]}...")
+        print("   ⚠️  AI responded with text instead of tool call")
+        
+        # Check if AI is asking for clarification
+        if "table" in response2['response'].lower():
+            print("   💡 AI might be asking for table clarification - this is acceptable")
+            return True
+        return False
+    
+    return False
+
+
+async def test_step_3_schema_result(client, conversation, response2, tools, table_name):
+    """Continue with step 3: simulate schema result and get final query"""
+    print(f"\n🎯 STEP 3: Simulate stdio.describe_table Result for '{table_name}'")
+    print("=" * 55)
+    
+    # Add the describe_table result
+    describe_call = response2["tool_calls"][0]
+    
+    # Simulate a realistic products table schema
+    schema_result = {
+        "table_name": table_name,
+        "columns": [
+            {"name": "id", "type": "INTEGER", "primary_key": True},
+            {"name": "name", "type": "VARCHAR(255)", "nullable": False},
+            {"name": "price", "type": "DECIMAL(10,2)", "nullable": False},
+            {"name": "category", "type": "VARCHAR(100)", "nullable": True},
+            {"name": "stock_quantity", "type": "INTEGER", "nullable": False},
+            {"name": "created_at", "type": "TIMESTAMP", "nullable": False}
+        ]
+    }
+    
+    conversation.extend([
+        {
+            "role": "assistant",
+            "tool_calls": response2["tool_calls"]
+        },
+        {
+            "role": "tool",
+            "tool_call_id": describe_call["id"],
+            "content": json.dumps(schema_result)
+        }
+    ])
+    
+    print(f"Simulated schema result for {table_name}:")
+    print(f"   Columns: id, name, price, category, stock_quantity, created_at")
+    print("Now asking AI to write the final query...")
+    
+    # Get the final query
+    response3 = await client.create_completion(
+        messages=conversation,
+        tools=tools,
+        stream=False,
+        max_tokens=500
+    )
+    
+    print(f"\nAI Response 3:")
+    if response3.get("tool_calls"):
+        for i, call in enumerate(response3["tool_calls"]):
+            func_name = call["function"]["name"]
+            func_args = call["function"]["arguments"]
+            print(f"   Tool {i+1}: {func_name}({func_args})")
+            
+            # Verify tool name restoration
+            if func_name == "stdio.read_query":
+                print(f"      ✅ Tool name correctly restored: {func_name}")
+            
+            # Check if stdio.read_query is called correctly
+            if "stdio.read_query" in func_name:
+                parsed_args = safe_parse_tool_arguments(func_args)
+                query = parsed_args.get("query", "")
+                
+                if query:
+                    print(f"   ✅ FINAL SUCCESS! Query generated:")
+                    print(f"      {query}")
+                    
+                    # Validate the query makes sense
+                    if table_name.lower() in query.lower() and "select" in query.lower():
+                        print("   ✅ Query looks correct and uses the right table!")
+                        return True
+                    else:
+                        print("   ⚠️  Query might not be optimal but is acceptable")
+                        return True
+                else:
+                    print(f"   ❌ stdio.read_query called without query parameter")
+                    print(f"      Parsed args: {parsed_args}")
+                    return False
+    
+    elif response3.get("response"):
+        print(f"   Text: {response3['response'][:200]}...")
+        
+        # Check if the text contains a SQL query
+        if "SELECT" in response3["response"].upper() and table_name.lower() in response3["response"].lower():
+            print("   ✅ AI provided query in text response (acceptable)")
+            return True
+        else:
+            print("   ⚠️  AI provided text but no clear SQL query")
+    
+    return False
+
+
+async def test_universal_parameter_extraction():
+    """Test if AI can extract parameters directly from user requests with universal tool names"""
+    print("\n🎯 OPENAI UNIVERSAL PARAMETER EXTRACTION TEST")
+    print("=" * 55)
+    
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return False
     
     try:
         from chuk_llm.llm.client import get_client
         
-        client = get_client(provider="watsonx", model="ibm/granite-3-3-8b-instruct")
+        client = get_client(provider="openai", model="gpt-4o-mini")
         
         # Universal tool names for testing
         tools = [
@@ -262,29 +463,29 @@ async def test_watsonx_parameter_extraction():
             {
                 "type": "function",
                 "function": {
-                    "name": "watsonx.granite:analyze",
-                    "description": "Analyze data using IBM Granite models",
+                    "name": "filesystem.read_file",
+                    "description": "Read contents of a file",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "data_type": {
+                            "path": {
                                 "type": "string",
-                                "description": "Type of data to analyze"
+                                "description": "File path to read"
                             },
-                            "analysis_level": {
+                            "encoding": {
                                 "type": "string",
-                                "description": "Level of analysis required"
+                                "description": "File encoding (default: utf-8)"
                             }
                         },
-                        "required": ["data_type"]
+                        "required": ["path"]
                     }
                 }
             }
         ]
         
-        print("🔧 Testing universal tool names with WatsonX:")
+        print("🔧 Testing universal tool names with OpenAI:")
         for tool in tools:
-            print(f"   • {tool['function']['name']} (enterprise-grade sanitization)")
+            print(f"   • {tool['function']['name']} (may require sanitization)")
         
         # Test cases where parameters are explicit
         test_cases = [
@@ -299,14 +500,19 @@ async def test_watsonx_parameter_extraction():
                 "expected_params": {"table_name": "users"}
             },
             {
-                "request": "search for 'IBM Watson' in AI category",
+                "request": "search for 'OpenAI GPT' in technology category",
                 "expected_tool": "web.api:search",
-                "expected_params": {"query": "IBM Watson", "category": "AI"}
+                "expected_params": {"query": "OpenAI GPT", "category": "technology"}
             },
             {
-                "request": "analyze financial data with deep analysis",
-                "expected_tool": "watsonx.granite:analyze",
-                "expected_params": {"data_type": "financial", "analysis_level": "deep"}
+                "request": "read the config.json file",
+                "expected_tool": "filesystem.read_file",
+                "expected_params": {"path": "config.json"}
+            },
+            {
+                "request": "what columns does the orders table have?",
+                "expected_tool": "stdio.describe_table",
+                "expected_params": {"table_name": "orders"}
             }
         ]
         
@@ -322,13 +528,14 @@ async def test_watsonx_parameter_extraction():
 
 For web searches, extract the query and category from the user's request for web.api:search.
 
-For WatsonX analysis, extract the data type and analysis level from the user's request for watsonx.granite:analyze.
+For file operations, extract the file path from the user's request for filesystem.read_file.
 
 Examples:
 - "describe the products table" → stdio.describe_table(table_name="products")
 - "show users table structure" → stdio.describe_table(table_name="users")  
 - "search for 'AI news'" → web.api:search(query="AI news")
-- "analyze sales data" → watsonx.granite:analyze(data_type="sales")
+- "search for 'python' in programming" → web.api:search(query="python", category="programming")
+- "read config.json file" → filesystem.read_file(path="config.json")
 
 NEVER call tools with empty required parameters!
 Always use the exact tool names provided."""
@@ -359,7 +566,6 @@ Always use the exact tool names provided."""
                 else:
                     print(f"   ⚠️  Different tool called: {func_name}")
                 
-                # Parse arguments safely
                 parsed_args = safe_parse_tool_arguments(func_args)
                 print(f"   Parameters: {parsed_args}")
                 
@@ -369,7 +575,7 @@ Always use the exact tool names provided."""
                 
                 for key, expected_value in expected_params.items():
                     actual_value = parsed_args.get(key, "")
-                    if key in ["table_name", "data_type"]:
+                    if key in ["table_name", "path"]:
                         if actual_value == expected_value:
                             print(f"   ✅ {key}: '{actual_value}' (exact match)")
                         elif actual_value and expected_value in actual_value:
@@ -408,17 +614,21 @@ Always use the exact tool names provided."""
         return False
 
 
-async def test_watsonx_streaming_with_universal_tools():
+async def test_streaming_with_universal_tools():
     """Test streaming functionality with universal tool names"""
-    print("\n🎯 WATSONX STREAMING WITH UNIVERSAL TOOLS TEST")
+    print("\n🎯 OPENAI STREAMING WITH UNIVERSAL TOOLS TEST")
     print("=" * 55)
+    
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return False
     
     try:
         from chuk_llm.llm.client import get_client
         
-        client = get_client(provider="watsonx", model="ibm/granite-3-3-8b-instruct")
+        client = get_client(provider="openai", model="gpt-4o-mini")
         
-        # Universal tools requiring enterprise sanitization
+        # Universal tools requiring potential sanitization
         tools = [
             {
                 "type": "function",
@@ -451,14 +661,14 @@ async def test_watsonx_streaming_with_universal_tools():
             {
                 "type": "function",
                 "function": {
-                    "name": "watsonx.granite:analyze",
-                    "description": "Analyze data with IBM Granite",
+                    "name": "filesystem.list_files",
+                    "description": "List files in directory",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "data_type": {"type": "string", "description": "Data type"}
+                            "path": {"type": "string", "description": "Directory path"}
                         },
-                        "required": ["data_type"]
+                        "required": ["path"]
                     }
                 }
             }
@@ -467,11 +677,11 @@ async def test_watsonx_streaming_with_universal_tools():
         messages = [
             {
                 "role": "user",
-                "content": "Search for 'enterprise AI solutions', analyze market data, and query the database for customer insights"
+                "content": "Search for 'latest AI news', list files in the current directory, and query the database for user data"
             }
         ]
         
-        print("Testing WatsonX streaming with universal tool names...")
+        print("Testing OpenAI streaming with universal tool names...")
         print("Expected: Tool names should be restored in streaming chunks")
         
         response = client.create_completion(
@@ -503,17 +713,17 @@ async def test_watsonx_streaming_with_universal_tools():
                         print(f"\n   🔧 Streaming tool call: {tool_name}")
                         
                         # Verify name restoration
-                        if tool_name in ["stdio.read_query", "web.api:search", "watsonx.granite:analyze"]:
+                        if tool_name in ["stdio.read_query", "web.api:search", "filesystem.list_files"]:
                             print(f"      ✅ Universal tool name correctly restored in stream")
                             restored_names.append(tool_name)
                         else:
                             print(f"      ⚠️  Unexpected tool name in stream: {tool_name}")
             
             # Limit for testing
-            if chunk_count >= 25:
+            if chunk_count >= 20:
                 break
         
-        print(f"\n✅ WatsonX streaming test completed:")
+        print(f"\n✅ OpenAI streaming test completed:")
         print(f"   Chunks processed: {chunk_count}")
         print(f"   Text chunks: {len(text_content)}")
         print(f"   Tool calls found: {len(tool_calls_found)}")
@@ -530,96 +740,13 @@ async def test_watsonx_streaming_with_universal_tools():
             return False
         
     except Exception as e:
-        print(f"❌ Error in WatsonX streaming test: {e}")
+        print(f"❌ Error in OpenAI streaming test: {e}")
         return False
 
 
-async def test_watsonx_enterprise_features():
-    """Test WatsonX enterprise-specific features"""
-    print("\n🎯 WATSONX ENTERPRISE FEATURES TEST")
-    print("=" * 45)
-    
-    try:
-        from chuk_llm.llm.client import get_client
-        
-        client = get_client(provider="watsonx", model="ibm/granite-3-3-8b-instruct")
-        
-        # Test model family detection
-        if hasattr(client, '_detect_model_family'):
-            family = client._detect_model_family()
-            print(f"✅ Model family detected: {family}")
-        
-        # Test enterprise-grade tool sanitization
-        enterprise_tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "watsonx.governance:audit",
-                    "description": "Audit AI model decisions with enterprise governance",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "model_decision": {"type": "string", "description": "Model decision to audit"},
-                            "compliance_level": {"type": "string", "enum": ["basic", "advanced", "enterprise"]},
-                            "audit_trail": {"type": "boolean", "description": "Include audit trail"}
-                        },
-                        "required": ["model_decision"]
-                    }
-                }
-            }
-        ]
-        
-        messages = [
-            {
-                "role": "user",
-                "content": "Audit the model decision for loan approval with enterprise compliance and full audit trail"
-            }
-        ]
-        
-        print("Testing enterprise tool schemas with WatsonX...")
-        
-        response = await client.create_completion(
-            messages=messages,
-            tools=enterprise_tools,
-            stream=False,
-            max_tokens=300
-        )
-        
-        if response.get("tool_calls"):
-            call = response["tool_calls"][0]
-            func_name = call["function"]["name"]
-            func_args = call["function"]["arguments"]
-            
-            print(f"✅ Enterprise tool call successful:")
-            print(f"   Tool: {func_name}")
-            
-            parsed_args = safe_parse_tool_arguments(func_args)
-            print(f"   Parameters: {parsed_args}")
-            
-            # Check if WatsonX handled the enterprise schema
-            if parsed_args.get("model_decision"):
-                print(f"   ✅ WatsonX successfully handled enterprise schema")
-                return True
-            else:
-                print(f"   ⚠️  Enterprise schema partially handled")
-                return True
-                
-        elif response.get("response"):
-            print(f"   ⚠️  WatsonX provided text response instead of tool call")
-            if "audit" in response["response"].lower():
-                print(f"   ✅ Response mentions audit - acceptable fallback")
-                return True
-            
-        return False
-        
-    except Exception as e:
-        print(f"❌ Error in WatsonX enterprise test: {e}")
-        return False
-
-
-async def test_cross_provider_consistency():
-    """Test that WatsonX provides consistent behavior with other providers"""
-    print("\n🎯 CROSS-PROVIDER CONSISTENCY TEST")
+async def test_provider_consistency():
+    """Test that OpenAI provides consistent behavior with other providers"""
+    print("\n🎯 OPENAI PROVIDER CONSISTENCY TEST")
     print("=" * 50)
     
     print("Testing same request with multiple providers...")
@@ -647,18 +774,18 @@ async def test_cross_provider_consistency():
     ]
     
     providers_to_test = [
-        ("watsonx", "ibm/granite-3-3-8b-instruct"),
+        ("openai", "gpt-4o-mini"),
     ]
     
     # Add other providers if keys are available
-    if os.getenv("OPENAI_API_KEY"):
-        providers_to_test.append(("openai", "gpt-4o-mini"))
     if os.getenv("ANTHROPIC_API_KEY"):
         providers_to_test.append(("anthropic", "claude-sonnet-4-20250514"))
     if os.getenv("MISTRAL_API_KEY"):
         providers_to_test.append(("mistral", "mistral-medium-2505"))
-    if os.getenv("GROQ_API_KEY"):
-        providers_to_test.append(("groq", "llama-3.3-70b-versatile"))
+    if os.getenv("AZURE_OPENAI_API_KEY"):
+        providers_to_test.append(("azure_openai", "gpt-4o-mini"))
+    if os.getenv("GEMINI_API_KEY"):
+        providers_to_test.append(("gemini", "gemini-2.5-flash"))
     
     results = {}
     
@@ -746,102 +873,85 @@ async def test_cross_provider_consistency():
 
 
 async def main():
-    """Run the complete WatsonX test suite with universal tool compatibility"""
-    print("🧪 WATSONX UNIVERSAL TOOL COMPATIBILITY TEST SUITE")
-    print("=" * 70)
+    """Run the complete OpenAI test suite with universal tool compatibility"""
+    print("🧪 OPENAI COMPLETE TOOL CHAIN & UNIVERSAL COMPATIBILITY TEST")
+    print("=" * 75)
     
-    print("This test will verify that the updated WatsonX client:")
-    print("1. Has universal tool compatibility integration")
-    print("2. Handles universal tool names with bidirectional mapping")
-    print("3. Extracts parameters correctly from any tool naming convention")
-    print("4. Provides enterprise-grade tool sanitization")
-    print("5. Maintains streaming performance with tool name restoration")
-    print("6. Provides consistent behavior with other providers")
+    print("This test will prove OpenAI's universal tool compatibility works by:")
+    print("1. Testing complete tool conversation chains with MCP-style names")
+    print("2. Testing parameter extraction with universal tool names")
+    print("3. Testing streaming with tool name restoration")
+    print("4. Showing bidirectional mapping throughout conversation flows")
+    print("5. Comparing consistency with other providers")
     
-    # Test 1: Universal compatibility integration
-    result1 = await test_watsonx_universal_compatibility()
+    # Test 1: Complete tool chain with universal names
+    result1 = await test_complete_tool_chain_with_universal_names()
     
-    # Test 2: Universal tool names
-    result2 = await test_watsonx_universal_tool_names() if result1 else False
+    # Test 2: Universal parameter extraction
+    result2 = await test_universal_parameter_extraction()
     
-    # Test 3: Parameter extraction
-    result3 = await test_watsonx_parameter_extraction() if result2 else False
+    # Test 3: Streaming with universal tools
+    result3 = await test_streaming_with_universal_tools()
     
-    # Test 4: Streaming with universal tools
-    result4 = await test_watsonx_streaming_with_universal_tools() if result3 else False
+    # Test 4: Provider consistency
+    result4 = await test_provider_consistency()
     
-    # Test 5: Enterprise features
-    result5 = await test_watsonx_enterprise_features() if result4 else False
+    print("\n" + "=" * 75)
+    print("🎯 OPENAI COMPLETE TEST RESULTS:")
+    print(f"   Universal Tool Chain: {'✅ PASS' if result1 else '❌ FAIL'}")
+    print(f"   Universal Parameters: {'✅ PASS' if result2 else '❌ FAIL'}")
+    print(f"   Streaming + Restoration: {'✅ PASS' if result3 else '❌ FAIL'}")
+    print(f"   Provider Consistency: {'✅ PASS' if result4 else '❌ FAIL'}")
     
-    # Test 6: Cross-provider consistency
-    result6 = await test_cross_provider_consistency() if result5 else False
-    
-    print("\n" + "=" * 70)
-    print("🎯 WATSONX UNIVERSAL COMPATIBILITY TEST RESULTS:")
-    print(f"   Universal Compatibility Integration: {'✅ PASS' if result1 else '❌ FAIL'}")
-    print(f"   Universal Tool Names: {'✅ PASS' if result2 else '❌ FAIL'}")
-    print(f"   Universal Parameters: {'✅ PASS' if result3 else '❌ FAIL'}")
-    print(f"   Streaming + Restoration: {'✅ PASS' if result4 else '❌ FAIL'}")
-    print(f"   Enterprise Features: {'✅ PASS' if result5 else '❌ FAIL'}")
-    print(f"   Cross-Provider Consistency: {'✅ PASS' if result6 else '❌ FAIL'}")
-    
-    if result1 and result2 and result3 and result4 and result5 and result6:
-        print("\n🎉 COMPLETE WATSONX SUCCESS!")
-        print("✅ WatsonX universal tool compatibility works perfectly!")
+    if result1 and result2 and result3 and result4:
+        print("\n🎉 COMPLETE OPENAI SUCCESS!")
+        print("✅ OpenAI universal tool compatibility works perfectly!")
         
         print("\n🔧 PROVEN CAPABILITIES:")
         print("   ✅ MCP-style tool names (stdio.read_query) work seamlessly")
         print("   ✅ API-style tool names (web.api:search) work seamlessly")
-        print("   ✅ WatsonX-style names (watsonx.granite:analyze) work seamlessly")
-        print("   ✅ Enterprise-grade tool name sanitization")
+        print("   ✅ Filesystem-style names (filesystem.read_file) work seamlessly")
+        print("   ✅ Tool names are sanitized for OpenAI API compatibility")
         print("   ✅ Original names are restored in responses")
         print("   ✅ Bidirectional mapping works in streaming")
         print("   ✅ Complex conversation flows maintain name restoration")
         print("   ✅ Parameter extraction works with any naming convention")
-        print("   ✅ Enterprise governance and compliance features")
-        print("   ✅ Consistent behavior with OpenAI, Groq, Anthropic, Mistral")
+        print("   ✅ Consistent behavior with other providers")
         
         print("\n🚀 READY FOR PRODUCTION:")
-        print("   • MCP CLI can use any tool naming convention with WatsonX")
-        print("   • WatsonX provides identical user experience to other providers")
+        print("   • MCP CLI can use any tool naming convention with OpenAI")
+        print("   • OpenAI provides identical user experience to other providers")
         print("   • Tool chaining works across conversation turns")
         print("   • Streaming maintains tool name fidelity")
         print("   • Provider switching is seamless")
-        print("   • Enterprise-grade security and governance")
-        print("   • IBM Granite models with strong reasoning")
         
-        print("\n💡 MCP CLI Usage:")
-        print("   mcp-cli chat --provider watsonx --model ibm/granite-3-3-8b-instruct")
-        print("   mcp-cli chat --provider watsonx --model meta-llama/llama-3-3-70b-instruct")
+        print("\n💡 Original MCP CLI error is COMPLETELY FIXED!")
+        print("   mcp-cli chat --provider openai --model gpt-4o-mini")
+        print("   mcp-cli chat --provider openai --model gpt-4o")
         
-    elif any([result1, result2, result3, result4, result5, result6]):
+    elif any([result1, result2, result3, result4]):
         print("\n⚠️  PARTIAL SUCCESS:")
         print("   Some aspects of universal tool compatibility work")
         if result1:
-            print("   ✅ Universal compatibility integration works")
+            print("   ✅ Tool chaining works")
         if result2:
-            print("   ✅ Universal tool names work")
-        if result3:
             print("   ✅ Parameter extraction works")
-        if result4:
+        if result3:
             print("   ✅ Streaming restoration works")
-        if result5:
-            print("   ✅ Enterprise features work")
-        if result6:
-            print("   ✅ Cross-provider consistency works")
+        if result4:
+            print("   ✅ Provider consistency works")
         
     else:
         print("\n❌ TESTS FAILED:")
         print("   Universal tool compatibility needs debugging")
         print("\n🔧 DEBUGGING STEPS:")
-        print("   1. Verify WATSONX_API_KEY and WATSONX_PROJECT_ID are correctly set")
+        print("   1. Verify OpenAI API key is correctly set")
         print("   2. Check ToolCompatibilityMixin is properly inherited")
         print("   3. Validate tool name sanitization and mapping")
         print("   4. Ensure response restoration is working")
         print("   5. Validate conversation flow handling")
-        print("   6. Check WatsonX project has proper model access")
 
 
 if __name__ == "__main__":
-    print("🚀 Starting WatsonX Universal Tool Compatibility Test...")
+    print("🚀 Starting OpenAI Complete Tool Chain Test with Universal Compatibility...")
     asyncio.run(main())

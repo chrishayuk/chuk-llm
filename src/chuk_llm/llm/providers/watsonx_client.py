@@ -1,9 +1,12 @@
-# chuk_llm/llm/providers/watsonx_client.py
+# chuk_llm/llm/providers/watsonx_client.py - COMPLETE WITH ENHANCED GRANITE PARSING
 """
 Watson X chat-completion adapter with unified configuration integration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Wraps the official `ibm-watsonx-ai` SDK and exposes an **OpenAI-style** interface
 compatible with the rest of *chuk-llm*.
+
+CRITICAL UPDATE: Now includes comprehensive IBM Granite model tool format parsing
+and universal ToolCompatibilityMixin for consistent tool name handling.
 
 Key points
 ----------
@@ -11,9 +14,12 @@ Key points
 *   Converts ChatML → Watson X Messages format (tools / multimodal, …)
 *   Maps Watson X replies back to the common `{response, tool_calls}` schema
 *   **Real Streaming** - uses Watson X's native streaming API
-*   **MCP Tool Compatibility** - handles MCP-style tool names with sanitization
+*   **Universal Tool Compatibility** - uses standardized ToolCompatibilityMixin
+*   **Enhanced Granite Parsing** - handles 7+ IBM Granite tool calling formats
+*   **Enterprise-grade tool sanitization** - handles any naming convention
 """
 from __future__ import annotations
+import ast
 import json
 import logging
 import os
@@ -29,6 +35,7 @@ from ibm_watsonx_ai.foundation_models import ModelInference
 from ..core.base import BaseLLMClient
 from ._mixins import OpenAIStyleMixin
 from ._config_mixin import ConfigAwareProviderMixin
+from ._tool_compatibility import ToolCompatibilityMixin
 
 log = logging.getLogger(__name__)
 if os.getenv("LOGLEVEL"):
@@ -42,8 +49,253 @@ def _safe_get(obj: Any, key: str, default: Any = None) -> Any:  # noqa: D401 - u
     return obj.get(key, default) if isinstance(obj, dict) else getattr(obj, key, default)
 
 
+def _parse_watsonx_tool_formats(text: str) -> List[Dict[str, Any]]:
+    """
+    Parse WatsonX/Granite-specific tool calling formats from text content.
+    
+    Handles multiple enterprise tool formats including IBM Granite model variations:
+    1. Granite direct format: {'name': 'func', 'arguments': {...}}
+    2. <|tool|>function_name</|tool|> <|param:name|>value</param>
+    3. <function_call>{"name": "func", "arguments": {...}}</function_call>
+    4. ```json {"function_call": {"name": "func", "arguments": {...}}} ```
+    5. ```python function_name(param="value") ```
+    6. {"api": "namespace", "function": "name", "params": {...}}
+    7. <|tool|>function_name<|file_sep|> <|param|> {...}
+    8. Direct JSON function calls
+    """
+    if not text or not isinstance(text, str):
+        return []
+    
+    tool_calls = []
+    
+    try:
+        # Format 1: Granite direct format: {'name': 'func', 'arguments': {...}} (PRIORITY)
+        # This is the expected Granite response format from the tutorial
+        granite_pattern = r"'name':\s*'([^']+)',\s*'arguments':\s*(\{[^}]*\})"
+        granite_matches = re.findall(granite_pattern, text)
+        for func_name, args_str in granite_matches:
+            try:
+                # Convert single quotes to double quotes for JSON parsing
+                args_json = args_str.replace("'", '"')
+                args = json.loads(args_json)
+                tool_calls.append({
+                    "id": f"call_{uuid.uuid4().hex[:8]}",
+                    "type": "function",
+                    "function": {
+                        "name": func_name,
+                        "arguments": json.dumps(args)
+                    }
+                })
+            except json.JSONDecodeError:
+                # Try alternative parsing
+                try:
+                    args = ast.literal_eval(args_str)
+                    tool_calls.append({
+                        "id": f"call_{uuid.uuid4().hex[:8]}",
+                        "type": "function",
+                        "function": {
+                            "name": func_name,
+                            "arguments": json.dumps(args)
+                        }
+                    })
+                except:
+                    continue
+        
+        # Format 1b: Alternative Granite format with dict structure
+        granite_dict_pattern = r'\{\s*["\']name["\']\s*:\s*["\']([^"\']+)["\'].*?["\']arguments["\']\s*:\s*(\{[^}]*\})\s*\}'
+        granite_dict_matches = re.findall(granite_dict_pattern, text, re.DOTALL)
+        for func_name, args_str in granite_dict_matches:
+            try:
+                args_json = args_str.replace("'", '"')
+                args = json.loads(args_json)
+                tool_calls.append({
+                    "id": f"call_{uuid.uuid4().hex[:8]}",
+                    "type": "function",
+                    "function": {
+                        "name": func_name,
+                        "arguments": json.dumps(args)
+                    }
+                })
+            except:
+                continue
+        
+        # Format 2: <|tool|>function_name</|tool|> <|param:name|>value</param>
+        tool_pattern = r'<\|tool\|>([^<]+)</\|tool\|>'
+        param_pattern = r'<\|param:([^|]+)\|>([^<]*)</param>'
+        
+        tool_matches = re.findall(tool_pattern, text)
+        if tool_matches:
+            for tool_name in tool_matches:
+                # Extract parameters for this tool
+                params = {}
+                param_matches = re.findall(param_pattern, text)
+                for param_name, param_value in param_matches:
+                    params[param_name] = param_value
+                
+                tool_calls.append({
+                    "id": f"call_{uuid.uuid4().hex[:8]}",
+                    "type": "function",
+                    "function": {
+                        "name": tool_name.strip(),
+                        "arguments": json.dumps(params)
+                    }
+                })
+        
+        # Format 3: <function_call>{"name": "func", "arguments": {...}}</function_call>
+        function_call_pattern = r'<function_call>(\{[^}]*\})</function_call>'
+        function_matches = re.findall(function_call_pattern, text, re.DOTALL)
+        for match in function_matches:
+            try:
+                call_data = json.loads(match)
+                if "name" in call_data:
+                    tool_calls.append({
+                        "id": f"call_{uuid.uuid4().hex[:8]}",
+                        "type": "function",
+                        "function": {
+                            "name": call_data["name"],
+                            "arguments": json.dumps(call_data.get("arguments", {}))
+                        }
+                    })
+            except json.JSONDecodeError:
+                continue
+        
+        # Format 4: ```json {"function_call": {"name": "func", "arguments": {...}}} ```
+        json_block_pattern = r'```json\s*(\{[^`]*\})\s*```'
+        json_matches = re.findall(json_block_pattern, text, re.DOTALL)
+        for match in json_matches:
+            try:
+                json_data = json.loads(match)
+                if "function_call" in json_data:
+                    call_data = json_data["function_call"]
+                    if "name" in call_data:
+                        tool_calls.append({
+                            "id": f"call_{uuid.uuid4().hex[:8]}",
+                            "type": "function",
+                            "function": {
+                                "name": call_data["name"],
+                                "arguments": json.dumps(call_data.get("arguments", {}))
+                            }
+                        })
+            except json.JSONDecodeError:
+                continue
+        
+        # Format 5: ```python function_name(param="value") ``` (NEW GRANITE FORMAT)
+        python_block_pattern = r'```python\s*([^`]*)\s*```'
+        python_matches = re.findall(python_block_pattern, text, re.DOTALL)
+        for match in python_matches:
+            # Parse Python function calls like: stdio.describe_table(table_name="users")
+            python_call_pattern = r'([a-zA-Z_][a-zA-Z0-9_.]*)\s*\(([^)]*)\)'
+            call_matches = re.findall(python_call_pattern, match)
+            for func_name, params_str in call_matches:
+                try:
+                    # Parse parameters from Python function call
+                    params = {}
+                    if params_str.strip():
+                        # Handle simple parameter parsing: param="value", param2=123
+                        param_pattern = r'(\w+)\s*=\s*(["\']?)([^,]*?)\2(?:,|$)'
+                        param_matches = re.findall(param_pattern, params_str)
+                        for param_name, quote, param_value in param_matches:
+                            # Convert to appropriate type
+                            if quote:  # String parameter
+                                params[param_name] = param_value
+                            elif param_value.isdigit():  # Integer
+                                params[param_name] = int(param_value)
+                            elif param_value.lower() in ['true', 'false']:  # Boolean
+                                params[param_name] = param_value.lower() == 'true'
+                            else:  # Default to string
+                                params[param_name] = param_value
+                    
+                    tool_calls.append({
+                        "id": f"call_{uuid.uuid4().hex[:8]}",
+                        "type": "function",
+                        "function": {
+                            "name": func_name,
+                            "arguments": json.dumps(params)
+                        }
+                    })
+                except Exception as e:
+                    log.debug(f"Error parsing Python function call: {e}")
+                    continue
+        
+        # Format 6: {"api": "namespace", "function": "name", "params": {...}} (NEW GRANITE FORMAT)
+        api_function_pattern = r'\{\s*"api"\s*:\s*"([^"]+)"\s*,\s*"function"\s*:\s*"([^"]+)"\s*,\s*"params"\s*:\s*(\{[^}]*\})\s*\}'
+        api_matches = re.findall(api_function_pattern, text, re.DOTALL)
+        for api_name, function_name, params_str in api_matches:
+            try:
+                params = json.loads(params_str)
+                # Reconstruct function name from api.function format
+                full_name = f"{api_name}.{function_name}" if api_name != function_name else function_name
+                
+                tool_calls.append({
+                    "id": f"call_{uuid.uuid4().hex[:8]}",
+                    "type": "function",
+                    "function": {
+                        "name": full_name,
+                        "arguments": json.dumps(params)
+                    }
+                })
+            except json.JSONDecodeError:
+                continue
+        
+        # Format 7: <|tool|>function_name<|file_sep|> <|param|> {...} (NEW GRANITE FORMAT)
+        file_sep_pattern = r'<\|tool\|>([^<]+)<\|file_sep\|>\s*<\|param\|>\s*(\{[^}]*\})'
+        file_sep_matches = re.findall(file_sep_pattern, text, re.DOTALL)
+        for tool_name, params_str in file_sep_matches:
+            try:
+                params = json.loads(params_str)
+                tool_calls.append({
+                    "id": f"call_{uuid.uuid4().hex[:8]}",
+                    "type": "function",
+                    "function": {
+                        "name": tool_name.strip(),
+                        "arguments": json.dumps(params)
+                    }
+                })
+            except json.JSONDecodeError:
+                continue
+        
+        # Format 8: Direct JSON function calls (look for JSON-like structures)
+        json_pattern = r'\{[^{}]*"name"[^{}]*"arguments"[^{}]*\}'
+        direct_json_matches = re.findall(json_pattern, text)
+        for match in direct_json_matches:
+            try:
+                call_data = json.loads(match)
+                if "name" in call_data:
+                    tool_calls.append({
+                        "id": f"call_{uuid.uuid4().hex[:8]}",
+                        "type": "function",
+                        "function": {
+                            "name": call_data["name"],
+                            "arguments": json.dumps(call_data.get("arguments", {}))
+                        }
+                    })
+            except json.JSONDecodeError:
+                continue
+        
+        # Log successful parsing
+        if tool_calls:
+            log.debug(f"Parsed {len(tool_calls)} Granite/WatsonX tool calls from text format")
+            for tc in tool_calls:
+                log.debug(f"  - {tc['function']['name']}: {tc['function']['arguments']}")
+        
+    except Exception as e:
+        log.debug(f"Error parsing Granite/WatsonX tool formats: {e}")
+    
+    return tool_calls
+
+
 def _parse_watsonx_response(resp) -> Dict[str, Any]:  # noqa: D401 - small helper
-    """Convert Watson X response → standard `{response, tool_calls}` dict."""
+    """
+    Convert Watson X response → standard `{response, tool_calls}` dict.
+    
+    ENHANCED: Now handles WatsonX-specific tool calling formats:
+    - <|tool|>function_name</|tool|> <|param:name|>value</param>
+    - <function_call>{"name": "func", "arguments": {...}}</function_call>
+    - JSON-style function calls in text
+    - Python code blocks with function calls
+    - API function JSON structures
+    - Standard OpenAI-style tool calls
+    """
     tool_calls: List[Dict[str, Any]] = []
     
     # Handle Watson X response format - check choices first
@@ -51,7 +303,7 @@ def _parse_watsonx_response(resp) -> Dict[str, Any]:  # noqa: D401 - small helpe
         choice = resp.choices[0]
         message = _safe_get(choice, 'message', {})
         
-        # Check for tool calls in Watson X format
+        # Check for standard tool calls in Watson X format
         if _safe_get(message, 'tool_calls'):
             for tc in message['tool_calls']:
                 tool_calls.append({
@@ -66,10 +318,16 @@ def _parse_watsonx_response(resp) -> Dict[str, Any]:  # noqa: D401 - small helpe
         if tool_calls:
             return {"response": None, "tool_calls": tool_calls}
         
-        # Extract text content
+        # Extract text content for further parsing
         content = _safe_get(message, "content", "")
         if isinstance(content, list) and content:
             content = content[0].get("text", "") if isinstance(content[0], dict) else str(content[0])
+        
+        # ENHANCED: Parse WatsonX-specific tool calling formats from text content
+        if content and isinstance(content, str):
+            parsed_tool_calls = _parse_watsonx_tool_formats(content)
+            if parsed_tool_calls:
+                return {"response": None, "tool_calls": parsed_tool_calls}
         
         return {"response": content, "tool_calls": []}
     
@@ -79,7 +337,7 @@ def _parse_watsonx_response(resp) -> Dict[str, Any]:  # noqa: D401 - small helpe
             choice = resp["choices"][0]
             message = choice.get("message", {})
             
-            # Check for tool calls
+            # Check for standard tool calls
             if "tool_calls" in message and message["tool_calls"]:
                 for tc in message["tool_calls"]:
                     tool_calls.append({
@@ -94,29 +352,48 @@ def _parse_watsonx_response(resp) -> Dict[str, Any]:  # noqa: D401 - small helpe
                 if tool_calls:
                     return {"response": None, "tool_calls": tool_calls}
             
-            # Extract text content
+            # Extract text content and parse WatsonX formats
             content = message.get("content", "")
+            if content:
+                parsed_tool_calls = _parse_watsonx_tool_formats(content)
+                if parsed_tool_calls:
+                    return {"response": None, "tool_calls": parsed_tool_calls}
+            
             return {"response": content, "tool_calls": []}
     
     # Fallback for other response formats
     if hasattr(resp, 'results') and resp.results:
         result = resp.results[0]
         text = _safe_get(result, 'generated_text', '') or _safe_get(result, 'text', '')
+        
+        # Try to parse WatsonX tool formats from generated text
+        if text:
+            parsed_tool_calls = _parse_watsonx_tool_formats(text)
+            if parsed_tool_calls:
+                return {"response": None, "tool_calls": parsed_tool_calls}
+        
         return {"response": text, "tool_calls": []}
     
-    return {"response": str(resp), "tool_calls": []}
+    # Final fallback - try to parse as string
+    text_content = str(resp)
+    parsed_tool_calls = _parse_watsonx_tool_formats(text_content)
+    if parsed_tool_calls:
+        return {"response": None, "tool_calls": parsed_tool_calls}
+    
+    return {"response": text_content, "tool_calls": []}
 
 
 # ─────────────────────────── client ───────────────────────────
 
 
-class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient):
+class WatsonXLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAIStyleMixin, BaseLLMClient):
     """
     Configuration-aware adapter around the *ibm-watsonx-ai* SDK that gets
     all capabilities from unified YAML configuration.
     
-    Includes MCP tool name sanitization for compatibility with IBM's
-    tool naming requirements (typically similar to other enterprise providers).
+    CRITICAL UPDATE: Now uses universal ToolCompatibilityMixin for consistent
+    tool name handling across all providers with enterprise-grade sanitization
+    and comprehensive IBM Granite model tool format parsing.
     """
 
     def __init__(
@@ -127,8 +404,9 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
         watsonx_ai_url: Optional[str] = None,
         space_id: Optional[str] = None,
     ) -> None:
-        # Initialize the configuration mixin FIRST
+        # CRITICAL UPDATE: Initialize ALL mixins including ToolCompatibilityMixin
         ConfigAwareProviderMixin.__init__(self, "watsonx", model)
+        ToolCompatibilityMixin.__init__(self, "watsonx")
         
         self.model = model
         self.project_id = project_id or os.getenv("WATSONX_PROJECT_ID")
@@ -143,9 +421,6 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
         
         self.client = APIClient(credentials)
         
-        # Store current tool name mapping for response restoration
-        self._current_name_mapping: Dict[str, str] = {}
-        
         # Default parameters - can be overridden by configuration
         self.default_params = {
             "time_limit": 10000,
@@ -154,138 +429,15 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
             "top_p": 1.0,
         }
 
-    def _sanitize_tool_name_for_watsonx(self, name: str) -> str:
-        """
-        Convert MCP/OpenAI tool names to WatsonX-compatible format.
-        
-        IBM WatsonX typically has enterprise-grade restrictions similar to
-        other enterprise providers. This sanitizes tool names to be safe.
-        
-        Examples:
-            stdio.read_query -> stdio_read_query
-            filesystem.read_file -> filesystem_read_file  
-            mcp.server:get_data -> mcp_server_get_data
-        """
-        if not name:
-            return name
-            
-        # Replace invalid characters with underscores (conservative approach)
-        # WatsonX likely prefers alphanumeric + underscores/dashes
-        sanitized = re.sub(r'[^a-zA-Z0-9_-]', '_', name)
-        
-        # Remove multiple consecutive underscores
-        sanitized = re.sub(r'_+', '_', sanitized)
-        
-        # Remove leading/trailing underscores
-        sanitized = sanitized.strip('_')
-        
-        # Ensure reasonable length (conservative 64 char limit)
-        if len(sanitized) > 64:
-            sanitized = sanitized[:64].rstrip('_')
-            
-        return sanitized
-
-    def _sanitize_tools_for_watsonx(self, tools: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
-        """
-        Sanitize tool names and create a mapping for response processing.
-        
-        Returns:
-            tuple: (sanitized_tools, name_mapping)
-                - sanitized_tools: Tools with WatsonX-compatible names
-                - name_mapping: Dict mapping sanitized_name -> original_name
-        """
-        if not tools:
-            return tools, {}
-            
-        sanitized_tools = []
-        name_mapping = {}
-        
-        for tool in tools:
-            if tool.get("type") == "function" and "function" in tool:
-                original_name = tool["function"]["name"]
-                sanitized_name = self._sanitize_tool_name_for_watsonx(original_name)
-                
-                # Store the mapping
-                name_mapping[sanitized_name] = original_name
-                
-                # Create sanitized tool
-                sanitized_tool = tool.copy()
-                sanitized_tool["function"] = tool["function"].copy()
-                sanitized_tool["function"]["name"] = sanitized_name
-                
-                sanitized_tools.append(sanitized_tool)
-                
-                # Log the sanitization if it changed
-                if sanitized_name != original_name:
-                    log.debug(f"Sanitized WatsonX tool name: {original_name} -> {sanitized_name}")
-            else:
-                # Non-function tools pass through unchanged
-                sanitized_tools.append(tool)
-                
-        return sanitized_tools, name_mapping
-
-    def _restore_tool_names_in_response(self, response: Dict[str, Any], name_mapping: Dict[str, str]) -> Dict[str, Any]:
-        """
-        Restore original tool names in the response using the mapping.
-        """
-        if not name_mapping or not response.get("tool_calls"):
-            return response
-            
-        # Create a copy to avoid modifying the original
-        restored_response = response.copy()
-        restored_tool_calls = []
-        
-        for tool_call in response["tool_calls"]:
-            if "function" in tool_call and "name" in tool_call["function"]:
-                sanitized_name = tool_call["function"]["name"]
-                original_name = name_mapping.get(sanitized_name, sanitized_name)
-                
-                # Restore the original name
-                restored_tool_call = tool_call.copy()
-                restored_tool_call["function"] = tool_call["function"].copy()
-                restored_tool_call["function"]["name"] = original_name
-                
-                restored_tool_calls.append(restored_tool_call)
-                
-                # Log the restoration if it changed
-                if original_name != sanitized_name:
-                    log.debug(f"Restored WatsonX tool name: {sanitized_name} -> {original_name}")
-            else:
-                restored_tool_calls.append(tool_call)
-                
-        restored_response["tool_calls"] = restored_tool_calls
-        return restored_response
-
-    def _sanitize_tool_names(self, tools: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
-        """
-        Tool name sanitization for WatsonX.
-        
-        IBM WatsonX is an enterprise platform that may have tool naming
-        restrictions. This provides sanitization similar to Mistral/Anthropic
-        to ensure compatibility.
-        
-        Args:
-            tools: List of tool definitions in OpenAI format
-            
-        Returns:
-            Sanitized tools list with name mapping stored for restoration
-        """
-        if not tools:
-            return tools
-            
-        log.debug(f"Sanitizing {len(tools)} tools for WatsonX compatibility")
-        
-        # Store the mapping for later restoration
-        sanitized_tools, self._current_name_mapping = self._sanitize_tools_for_watsonx(tools)
-        
-        return sanitized_tools
-
     def get_model_info(self) -> Dict[str, Any]:
         """
         Get model info using configuration, with WatsonX-specific additions.
         """
         # Get base info from configuration
         info = super().get_model_info()
+        
+        # Add tool compatibility info from universal system
+        tool_compatibility = self.get_tool_compatibility_info()
         
         # Add WatsonX-specific metadata only if no error occurred
         if not info.get("error"):
@@ -296,9 +448,10 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
                     "watsonx_ai_url": self.watsonx_ai_url,
                     "model_family": self._detect_model_family(),
                     "enterprise_features": True,
+                    "granite_parsing": True,  # NEW: Indicates enhanced Granite parsing
                 },
-                "tool_name_requirements": "enterprise_safe",  # Conservative approach
-                "mcp_compatibility": "requires_sanitization",  # Similar to other enterprise providers
+                # Universal tool compatibility info
+                **tool_compatibility,
                 "parameter_mapping": {
                     "temperature": "temperature",
                     "max_tokens": "max_tokens",
@@ -308,6 +461,10 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
                 },
                 "watsonx_parameters": [
                     "time_limit", "include_stop_sequence", "return_options"
+                ],
+                "granite_tool_formats": [
+                    "pipe_format", "function_call_xml", "json_blocks", 
+                    "python_code", "api_json", "file_separator", "direct_json"
                 ]
             })
         
@@ -393,6 +550,48 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
         
         return validated_messages, validated_tools, validated_stream, validated_kwargs
 
+    def _prepare_messages_for_conversation(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        CRITICAL FIX: Prepare messages for conversation by sanitizing tool names in message history.
+        
+        This ensures tool names in assistant messages match the sanitized names sent to the API.
+        """
+        if not hasattr(self, '_current_name_mapping') or not self._current_name_mapping:
+            return messages
+        
+        prepared_messages = []
+        
+        for msg in messages:
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                # Sanitize tool names in assistant message tool calls
+                prepared_msg = msg.copy()
+                sanitized_tool_calls = []
+                
+                for tc in msg["tool_calls"]:
+                    tc_copy = tc.copy()
+                    original_name = tc["function"]["name"]
+                    
+                    # Find sanitized name from current mapping
+                    sanitized_name = None
+                    for sanitized, original in self._current_name_mapping.items():
+                        if original == original_name:
+                            sanitized_name = sanitized
+                            break
+                    
+                    if sanitized_name:
+                        tc_copy["function"] = tc["function"].copy()
+                        tc_copy["function"]["name"] = sanitized_name
+                        log.debug(f"Sanitized tool name in WatsonX conversation: {original_name} -> {sanitized_name}")
+                    
+                    sanitized_tool_calls.append(tc_copy)
+                
+                prepared_msg["tool_calls"] = sanitized_tool_calls
+                prepared_messages.append(prepared_msg)
+            else:
+                prepared_messages.append(msg)
+        
+        return prepared_messages
+
     # ── tool schema helpers ─────────────────────────────────
 
     @staticmethod
@@ -400,7 +599,7 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
         """
         Convert OpenAI-style tools to Watson X format.
         
-        Note: Tool names should already be sanitized by _sanitize_tool_names
+        Note: Tool names should already be sanitized by universal ToolCompatibilityMixin
         before reaching this method.
         """
         if not tools:
@@ -413,7 +612,7 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
                 converted.append({
                     "type": "function",
                     "function": {
-                        "name": fn["name"],  # Should already be sanitized
+                        "name": fn["name"],  # Should already be sanitized by ToolCompatibilityMixin
                         "description": fn.get("description", ""),
                         "parameters": fn.get("parameters") or fn.get("input_schema") or {},
                     }
@@ -432,9 +631,19 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
 
     def _format_messages_for_watsonx(
         self,
-        messages: List[Dict[str, Any]]
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None
     ) -> List[Dict[str, Any]]:
-        """Format messages for Watson X API with configuration-aware processing."""
+        """
+        Format messages for Watson X API with Granite chat template support.
+        
+        ENHANCED: Now uses proper Granite chat template format when tools are provided.
+        """
+        # If tools are provided and model supports tools, use Granite template format
+        if tools and self.supports_feature("tools") and self._detect_model_family() == "granite":
+            return self._format_granite_chat_template(messages, tools)
+        
+        # Fallback to standard WatsonX format
         formatted: List[Dict[str, Any]] = []
 
         for msg in messages:
@@ -547,18 +756,62 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
 
         return formatted
 
-    def _parse_watsonx_response_with_restoration(self, resp, name_mapping: Dict[str, str] = None) -> Dict[str, Any]:
-        """Convert Watson X response to standard format and restore tool names"""
-        # Use the standard parser first
-        result = _parse_watsonx_response(resp)
+    def _format_granite_chat_template(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Format messages using Granite's specific chat template format.
         
-        # Restore original tool names if we have a mapping
-        if name_mapping and result.get("tool_calls"):
-            result = self._restore_tool_names_in_response(result, name_mapping)
+        Granite expects:
+        1. available_tools role with tool definitions
+        2. Standard system/user/assistant roles
+        3. Specific response format for tool calls
+        """
+        formatted = []
         
-        return result
+        # Add available_tools role first (Granite requirement)
+        if tools:
+            tools_content = ""
+            for tool in tools:
+                tools_content += json.dumps(tool, indent=2) + "\n\n"
+            
+            formatted.append({
+                "role": "available_tools",
+                "content": tools_content.strip()
+            })
+        
+        # Add the conversation messages
+        for msg in messages:
+            role = msg.get("role")
+            content = msg.get("content")
+            
+            if role == "system":
+                # Granite system message with tool instruction
+                system_content = content
+                if tools:
+                    system_content += " Use the available functions when needed to provide accurate information."
+                
+                formatted.append({
+                    "role": "system",
+                    "content": system_content
+                })
+            elif role in ["user", "assistant"]:
+                formatted.append({
+                    "role": role,
+                    "content": content
+                })
+            elif role == "tool":
+                # Granite expects tool_response role
+                formatted.append({
+                    "role": "tool_response", 
+                    "content": content
+                })
+        
+        return formatted
 
-    # ── main entrypoint ─────────────────────────────────────
+    # ── main entrypoint with universal tool compatibility ─────────────────────────────────────
 
     def create_completion(
         self,
@@ -570,12 +823,13 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
         **extra,
     ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
-        Configuration-aware completion generation with streaming support and MCP tool compatibility.
+        Configuration-aware completion generation with streaming support and universal tool compatibility.
         
         • stream=False → returns awaitable that resolves to standardised dict
         • stream=True  → returns async iterator that yields chunks in real-time
         
-        Includes MCP tool name sanitization for enterprise compatibility.
+        CRITICAL UPDATE: Now uses universal ToolCompatibilityMixin for enterprise-grade
+        tool name sanitization with bidirectional mapping and enhanced Granite parsing.
         """
         # Validate request against configuration
         validated_messages, validated_tools, validated_stream, validated_kwargs = self._validate_request_with_config(
@@ -586,30 +840,41 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
         if max_tokens:
             validated_kwargs["max_tokens"] = max_tokens
         
-        # Sanitize tool names and convert to WatsonX format (stores mapping internally)
-        validated_tools = self._sanitize_tool_names(validated_tools)
+        # CRITICAL UPDATE: Use universal tool name sanitization (stores mapping for restoration)
+        name_mapping = {}
+        if validated_tools:
+            validated_tools = self._sanitize_tool_names(validated_tools)
+            name_mapping = self._current_name_mapping
+            log.debug(f"Tool sanitization: {len(name_mapping)} tools processed for WatsonX enterprise compatibility")
+        
+        # CRITICAL UPDATE: Prepare messages for conversation (sanitize tool names in history)
+        if name_mapping:
+            validated_messages = self._prepare_messages_for_conversation(validated_messages)
+        
+        # Convert to WatsonX format
         watsonx_tools = self._convert_tools(validated_tools)
         
-        # Format messages with configuration-aware processing
-        formatted_messages = self._format_messages_for_watsonx(validated_messages)
+        # Format messages with configuration-aware processing and Granite template support
+        formatted_messages = self._format_messages_for_watsonx(validated_messages, watsonx_tools)
 
         log.debug(f"Watson X payload: model={self.model}, messages={len(formatted_messages)}, tools={len(watsonx_tools)}")
 
         # --- streaming: use Watson X streaming -------------------------
         if validated_stream:
-            return self._stream_completion_async(formatted_messages, watsonx_tools, validated_kwargs)
+            return self._stream_completion_async(formatted_messages, watsonx_tools, name_mapping, validated_kwargs)
 
         # --- non-streaming: use regular completion ----------------------
-        return self._regular_completion(formatted_messages, watsonx_tools, validated_kwargs)
+        return self._regular_completion(formatted_messages, watsonx_tools, name_mapping, validated_kwargs)
 
     async def _stream_completion_async(
         self, 
         messages: List[Dict[str, Any]],
         tools: List[Dict[str, Any]],
-        params: Dict[str, Any]
+        name_mapping: Dict[str, str] = None,
+        params: Dict[str, Any] = None
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Streaming using Watson X with configuration awareness and tool name restoration.
+        Streaming using Watson X with configuration awareness and universal tool name restoration.
         """
         try:
             log.debug(f"Starting Watson X streaming for model: {self.model}")
@@ -629,10 +894,25 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
                 chunk_count += 1
                 
                 if isinstance(chunk, str):
-                    yield {
-                        "response": chunk,
-                        "tool_calls": []
-                    }
+                    # ENHANCED: Parse WatsonX tool formats from string chunks
+                    parsed_tool_calls = _parse_watsonx_tool_formats(chunk)
+                    if parsed_tool_calls:
+                        # Restore tool names if needed
+                        chunk_response = {
+                            "response": "",
+                            "tool_calls": parsed_tool_calls
+                        }
+                        if name_mapping:
+                            chunk_response = self._restore_tool_names_in_response(
+                                chunk_response, 
+                                name_mapping
+                            )
+                        yield chunk_response
+                    else:
+                        yield {
+                            "response": chunk,
+                            "tool_calls": []
+                        }
                 elif isinstance(chunk, dict):
                     # Handle structured chunk responses
                     if "choices" in chunk and chunk["choices"]:
@@ -648,19 +928,34 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
                             "tool_calls": tool_calls
                         }
                         
-                        # Restore tool names if needed
-                        if self._current_name_mapping and tool_calls:
+                        # CRITICAL UPDATE: Restore tool names using universal restoration
+                        if name_mapping and tool_calls:
                             chunk_response = self._restore_tool_names_in_response(
                                 chunk_response, 
-                                self._current_name_mapping
+                                name_mapping
                             )
                         
                         yield chunk_response
                     else:
-                        yield {
-                            "response": str(chunk),
-                            "tool_calls": []
-                        }
+                        # ENHANCED: Parse WatsonX tool formats from streaming text
+                        parsed_tool_calls = _parse_watsonx_tool_formats(str(chunk))
+                        if parsed_tool_calls:
+                            # Restore tool names if needed
+                            chunk_response = {
+                                "response": "",
+                                "tool_calls": parsed_tool_calls
+                            }
+                            if name_mapping:
+                                chunk_response = self._restore_tool_names_in_response(
+                                    chunk_response, 
+                                    name_mapping
+                                )
+                            yield chunk_response
+                        else:
+                            yield {
+                                "response": str(chunk),
+                                "tool_calls": []
+                            }
                 
                 # Allow other async tasks to run periodically
                 if chunk_count % 10 == 0:
@@ -676,7 +971,7 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
             error_str = str(e).lower()
             if "function" in error_str and ("name" in error_str or "invalid" in error_str):
                 log.error(f"Tool name sanitization may have failed: {e}")
-                log.error(f"Current mapping: {self._current_name_mapping}")
+                log.error(f"Current mapping: {name_mapping}")
             
             yield {
                 "response": f"Streaming error: {str(e)}",
@@ -688,10 +983,11 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
         self, 
         messages: List[Dict[str, Any]],
         tools: List[Dict[str, Any]],
-        params: Dict[str, Any]
+        name_mapping: Dict[str, str] = None,
+        params: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """
-        Non-streaming completion using Watson X with configuration awareness and tool name restoration.
+        Non-streaming completion using Watson X with configuration awareness and universal tool name restoration.
         """
         try:
             log.debug(f"Starting Watson X completion for model: {self.model}")
@@ -706,8 +1002,12 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
                 # Use regular chat
                 resp = model.chat(messages=messages)
             
-            # Parse response and restore tool names
-            result = self._parse_watsonx_response_with_restoration(resp, self._current_name_mapping)
+            # Parse response with enhanced Granite format support
+            result = _parse_watsonx_response(resp)
+            
+            # CRITICAL UPDATE: Restore original tool names using universal restoration
+            if name_mapping and result.get("tool_calls"):
+                result = self._restore_tool_names_in_response(result, name_mapping)
             
             log.debug(f"Watson X completion result: "
                      f"response={len(str(result.get('response', ''))) if result.get('response') else 0} chars, "
@@ -722,7 +1022,7 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
             error_str = str(e).lower()
             if "function" in error_str and ("name" in error_str or "invalid" in error_str):
                 log.error(f"Tool name sanitization may have failed: {e}")
-                log.error(f"Current mapping: {self._current_name_mapping}")
+                log.error(f"Current mapping: {name_mapping}")
             
             return {
                 "response": f"Error: {str(e)}",
@@ -732,7 +1032,8 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
 
     async def close(self):
         """Cleanup resources"""
-        # Reset name mapping
-        self._current_name_mapping = {}
+        # Reset name mapping from universal system
+        if hasattr(self, '_current_name_mapping'):
+            self._current_name_mapping = {}
         # Watson X client cleanup if needed
         pass

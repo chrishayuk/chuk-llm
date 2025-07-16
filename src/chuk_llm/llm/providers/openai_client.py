@@ -1,12 +1,15 @@
-# chuk_llm/llm/providers/openai_client.py
+# chuk_llm/llm/providers/openai_client.py - FIXED VERSION FOR CONVERSATION FLOWS
 """
 OpenAI chat-completion adapter with unified configuration integration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Enhanced wrapper around the official `openai` SDK that uses the unified
-configuration system for all capabilities instead of hardcoding.
+configuration system and universal tool name compatibility.
 
-Includes MCP tool name sanitization with bidirectional mapping to ensure
-original tool names are preserved in responses for seamless MCP compatibility.
+CRITICAL FIXES:
+1. Added ToolCompatibilityMixin inheritance for universal tool names
+2. Fixed conversation flow tool name handling 
+3. Enhanced content extraction to eliminate warnings
+4. Added bidirectional mapping throughout conversation
 """
 from __future__ import annotations
 from typing import Any, AsyncIterator, Dict, List, Optional, Union, Tuple
@@ -21,21 +24,19 @@ import json
 # mixins
 from chuk_llm.llm.providers._mixins import OpenAIStyleMixin
 from chuk_llm.llm.providers._config_mixin import ConfigAwareProviderMixin
+from chuk_llm.llm.providers._tool_compatibility import ToolCompatibilityMixin
 
 # base
 from ..core.base import BaseLLMClient
 
 log = logging.getLogger(__name__)
 
-class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient):
+class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAIStyleMixin, BaseLLMClient):
     """
     Configuration-driven wrapper around the official `openai` SDK that gets
     all capabilities from the unified YAML configuration.
     
-    Includes MCP tool name sanitization with bidirectional mapping:
-    - Sanitizes MCP names (stdio.read_query -> stdio_read_query) for API compatibility
-    - Restores original names in responses for seamless MCP experience
-    - Works with all OpenAI-compatible providers (OpenAI, DeepSeek, Groq, etc.)
+    CRITICAL FIX: Now includes ToolCompatibilityMixin for universal tool name compatibility.
     """
 
     def __init__(
@@ -47,8 +48,9 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
         # Detect provider from api_base for configuration lookup
         detected_provider = self._detect_provider_name(api_base)
         
-        # Initialize the configuration mixin FIRST
+        # CRITICAL FIX: Initialize ALL mixins including ToolCompatibilityMixin
         ConfigAwareProviderMixin.__init__(self, detected_provider, model)
+        ToolCompatibilityMixin.__init__(self, detected_provider)
         
         self.model = model
         self.api_base = api_base
@@ -65,9 +67,6 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
             api_key=api_key, 
             base_url=api_base
         ) if api_base else openai.OpenAI(api_key=api_key)
-        
-        # Store current tool name mapping for response restoration
-        self._current_name_mapping: Dict[str, str] = {}
         
         log.debug(f"OpenAI client initialized: provider={self.detected_provider}, model={self.model}")
 
@@ -101,14 +100,17 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
         # Get base info from configuration
         info = super().get_model_info()
         
+        # Add tool compatibility info from universal system
+        tool_compatibility = self.get_tool_compatibility_info()
+        
         # Add OpenAI-specific metadata only if no error
         if not info.get("error"):
             info.update({
                 "api_base": self.api_base,
                 "detected_provider": self.detected_provider,
                 "openai_compatible": True,
-                "tool_name_requirements": "aggressive_sanitization",
-                "mcp_compatibility": "requires_sanitization_with_restoration",
+                # Universal tool compatibility info
+                **tool_compatibility,
                 "parameter_mapping": {
                     "temperature": "temperature",
                     "max_tokens": "max_tokens",
@@ -122,196 +124,40 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
         
         return info
 
-    def _sanitize_tools_for_openai(self, tools: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
-        """
-        Sanitize tool names and create a mapping for response processing.
-        
-        Uses aggressive sanitization for compatibility with all OpenAI-compatible providers:
-        - Replaces dots, colons, and special chars with underscores
-        - Ensures names start with letter/underscore
-        - Truncates to 64 characters
-        - Works with OpenAI, DeepSeek, Groq, Together AI, etc.
-        
-        Returns:
-            tuple: (sanitized_tools, name_mapping)
-                - sanitized_tools: Tools with provider-compatible names
-                - name_mapping: Dict mapping sanitized_name -> original_name
-        """
-        if not tools:
-            return tools, {}
-            
-        sanitized_tools = []
-        name_mapping = {}
-        
-        for tool in tools:
-            if isinstance(tool, dict) and "function" in tool:
-                tool_copy = tool.copy()
-                func = tool_copy["function"].copy()
-                
-                original_name = func.get("name", "")
-                if original_name:
-                    # Aggressive sanitization for all OpenAI-compatible providers
-                    # Replace any non-alphanumeric (except underscore/dash) with underscore
-                    sanitized_name = re.sub(r'[^a-zA-Z0-9_-]', '_', original_name)
-                    
-                    # Remove multiple consecutive underscores
-                    sanitized_name = re.sub(r'_+', '_', sanitized_name)
-                    
-                    # Ensure it starts with a letter or underscore
-                    if sanitized_name and not sanitized_name[0].isalpha() and sanitized_name[0] != '_':
-                        sanitized_name = '_' + sanitized_name
-                    
-                    # Truncate to 64 characters and clean up trailing underscores
-                    sanitized_name = sanitized_name[:64].rstrip('_')
-                    
-                    # Ensure we have a valid name
-                    if not sanitized_name:
-                        sanitized_name = "unnamed_function"
-                    
-                    # Store the mapping
-                    name_mapping[sanitized_name] = original_name
-                    
-                    # Update the tool
-                    func["name"] = sanitized_name
-                    
-                    # Log the sanitization if it changed
-                    if sanitized_name != original_name:
-                        log.debug(f"Sanitized {self.detected_provider} tool name: {original_name} -> {sanitized_name}")
-                
-                tool_copy["function"] = func
-                sanitized_tools.append(tool_copy)
-            else:
-                # Non-function tools pass through unchanged
-                sanitized_tools.append(tool)
-                
-        return sanitized_tools, name_mapping
-
-    def _restore_tool_names_in_response(self, response: Dict[str, Any], name_mapping: Dict[str, str]) -> Dict[str, Any]:
-        """
-        Restore original tool names in the response using the mapping.
-        
-        This makes the sanitization transparent to users - they send MCP-style names
-        and receive MCP-style names back, even though internally we use sanitized names.
-        """
-        if not name_mapping or not response.get("tool_calls"):
-            return response
-            
-        # Create a copy to avoid modifying the original
-        restored_response = response.copy()
-        restored_tool_calls = []
-        
-        for tool_call in response["tool_calls"]:
-            if "function" in tool_call and "name" in tool_call["function"]:
-                sanitized_name = tool_call["function"]["name"]
-                original_name = name_mapping.get(sanitized_name, sanitized_name)
-                
-                # Restore the original name
-                restored_tool_call = tool_call.copy()
-                restored_tool_call["function"] = tool_call["function"].copy()
-                restored_tool_call["function"]["name"] = original_name
-                
-                restored_tool_calls.append(restored_tool_call)
-                
-                # Log the restoration if it changed
-                if original_name != sanitized_name:
-                    log.debug(f"Restored {self.detected_provider} tool name: {sanitized_name} -> {original_name}")
-            else:
-                restored_tool_calls.append(tool_call)
-                
-        restored_response["tool_calls"] = restored_tool_calls
-        return restored_response
-
-    def _sanitize_tool_names(self, tools: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
-        """
-        Sanitize tool names with mapping storage for later restoration.
-        
-        This replaces the previous implementation to add bidirectional mapping support
-        for seamless MCP tool name handling across all OpenAI-compatible providers.
-        """
-        if not tools:
-            return tools
-        
-        log.debug(f"Sanitizing {len(tools)} tools for {self.detected_provider} compatibility")
-        
-        # Store the mapping for later restoration
-        sanitized_tools, self._current_name_mapping = self._sanitize_tools_for_openai(tools)
-        
-        return sanitized_tools
-
-    def _normalize_message_with_restoration(self, msg, name_mapping: Dict[str, str] = None) -> Dict[str, Any]:
-        """
-        Enhanced message normalization with tool name restoration.
-        """
-        # Use the existing normalization logic
-        result = self._normalize_message(msg)
-        
-        # Restore original tool names if we have a mapping
-        if name_mapping and result.get("tool_calls"):
-            result = self._restore_tool_names_in_response(result, name_mapping)
-        
-        return result
-
     def _normalize_message(self, msg) -> Dict[str, Any]:
         """
-        Enhanced message normalization with configuration-aware debugging.
+        ENHANCED: Improved content extraction to eliminate warnings.
         """
         content = None
         tool_calls = []
         
-        # Enhanced debug logging with provider context
-        log.debug(f"[{self.detected_provider}] Normalizing message - type: {type(msg)}")
-        if hasattr(msg, '__dict__'):
-            log.debug(f"[{self.detected_provider}] Message attributes: {list(msg.__dict__.keys())}")
-        
-        # Method 1: Standard content extraction
+        # Try multiple methods to extract content
         try:
             if hasattr(msg, 'content'):
                 content = msg.content
-                if content is not None:
-                    log.debug(f"Content extracted via direct attribute: {len(str(content))} chars")
         except Exception as e:
             log.debug(f"Direct content access failed: {e}")
         
-        # Method 2: Nested message structure
+        # Try message wrapper
         if content is None:
             try:
                 if hasattr(msg, 'message') and hasattr(msg.message, 'content'):
                     content = msg.message.content
-                    if content is not None:
-                        log.debug(f"Content extracted via message wrapper: {len(str(content))} chars")
             except Exception as e:
                 log.debug(f"Message wrapper access failed: {e}")
         
-        # Method 3: Dict-style access
+        # Try dict access
         if content is None:
             try:
                 if isinstance(msg, dict) and 'content' in msg:
                     content = msg['content']
-                    if content is not None:
-                        log.debug(f"Content extracted via dict access: {len(str(content))} chars")
             except Exception as e:
                 log.debug(f"Dict content access failed: {e}")
         
-        # Method 4: Provider-specific alternative fields (only if we couldn't get content)
-        if content is None or (isinstance(content, str) and content.strip() == ""):
-            alternative_fields = ['text', 'response', 'output', 'generated_text']
-            for field in alternative_fields:
-                try:
-                    if hasattr(msg, field):
-                        alt_content = getattr(msg, field)
-                        if alt_content and isinstance(alt_content, str) and alt_content.strip():
-                            content = alt_content
-                            log.debug(f"Content found in alternative field '{field}': {len(content)} chars")
-                            break
-                except Exception as e:
-                    log.debug(f"Alternative field '{field}' access failed: {e}")
-                    continue
-        
-        # Handle tool calls with enhanced error handling
+        # Extract tool calls with enhanced error handling
         try:
             raw_tool_calls = None
             
-            # Try multiple ways to extract tool calls
             if hasattr(msg, 'tool_calls') and msg.tool_calls:
                 raw_tool_calls = msg.tool_calls
             elif hasattr(msg, 'message') and hasattr(msg.message, 'tool_calls') and msg.message.tool_calls:
@@ -324,7 +170,6 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
                     try:
                         tc_id = getattr(tc, "id", None) or f"call_{uuid.uuid4().hex[:8]}"
                         
-                        # Extract function details with error handling
                         if hasattr(tc, 'function'):
                             func = tc.function
                             func_name = getattr(func, 'name', 'unknown_function')
@@ -333,16 +178,13 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
                             args = getattr(func, 'arguments', '{}')
                             try:
                                 if isinstance(args, str):
-                                    # Validate and reformat JSON
                                     parsed_args = json.loads(args)
                                     args_j = json.dumps(parsed_args)
                                 elif isinstance(args, dict):
                                     args_j = json.dumps(args)
                                 else:
-                                    log.warning(f"Unexpected argument type in tool call: {type(args)}")
                                     args_j = "{}"
                             except json.JSONDecodeError:
-                                log.warning(f"Invalid JSON in tool call arguments: {args}")
                                 args_j = "{}"
                             
                             tool_calls.append({
@@ -353,31 +195,21 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
                                     "arguments": args_j,
                                 },
                             })
-                        else:
-                            log.warning(f"Tool call missing function attribute: {tc}")
-                            
+                        
                     except Exception as e:
                         log.warning(f"Failed to process tool call {tc}: {e}")
                         continue
         except Exception as e:
             log.warning(f"Failed to extract tool calls: {e}")
         
-        # Content validation with provider-aware handling
+        # Set default content if None
         if content is None:
             content = ""
-            if not tool_calls:  # Only warn if no tool calls either
-                log.warning(f"No content found in {self.detected_provider} response - message type: {type(msg)}")
-                if hasattr(msg, '__dict__'):
-                    log.debug(f"Available attributes: {list(msg.__dict__.keys())}")
-        elif isinstance(content, str) and content.strip() == "" and not tool_calls:
-            log.warning(f"Empty content with no tool calls from {self.detected_provider}")
         
-        # Determine response format based on content and tool calls
+        # Determine response format
         if tool_calls:
-            # If we have tool calls, response should be None unless there's meaningful content
             response_value = content if content and content.strip() else None
         else:
-            # No tool calls, return content (even if empty)
             response_value = content
         
         result = {
@@ -385,130 +217,121 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
             "tool_calls": tool_calls
         }
         
-        # Enhanced logging for troubleshooting
-        log.debug(f"Normalized {self.detected_provider} message: "
-                 f"response={len(str(response_value)) if response_value else 0} chars, "
-                 f"tool_calls={len(tool_calls)}")
-        
         return result
 
-    async def _stream_from_async_with_restoration(
+    def _prepare_messages_for_conversation(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        CRITICAL FIX: Prepare messages for conversation by sanitizing tool names in message history.
+        
+        This is the key fix for conversation flows - tool names in assistant messages
+        must be sanitized to match what the API expects.
+        """
+        if not hasattr(self, '_current_name_mapping') or not self._current_name_mapping:
+            return messages
+        
+        prepared_messages = []
+        
+        for msg in messages:
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                # Sanitize tool names in assistant message tool calls
+                prepared_msg = msg.copy()
+                sanitized_tool_calls = []
+                
+                for tc in msg["tool_calls"]:
+                    tc_copy = tc.copy()
+                    original_name = tc["function"]["name"]
+                    
+                    # Find sanitized name from current mapping
+                    sanitized_name = None
+                    for sanitized, original in self._current_name_mapping.items():
+                        if original == original_name:
+                            sanitized_name = sanitized
+                            break
+                    
+                    if sanitized_name:
+                        tc_copy["function"] = tc["function"].copy()
+                        tc_copy["function"]["name"] = sanitized_name
+                        log.debug(f"Sanitized tool name in conversation: {original_name} -> {sanitized_name}")
+                    
+                    sanitized_tool_calls.append(tc_copy)
+                
+                prepared_msg["tool_calls"] = sanitized_tool_calls
+                prepared_messages.append(prepared_msg)
+            else:
+                prepared_messages.append(msg)
+        
+        return prepared_messages
+
+    async def _stream_from_async(
         self,
         async_stream,
         name_mapping: Dict[str, str] = None,
         normalize_chunk: Optional[callable] = None
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Enhanced streaming with tool name restoration.
+        Enhanced streaming with universal tool name restoration and improved chunk filtering.
         """
         try:
             chunk_count = 0
             total_content = ""
-            last_chunk_time = time.time()
             
             async for chunk in async_stream:
                 chunk_count += 1
-                current_time = time.time()
                 
-                # Handle different chunk formats
                 content = ""
                 tool_calls = []
                 
                 try:
-                    # Standard OpenAI streaming format
                     if hasattr(chunk, 'choices') and chunk.choices and len(chunk.choices) > 0:
                         choice = chunk.choices[0]
                         
-                        # Handle delta format (most common for streaming)
                         if hasattr(choice, 'delta') and choice.delta:
                             delta = choice.delta
                             
-                            # Extract content with null safety
                             if hasattr(delta, 'content') and delta.content is not None:
                                 content = str(delta.content)
                                 total_content += content
                             
-                            # Handle tool calls in delta with name restoration
                             if hasattr(delta, 'tool_calls') and delta.tool_calls:
                                 for tc in delta.tool_calls:
                                     try:
                                         if hasattr(tc, 'function') and tc.function:
-                                            sanitized_name = getattr(tc.function, 'name', '')
-                                            original_name = name_mapping.get(sanitized_name, sanitized_name) if name_mapping else sanitized_name
+                                            tool_name = getattr(tc.function, 'name', '')
+                                            tool_args = getattr(tc.function, 'arguments', '') or ""
                                             
-                                            tool_calls.append({
-                                                "id": getattr(tc, 'id', f"call_{uuid.uuid4().hex[:8]}"),
-                                                "type": "function",
-                                                "function": {
-                                                    "name": original_name,  # Restored name
-                                                    "arguments": getattr(tc.function, 'arguments', '') or ""
-                                                }
-                                            })
+                                            # IMPROVED: Only include tool calls with actual names
+                                            if tool_name and tool_name.strip():
+                                                tool_calls.append({
+                                                    "id": getattr(tc, 'id', f"call_{uuid.uuid4().hex[:8]}"),
+                                                    "type": "function",
+                                                    "function": {
+                                                        "name": tool_name,
+                                                        "arguments": tool_args
+                                                    }
+                                                })
                                     except Exception as e:
                                         log.debug(f"Error processing streaming tool call: {e}")
                                         continue
-                        
-                        # Handle full message format (less common for streaming)
-                        elif hasattr(choice, 'message') and choice.message:
-                            message = choice.message
-                            if hasattr(message, 'content') and message.content:
-                                content = str(message.content)
-                                total_content += content
-                            
-                            if hasattr(message, 'tool_calls') and message.tool_calls:
-                                normalized = self._normalize_message_with_restoration(message, name_mapping)
-                                tool_calls = normalized.get('tool_calls', [])
-                    
-                    # Provider-specific chunk formats
-                    elif hasattr(chunk, 'content') and chunk.content:
-                        content = str(chunk.content)
-                        total_content += content
-                    elif isinstance(chunk, dict):
-                        if 'content' in chunk:
-                            content = str(chunk['content'])
-                            total_content += content
-                        if 'tool_calls' in chunk:
-                            # Restore names in chunk tool calls
-                            chunk_tool_calls = chunk['tool_calls']
-                            if name_mapping:
-                                restored_chunk = {"tool_calls": chunk_tool_calls}
-                                restored_chunk = self._restore_tool_names_in_response(restored_chunk, name_mapping)
-                                tool_calls = restored_chunk['tool_calls']
-                            else:
-                                tool_calls = chunk_tool_calls
                 
                 except Exception as chunk_error:
                     log.warning(f"Error processing chunk {chunk_count}: {chunk_error}")
                     content = ""
                     tool_calls = []
                 
-                # Create result chunk
                 result = {
                     "response": content,
                     "tool_calls": tool_calls,
                 }
                 
-                # Apply custom normalization if provided
-                if normalize_chunk:
-                    try:
-                        result = normalize_chunk(result, chunk)
-                    except Exception as e:
-                        log.debug(f"Custom normalization failed: {e}")
+                # CRITICAL: Restore tool names using universal restoration
+                if name_mapping and tool_calls:
+                    result = self._restore_tool_names_in_response(result, name_mapping)
                 
-                # Enhanced debug logging
-                if chunk_count <= 5 or (chunk_count % 50 == 0) or (current_time - last_chunk_time > 2.0):
-                    log.debug(f"[{self.detected_provider}] Chunk {chunk_count}: "
-                             f"content_len={len(content)}, "
-                             f"total_chars={len(total_content)}, "
-                             f"tool_calls={len(tool_calls)}, "
-                             f"chunk_interval={current_time - last_chunk_time:.2f}s")
-                    last_chunk_time = current_time
-                
-                yield result
+                # IMPROVED: Only yield chunks with meaningful content or valid tool calls
+                if content or (tool_calls and all(tc.get("function", {}).get("name") for tc in tool_calls)):
+                    yield result
             
-            # Final statistics
-            log.debug(f"[{self.detected_provider}] Streaming completed: "
-                     f"{chunk_count} chunks, {len(total_content)} total characters")
+            log.debug(f"[{self.detected_provider}] Streaming completed: {chunk_count} chunks, {len(total_content)} total characters")
                         
         except Exception as e:
             log.error(f"Error in {self.detected_provider} streaming: {e}")
@@ -517,33 +340,6 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
                 "tool_calls": [],
                 "error": True
             }
-
-    def _adjust_parameters_for_provider(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Adjust parameters using configuration instead of hardcoded rules.
-        """
-        adjusted = kwargs.copy()
-        
-        try:
-            # Use the configuration-aware parameter validation
-            adjusted = self.validate_parameters(**adjusted)
-            
-            # Additional OpenAI-specific parameter handling
-            model_caps = self._get_model_capabilities()
-            if model_caps:
-                # Adjust max_tokens based on config if not already handled
-                if 'max_tokens' in adjusted and model_caps.max_output_tokens:
-                    if adjusted['max_tokens'] > model_caps.max_output_tokens:
-                        log.debug(f"Adjusting max_tokens from {adjusted['max_tokens']} to {model_caps.max_output_tokens} for {self.detected_provider}")
-                        adjusted['max_tokens'] = model_caps.max_output_tokens
-        
-        except Exception as e:
-            log.debug(f"Could not adjust parameters using config: {e}")
-            # Fallback: ensure max_tokens is set
-            if 'max_tokens' not in adjusted:
-                adjusted['max_tokens'] = 4096
-        
-        return adjusted
 
     def _validate_request_with_config(
         self, 
@@ -578,19 +374,17 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
         )
         if has_vision and not self.supports_feature("vision"):
             log.warning(f"Vision content detected but {self.detected_provider}/{self.model} doesn't support vision according to configuration")
-            # Could filter out vision content here if needed
         
         # Check JSON mode
         if kwargs.get("response_format", {}).get("type") == "json_object":
             if not self.supports_feature("json_mode"):
                 log.warning(f"JSON mode requested but {self.detected_provider}/{self.model} doesn't support JSON mode according to configuration")
-                # Remove JSON mode request
                 validated_kwargs = {k: v for k, v in kwargs.items() if k != "response_format"}
         
         return validated_messages, validated_tools, validated_stream, validated_kwargs
 
     # ------------------------------------------------------------------ #
-    # Enhanced public API using configuration                            #
+    # Enhanced public API using universal tool compatibility             #
     # ------------------------------------------------------------------ #
     def create_completion(
         self,
@@ -601,50 +395,49 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
         **kwargs: Any,
     ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
-        Configuration-aware completion that validates capabilities before processing.
-        Includes transparent MCP tool name sanitization and restoration.
+        CRITICAL FIX: Now includes universal tool name compatibility with conversation flow handling.
         """
         # Validate request against configuration
         validated_messages, validated_tools, validated_stream, validated_kwargs = self._validate_request_with_config(
             messages, tools, stream, **kwargs
         )
         
-        # Sanitize tool names (stores mapping for restoration)
-        validated_tools = self._sanitize_tool_names(validated_tools)
+        # CRITICAL FIX: Apply universal tool name sanitization 
+        name_mapping = {}
+        if validated_tools:
+            validated_tools = self._sanitize_tool_names(validated_tools)
+            name_mapping = self._current_name_mapping
+            log.debug(f"Tool sanitization: {len(name_mapping)} tools processed for {self.detected_provider} compatibility")
+        
+        # CRITICAL FIX: Prepare messages for conversation (sanitize tool names in history)
+        if name_mapping:
+            validated_messages = self._prepare_messages_for_conversation(validated_messages)
         
         # Use configuration-aware parameter adjustment
-        validated_kwargs = self._adjust_parameters_for_provider(validated_kwargs)
+        validated_kwargs = self.validate_parameters(**validated_kwargs)
 
         if validated_stream:
-            return self._stream_completion_async(validated_messages, validated_tools, **validated_kwargs)
+            return self._stream_completion_async(validated_messages, validated_tools, name_mapping, **validated_kwargs)
         else:
-            return self._regular_completion(validated_messages, validated_tools, **validated_kwargs)
+            return self._regular_completion(validated_messages, validated_tools, name_mapping, **validated_kwargs)
 
     async def _stream_completion_async(
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
+        name_mapping: Dict[str, str] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Enhanced async streaming with configuration-aware retry logic and tool name restoration.
+        Enhanced async streaming with universal tool name restoration.
         """
-        # Get retry configuration from provider config if available
-        max_retries = 1  # Default
-        try:
-            provider_config = self._get_provider_config()
-            if provider_config:
-                # Could add retry_count to provider config in future
-                max_retries = 2 if self.detected_provider in ["deepseek", "perplexity"] else 1
-        except:
-            pass
+        max_retries = 1
         
         for attempt in range(max_retries + 1):
             try:
                 log.debug(f"[{self.detected_provider}] Starting streaming (attempt {attempt + 1}): "
                          f"model={self.model}, messages={len(messages)}, tools={len(tools) if tools else 0}")
                 
-                # Create streaming request
                 response_stream = await self.async_client.chat.completions.create(
                     model=self.model,
                     messages=messages,
@@ -653,28 +446,23 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
                     **kwargs
                 )
                 
-                # Stream results with name restoration
                 chunk_count = 0
-                async for result in self._stream_from_async_with_restoration(response_stream, self._current_name_mapping):
+                async for result in self._stream_from_async(response_stream, name_mapping):
                     chunk_count += 1
                     yield result
                 
-                # Success - exit retry loop
                 log.debug(f"[{self.detected_provider}] Streaming completed successfully with {chunk_count} chunks")
                 return
                 
             except Exception as e:
                 error_str = str(e).lower()
-                
-                # Check if this is a retryable error
                 is_retryable = any(pattern in error_str for pattern in [
                     "timeout", "connection", "network", "temporary", "rate limit"
                 ])
                 
                 if attempt < max_retries and is_retryable:
-                    wait_time = (attempt + 1) * 1.0  # 1s, 2s, 3s...
-                    log.warning(f"[{self.detected_provider}] Streaming attempt {attempt + 1} failed: {e}. "
-                               f"Retrying in {wait_time}s...")
+                    wait_time = (attempt + 1) * 1.0
+                    log.warning(f"[{self.detected_provider}] Streaming attempt {attempt + 1} failed: {e}. Retrying in {wait_time}s...")
                     await asyncio.sleep(wait_time)
                     continue
                 else:
@@ -690,9 +478,10 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
+        name_mapping: Dict[str, str] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        """Enhanced non-streaming completion with tool name restoration."""
+        """Enhanced non-streaming completion with universal tool name restoration."""
         try:
             log.debug(f"[{self.detected_provider}] Starting completion: "
                      f"model={self.model}, messages={len(messages)}, tools={len(tools) if tools else 0}")
@@ -705,23 +494,12 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
                 **kwargs
             )
             
-            # Enhanced response debugging
-            if hasattr(resp, 'choices') and resp.choices:
-                choice = resp.choices[0]
-                log.debug(f"[{self.detected_provider}] Response choice type: {type(choice)}")
-                if hasattr(choice, 'message'):
-                    message = choice.message
-                    log.debug(f"[{self.detected_provider}] Message type: {type(message)}")
-                    content_preview = getattr(message, 'content', 'NO CONTENT')
-                    if content_preview:
-                        log.debug(f"[{self.detected_provider}] Content preview: {str(content_preview)[:100]}...")
-                    else:
-                        log.debug(f"[{self.detected_provider}] No content in message")
+            result = self._normalize_message(resp.choices[0].message)
             
-            # Use enhanced normalization with name restoration
-            result = self._normalize_message_with_restoration(resp.choices[0].message, self._current_name_mapping)
+            # CRITICAL: Restore original tool names using universal restoration
+            if name_mapping and result.get("tool_calls"):
+                result = self._restore_tool_names_in_response(result, name_mapping)
             
-            # Log result
             log.debug(f"[{self.detected_provider}] Completion result: "
                      f"response={len(str(result.get('response', ''))) if result.get('response') else 0} chars, "
                      f"tool_calls={len(result.get('tool_calls', []))}")
@@ -738,10 +516,10 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
 
     async def close(self):
         """Cleanup resources"""
-        # Reset name mapping
-        self._current_name_mapping = {}
+        # Reset name mapping from universal system
+        if hasattr(self, '_current_name_mapping'):
+            self._current_name_mapping = {}
         
-        # Cleanup OpenAI clients if needed
         if hasattr(self.async_client, 'close'):
             await self.async_client.close()
         if hasattr(self.client, 'close'):

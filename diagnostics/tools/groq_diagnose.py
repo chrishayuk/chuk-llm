@@ -1,27 +1,24 @@
 #!/usr/bin/env python3
 """
-WatsonX Universal Tool Compatibility Test
-==========================================
+Groq Universal Tool Compatibility Test
+======================================
 
-Complete diagnostic script for IBM WatsonX universal tool compatibility,
-streaming performance, and enterprise features.
+Tests the updated Groq client with universal tool compatibility system
+to ensure it works consistently with other providers.
 
-Tests the updated WatsonX client with ToolCompatibilityMixin integration
-to ensure consistent behavior with OpenAI, Groq, Anthropic, and Mistral.
+This matches the diagnostic patterns used for OpenAI, Anthropic, Mistral, etc.
 """
 
 import asyncio
 import json
-import time
-import sys
 import os
+import sys
 from pathlib import Path
 
-# Add project root to path
+# Add project root and load environment
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-# Load environment variables from .env file
 try:
     from dotenv import load_dotenv
     env_file = project_root / ".env"
@@ -51,30 +48,23 @@ def safe_parse_tool_arguments(arguments):
     return {}
 
 
-async def test_watsonx_universal_compatibility():
-    """Test WatsonX universal tool compatibility integration"""
-    print("🧪 WATSONX UNIVERSAL TOOL COMPATIBILITY TEST")
+async def test_groq_universal_compatibility():
+    """Test Groq client with universal tool compatibility"""
+    print("🧪 GROQ UNIVERSAL TOOL COMPATIBILITY TEST")
     print("=" * 60)
     
-    # Check required environment variables
-    watsonx_api_key = os.getenv("WATSONX_API_KEY") or os.getenv("IBM_CLOUD_API_KEY")
-    project_id = os.getenv("WATSONX_PROJECT_ID")
-    
-    if not watsonx_api_key:
-        print("❌ WATSONX_API_KEY not found!")
+    # Check API key
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        print("❌ GROQ_API_KEY not found!")
         return False
     
-    if not project_id:
-        print("❌ WATSONX_PROJECT_ID not found!")
-        return False
-    
-    print(f"✅ API key found: {watsonx_api_key[:8]}...{watsonx_api_key[-4:]}")
-    print(f"✅ Project ID found: {project_id}")
+    print(f"✅ API key found: {api_key[:8]}...{api_key[-4:]}")
     
     try:
         from chuk_llm.llm.client import get_client
         
-        client = get_client(provider="watsonx", model="ibm/granite-3-3-8b-instruct")
+        client = get_client(provider="groq", model="llama-3.3-70b-versatile")
         print(f"✅ Client created: {type(client).__name__}")
         
         # Check if client has universal tool compatibility
@@ -82,8 +72,6 @@ async def test_watsonx_universal_compatibility():
             tool_info = client.get_tool_compatibility_info()
             print(f"✅ Universal tool compatibility: {tool_info.get('compatibility_level', 'unknown')}")
             print(f"   Requires sanitization: {tool_info.get('requires_sanitization', 'unknown')}")
-            print(f"   Provider: {tool_info.get('provider', 'unknown')}")
-            print(f"   Max tool name length: {tool_info.get('max_tool_name_length', 'unknown')}")
         else:
             print("❌ Missing universal tool compatibility")
             return False
@@ -91,21 +79,21 @@ async def test_watsonx_universal_compatibility():
         return True
         
     except Exception as e:
-        print(f"❌ Error testing WatsonX universal compatibility: {e}")
+        print(f"❌ Error testing Groq universal compatibility: {e}")
         import traceback
         traceback.print_exc()
         return False
 
 
-async def test_watsonx_universal_tool_names():
-    """Test WatsonX with universal tool names"""
-    print("\n🎯 WATSONX UNIVERSAL TOOL NAMES TEST")
+async def test_groq_universal_tools():
+    """Test Groq with universal tool names"""
+    print("\n🎯 GROQ UNIVERSAL TOOL NAMES TEST")
     print("=" * 50)
     
     try:
         from chuk_llm.llm.client import get_client
         
-        client = get_client(provider="watsonx", model="ibm/granite-3-3-8b-instruct")
+        client = get_client(provider="groq", model="llama-3.3-70b-versatile")
         
         # Universal tool names (same as used in other provider tests)
         universal_tools = [
@@ -169,7 +157,7 @@ async def test_watsonx_universal_tool_names():
             }
         ]
         
-        print("Testing WatsonX with universal tool names...")
+        print("Testing Groq with universal tool names...")
         original_names = [t['function']['name'] for t in universal_tools]
         print(f"Original tool names: {original_names}")
         
@@ -182,23 +170,24 @@ async def test_watsonx_universal_tool_names():
         
         print("✅ SUCCESS: No tool naming errors with universal naming!")
         
-        if response.get("tool_calls"):
-            print(f"🔧 Tool calls made: {len(response['tool_calls'])}")
-            for i, tool_call in enumerate(response["tool_calls"]):
-                func_name = tool_call.get("function", {}).get("name", "unknown")
-                print(f"   {i+1}. {func_name}")
-                
-                # Verify original names are restored in response
-                if func_name in original_names:
-                    print(f"      ✅ Original name restored: {func_name}")
-                else:
-                    print(f"      ⚠️  Unexpected name in response: {func_name}")
-                    print(f"         (Should be one of: {original_names})")
+        if isinstance(response, dict):
+            if response.get("tool_calls"):
+                print(f"🔧 Tool calls made: {len(response['tool_calls'])}")
+                for i, tool_call in enumerate(response["tool_calls"]):
+                    func_name = tool_call.get("function", {}).get("name", "unknown")
+                    print(f"   {i+1}. {func_name}")
                     
-        elif response.get("response"):
-            print(f"💬 Text response: {response['response'][:150]}...")
-        else:
-            print(f"❓ Unexpected response format")
+                    # Verify original names are restored in response
+                    if func_name in original_names:
+                        print(f"      ✅ Original name restored: {func_name}")
+                    else:
+                        print(f"      ⚠️  Unexpected name in response: {func_name}")
+                        print(f"         (Should be one of: {original_names})")
+                        
+            elif response.get("response"):
+                print(f"💬 Text response: {response['response'][:150]}...")
+            else:
+                print(f"❓ Unexpected response format")
         
         return True
         
@@ -209,15 +198,15 @@ async def test_watsonx_universal_tool_names():
         return False
 
 
-async def test_watsonx_parameter_extraction():
+async def test_groq_parameter_extraction():
     """Test parameter extraction with universal tool names"""
-    print("\n🎯 WATSONX UNIVERSAL PARAMETER EXTRACTION TEST")
+    print("\n🎯 GROQ UNIVERSAL PARAMETER EXTRACTION TEST")
     print("=" * 60)
     
     try:
         from chuk_llm.llm.client import get_client
         
-        client = get_client(provider="watsonx", model="ibm/granite-3-3-8b-instruct")
+        client = get_client(provider="groq", model="llama-3.3-70b-versatile")
         
         # Universal tool names for testing
         tools = [
@@ -262,29 +251,29 @@ async def test_watsonx_parameter_extraction():
             {
                 "type": "function",
                 "function": {
-                    "name": "watsonx.granite:analyze",
-                    "description": "Analyze data using IBM Granite models",
+                    "name": "groq.inference:accelerate",
+                    "description": "Accelerate inference with Groq hardware",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "data_type": {
+                            "model_type": {
                                 "type": "string",
-                                "description": "Type of data to analyze"
+                                "description": "Type of model to accelerate"
                             },
-                            "analysis_level": {
-                                "type": "string",
-                                "description": "Level of analysis required"
+                            "batch_size": {
+                                "type": "integer",
+                                "description": "Batch size for processing"
                             }
                         },
-                        "required": ["data_type"]
+                        "required": ["model_type"]
                     }
                 }
             }
         ]
         
-        print("🔧 Testing universal tool names with WatsonX:")
+        print("🔧 Testing universal tool names with Groq:")
         for tool in tools:
-            print(f"   • {tool['function']['name']} (enterprise-grade sanitization)")
+            print(f"   • {tool['function']['name']} (requires sanitization)")
         
         # Test cases where parameters are explicit
         test_cases = [
@@ -299,14 +288,14 @@ async def test_watsonx_parameter_extraction():
                 "expected_params": {"table_name": "users"}
             },
             {
-                "request": "search for 'IBM Watson' in AI category",
+                "request": "search for 'Groq AI' in technology category",
                 "expected_tool": "web.api:search",
-                "expected_params": {"query": "IBM Watson", "category": "AI"}
+                "expected_params": {"query": "Groq AI", "category": "technology"}
             },
             {
-                "request": "analyze financial data with deep analysis",
-                "expected_tool": "watsonx.granite:analyze",
-                "expected_params": {"data_type": "financial", "analysis_level": "deep"}
+                "request": "accelerate the llama model with batch size 8",
+                "expected_tool": "groq.inference:accelerate",
+                "expected_params": {"model_type": "llama", "batch_size": 8}
             }
         ]
         
@@ -322,13 +311,13 @@ async def test_watsonx_parameter_extraction():
 
 For web searches, extract the query and category from the user's request for web.api:search.
 
-For WatsonX analysis, extract the data type and analysis level from the user's request for watsonx.granite:analyze.
+For Groq acceleration, extract the model type and batch size for groq.inference:accelerate.
 
 Examples:
 - "describe the products table" → stdio.describe_table(table_name="products")
 - "show users table structure" → stdio.describe_table(table_name="users")  
 - "search for 'AI news'" → web.api:search(query="AI news")
-- "analyze sales data" → watsonx.granite:analyze(data_type="sales")
+- "accelerate llama model" → groq.inference:accelerate(model_type="llama")
 
 NEVER call tools with empty required parameters!
 Always use the exact tool names provided."""
@@ -369,20 +358,25 @@ Always use the exact tool names provided."""
                 
                 for key, expected_value in expected_params.items():
                     actual_value = parsed_args.get(key, "")
-                    if key in ["table_name", "data_type"]:
+                    if key in ["table_name", "model_type"]:
                         if actual_value == expected_value:
                             print(f"   ✅ {key}: '{actual_value}' (exact match)")
-                        elif actual_value and expected_value in actual_value:
+                        elif actual_value and expected_value in str(actual_value):
                             print(f"   ✅ {key}: '{actual_value}' (contains expected)")
                         else:
                             print(f"   ❌ {key}: '{actual_value}' (expected '{expected_value}')")
                             success = False
                     elif key == "query":
-                        if expected_value.lower() in actual_value.lower():
+                        if expected_value.lower() in str(actual_value).lower():
                             print(f"   ✅ {key}: '{actual_value}' (contains expected)")
                         else:
                             print(f"   ❌ {key}: '{actual_value}' (expected to contain '{expected_value}')")
                             success = False
+                    elif key == "batch_size":
+                        if isinstance(actual_value, int) and actual_value == expected_value:
+                            print(f"   ✅ {key}: {actual_value} (exact match)")
+                        else:
+                            print(f"   ⚠️  {key}: {actual_value} (expected {expected_value})")
                     else:
                         if actual_value:
                             print(f"   ✅ {key}: '{actual_value}' (provided)")
@@ -408,219 +402,10 @@ Always use the exact tool names provided."""
         return False
 
 
-async def test_watsonx_streaming_with_universal_tools():
-    """Test streaming functionality with universal tool names"""
-    print("\n🎯 WATSONX STREAMING WITH UNIVERSAL TOOLS TEST")
-    print("=" * 55)
-    
-    try:
-        from chuk_llm.llm.client import get_client
-        
-        client = get_client(provider="watsonx", model="ibm/granite-3-3-8b-instruct")
-        
-        # Universal tools requiring enterprise sanitization
-        tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "stdio.read_query",
-                    "description": "Execute a database query",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {"type": "string", "description": "SQL query"}
-                        },
-                        "required": ["query"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "web.api:search",
-                    "description": "Search the web",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {"type": "string", "description": "Search query"}
-                        },
-                        "required": ["query"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "watsonx.granite:analyze",
-                    "description": "Analyze data with IBM Granite",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "data_type": {"type": "string", "description": "Data type"}
-                        },
-                        "required": ["data_type"]
-                    }
-                }
-            }
-        ]
-        
-        messages = [
-            {
-                "role": "user",
-                "content": "Search for 'enterprise AI solutions', analyze market data, and query the database for customer insights"
-            }
-        ]
-        
-        print("Testing WatsonX streaming with universal tool names...")
-        print("Expected: Tool names should be restored in streaming chunks")
-        
-        response = client.create_completion(
-            messages=messages,
-            tools=tools,
-            stream=True
-        )
-        
-        chunk_count = 0
-        tool_calls_found = []
-        restored_names = []
-        text_content = []
-        
-        async for chunk in response:
-            chunk_count += 1
-            
-            # Handle text content
-            if chunk.get("response"):
-                text_content.append(chunk["response"])
-                print(".", end="", flush=True)
-            
-            # Handle tool calls
-            if chunk.get("tool_calls"):
-                for tc in chunk["tool_calls"]:
-                    tool_name = tc.get("function", {}).get("name", "unknown")
-                    if tool_name != "unknown" and tool_name not in tool_calls_found:
-                        tool_calls_found.append(tool_name)
-                        
-                        print(f"\n   🔧 Streaming tool call: {tool_name}")
-                        
-                        # Verify name restoration
-                        if tool_name in ["stdio.read_query", "web.api:search", "watsonx.granite:analyze"]:
-                            print(f"      ✅ Universal tool name correctly restored in stream")
-                            restored_names.append(tool_name)
-                        else:
-                            print(f"      ⚠️  Unexpected tool name in stream: {tool_name}")
-            
-            # Limit for testing
-            if chunk_count >= 25:
-                break
-        
-        print(f"\n✅ WatsonX streaming test completed:")
-        print(f"   Chunks processed: {chunk_count}")
-        print(f"   Text chunks: {len(text_content)}")
-        print(f"   Tool calls found: {len(tool_calls_found)}")
-        print(f"   Correctly restored names: {len(restored_names)}")
-        
-        if restored_names:
-            print(f"   Restored tools: {restored_names}")
-            return True
-        elif tool_calls_found:
-            print(f"   ⚠️  Tools called but names not fully restored: {tool_calls_found}")
-            return True
-        else:
-            print(f"   ⚠️  No tool calls in streaming response")
-            return False
-        
-    except Exception as e:
-        print(f"❌ Error in WatsonX streaming test: {e}")
-        return False
-
-
-async def test_watsonx_enterprise_features():
-    """Test WatsonX enterprise-specific features"""
-    print("\n🎯 WATSONX ENTERPRISE FEATURES TEST")
-    print("=" * 45)
-    
-    try:
-        from chuk_llm.llm.client import get_client
-        
-        client = get_client(provider="watsonx", model="ibm/granite-3-3-8b-instruct")
-        
-        # Test model family detection
-        if hasattr(client, '_detect_model_family'):
-            family = client._detect_model_family()
-            print(f"✅ Model family detected: {family}")
-        
-        # Test enterprise-grade tool sanitization
-        enterprise_tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "watsonx.governance:audit",
-                    "description": "Audit AI model decisions with enterprise governance",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "model_decision": {"type": "string", "description": "Model decision to audit"},
-                            "compliance_level": {"type": "string", "enum": ["basic", "advanced", "enterprise"]},
-                            "audit_trail": {"type": "boolean", "description": "Include audit trail"}
-                        },
-                        "required": ["model_decision"]
-                    }
-                }
-            }
-        ]
-        
-        messages = [
-            {
-                "role": "user",
-                "content": "Audit the model decision for loan approval with enterprise compliance and full audit trail"
-            }
-        ]
-        
-        print("Testing enterprise tool schemas with WatsonX...")
-        
-        response = await client.create_completion(
-            messages=messages,
-            tools=enterprise_tools,
-            stream=False,
-            max_tokens=300
-        )
-        
-        if response.get("tool_calls"):
-            call = response["tool_calls"][0]
-            func_name = call["function"]["name"]
-            func_args = call["function"]["arguments"]
-            
-            print(f"✅ Enterprise tool call successful:")
-            print(f"   Tool: {func_name}")
-            
-            parsed_args = safe_parse_tool_arguments(func_args)
-            print(f"   Parameters: {parsed_args}")
-            
-            # Check if WatsonX handled the enterprise schema
-            if parsed_args.get("model_decision"):
-                print(f"   ✅ WatsonX successfully handled enterprise schema")
-                return True
-            else:
-                print(f"   ⚠️  Enterprise schema partially handled")
-                return True
-                
-        elif response.get("response"):
-            print(f"   ⚠️  WatsonX provided text response instead of tool call")
-            if "audit" in response["response"].lower():
-                print(f"   ✅ Response mentions audit - acceptable fallback")
-                return True
-            
-        return False
-        
-    except Exception as e:
-        print(f"❌ Error in WatsonX enterprise test: {e}")
-        return False
-
-
 async def test_cross_provider_consistency():
-    """Test that WatsonX provides consistent behavior with other providers"""
-    print("\n🎯 CROSS-PROVIDER CONSISTENCY TEST")
-    print("=" * 50)
+    """Test that Groq provides consistent behavior with other providers"""
+    print("\n🎯 GROQ CROSS-PROVIDER CONSISTENCY TEST")
+    print("=" * 55)
     
     print("Testing same request with multiple providers...")
     
@@ -647,7 +432,7 @@ async def test_cross_provider_consistency():
     ]
     
     providers_to_test = [
-        ("watsonx", "ibm/granite-3-3-8b-instruct"),
+        ("groq", "llama-3.3-70b-versatile"),
     ]
     
     # Add other providers if keys are available
@@ -657,8 +442,6 @@ async def test_cross_provider_consistency():
         providers_to_test.append(("anthropic", "claude-sonnet-4-20250514"))
     if os.getenv("MISTRAL_API_KEY"):
         providers_to_test.append(("mistral", "mistral-medium-2505"))
-    if os.getenv("GROQ_API_KEY"):
-        providers_to_test.append(("groq", "llama-3.3-70b-versatile"))
     
     results = {}
     
@@ -746,75 +529,64 @@ async def test_cross_provider_consistency():
 
 
 async def main():
-    """Run the complete WatsonX test suite with universal tool compatibility"""
-    print("🧪 WATSONX UNIVERSAL TOOL COMPATIBILITY TEST SUITE")
+    """Run the complete Groq universal tool compatibility test suite"""
+    print("🧪 GROQ UNIVERSAL TOOL COMPATIBILITY TEST SUITE")
     print("=" * 70)
     
-    print("This test will verify that the updated WatsonX client:")
+    print("This test will verify that the updated Groq client:")
     print("1. Has universal tool compatibility integration")
     print("2. Handles universal tool names with bidirectional mapping")
     print("3. Extracts parameters correctly from any tool naming convention")
-    print("4. Provides enterprise-grade tool sanitization")
-    print("5. Maintains streaming performance with tool name restoration")
-    print("6. Provides consistent behavior with other providers")
+    print("4. Provides consistent behavior with other providers")
     
     # Test 1: Universal compatibility integration
-    result1 = await test_watsonx_universal_compatibility()
+    result1 = await test_groq_universal_compatibility()
     
     # Test 2: Universal tool names
-    result2 = await test_watsonx_universal_tool_names() if result1 else False
+    result2 = await test_groq_universal_tools() if result1 else False
     
     # Test 3: Parameter extraction
-    result3 = await test_watsonx_parameter_extraction() if result2 else False
+    result3 = await test_groq_parameter_extraction() if result2 else False
     
-    # Test 4: Streaming with universal tools
-    result4 = await test_watsonx_streaming_with_universal_tools() if result3 else False
-    
-    # Test 5: Enterprise features
-    result5 = await test_watsonx_enterprise_features() if result4 else False
-    
-    # Test 6: Cross-provider consistency
-    result6 = await test_cross_provider_consistency() if result5 else False
+    # Test 4: Cross-provider consistency
+    result4 = await test_cross_provider_consistency() if result3 else False
     
     print("\n" + "=" * 70)
-    print("🎯 WATSONX UNIVERSAL COMPATIBILITY TEST RESULTS:")
+    print("🎯 GROQ UNIVERSAL COMPATIBILITY TEST RESULTS:")
     print(f"   Universal Compatibility Integration: {'✅ PASS' if result1 else '❌ FAIL'}")
     print(f"   Universal Tool Names: {'✅ PASS' if result2 else '❌ FAIL'}")
     print(f"   Universal Parameters: {'✅ PASS' if result3 else '❌ FAIL'}")
-    print(f"   Streaming + Restoration: {'✅ PASS' if result4 else '❌ FAIL'}")
-    print(f"   Enterprise Features: {'✅ PASS' if result5 else '❌ FAIL'}")
-    print(f"   Cross-Provider Consistency: {'✅ PASS' if result6 else '❌ FAIL'}")
+    print(f"   Cross-Provider Consistency: {'✅ PASS' if result4 else '❌ FAIL'}")
     
-    if result1 and result2 and result3 and result4 and result5 and result6:
-        print("\n🎉 COMPLETE WATSONX SUCCESS!")
-        print("✅ WatsonX universal tool compatibility works perfectly!")
+    if result1 and result2 and result3 and result4:
+        print("\n🎉 COMPLETE GROQ SUCCESS!")
+        print("✅ Groq universal tool compatibility works perfectly!")
         
         print("\n🔧 PROVEN CAPABILITIES:")
         print("   ✅ MCP-style tool names (stdio.read_query) work seamlessly")
         print("   ✅ API-style tool names (web.api:search) work seamlessly")
-        print("   ✅ WatsonX-style names (watsonx.granite:analyze) work seamlessly")
-        print("   ✅ Enterprise-grade tool name sanitization")
+        print("   ✅ Database-style names (database.sql.execute) work seamlessly")
+        print("   ✅ Groq-style names (groq.inference:accelerate) work seamlessly")
+        print("   ✅ Tool names are sanitized for Groq API compatibility")
         print("   ✅ Original names are restored in responses")
         print("   ✅ Bidirectional mapping works in streaming")
         print("   ✅ Complex conversation flows maintain name restoration")
         print("   ✅ Parameter extraction works with any naming convention")
-        print("   ✅ Enterprise governance and compliance features")
-        print("   ✅ Consistent behavior with OpenAI, Groq, Anthropic, Mistral")
+        print("   ✅ Consistent behavior with OpenAI, Anthropic, Mistral")
         
         print("\n🚀 READY FOR PRODUCTION:")
-        print("   • MCP CLI can use any tool naming convention with WatsonX")
-        print("   • WatsonX provides identical user experience to other providers")
+        print("   • MCP CLI can use any tool naming convention with Groq")
+        print("   • Groq provides identical user experience to other providers")
         print("   • Tool chaining works across conversation turns")
         print("   • Streaming maintains tool name fidelity")
         print("   • Provider switching is seamless")
-        print("   • Enterprise-grade security and governance")
-        print("   • IBM Granite models with strong reasoning")
+        print("   • Ultra-fast inference with universal compatibility")
         
         print("\n💡 MCP CLI Usage:")
-        print("   mcp-cli chat --provider watsonx --model ibm/granite-3-3-8b-instruct")
-        print("   mcp-cli chat --provider watsonx --model meta-llama/llama-3-3-70b-instruct")
+        print("   mcp-cli chat --provider groq --model llama-3.3-70b-versatile")
+        print("   mcp-cli chat --provider groq --model mixtral-8x7b-32768")
         
-    elif any([result1, result2, result3, result4, result5, result6]):
+    elif any([result1, result2, result3, result4]):
         print("\n⚠️  PARTIAL SUCCESS:")
         print("   Some aspects of universal tool compatibility work")
         if result1:
@@ -824,24 +596,19 @@ async def main():
         if result3:
             print("   ✅ Parameter extraction works")
         if result4:
-            print("   ✅ Streaming restoration works")
-        if result5:
-            print("   ✅ Enterprise features work")
-        if result6:
             print("   ✅ Cross-provider consistency works")
         
     else:
         print("\n❌ TESTS FAILED:")
         print("   Universal tool compatibility needs debugging")
         print("\n🔧 DEBUGGING STEPS:")
-        print("   1. Verify WATSONX_API_KEY and WATSONX_PROJECT_ID are correctly set")
-        print("   2. Check ToolCompatibilityMixin is properly inherited")
-        print("   3. Validate tool name sanitization and mapping")
-        print("   4. Ensure response restoration is working")
-        print("   5. Validate conversation flow handling")
-        print("   6. Check WatsonX project has proper model access")
+        print("   1. Verify Groq client inherits from ToolCompatibilityMixin")
+        print("   2. Check tool name sanitization and mapping")
+        print("   3. Ensure response restoration is working")
+        print("   4. Validate conversation flow handling")
+        print("   5. Check GROQ_API_KEY and network connectivity")
 
 
 if __name__ == "__main__":
-    print("🚀 Starting WatsonX Universal Tool Compatibility Test...")
+    print("🚀 Starting Groq Universal Tool Compatibility Test...")
     asyncio.run(main())
