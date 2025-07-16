@@ -1,7 +1,7 @@
 # diagnostics/streaming/providers/mistral_streaming.py
 """
 Test Mistral provider streaming behavior.
-Updated to work with the new chuk-llm architecture.
+Updated to work with the new chuk-llm architecture and correct model names.
 """
 import asyncio
 import time
@@ -22,10 +22,10 @@ async def test_mistral_streaming():
     print("=== Testing Mistral Provider Streaming ===")
     
     try:
-        # Get Mistral client with default model
+        # Get Mistral client with correct model name from config
         client = get_client(
             provider="mistral",
-            model="mistral-large-latest"
+            model="mistral-medium-2505"  # Use actual model from config
         )
         
         print(f"Client type: {type(client)}")
@@ -164,11 +164,13 @@ async def test_mistral_model_capabilities():
     """Test different Mistral models and their capabilities."""
     print("\n\n=== Testing Mistral Model Capabilities ===")
     
+    # Use actual model names from the config
     models_to_test = [
-        ("mistral-large-latest", "General purpose large model"),
-        ("mistral-small-latest", "Fast small model"),
-        ("pixtral-large-latest", "Vision-capable model"),
-        ("codestral-latest", "Code-specialized model")
+        ("mistral-medium-2505", "General purpose medium model"),
+        ("magistral-medium-2506", "Reasoning-capable medium model"),
+        ("magistral-small-2506", "Reasoning-capable small model"),
+        ("codestral-2501", "Code-specialized model"),
+        ("pixtral-large-2411", "Vision-capable model")
     ]
     
     for model, description in models_to_test:
@@ -178,8 +180,11 @@ async def test_mistral_model_capabilities():
             client = get_client(provider="mistral", model=model)
             
             # Get model info
-            model_info = client.get_model_info()
-            print(f"   Model info: {model_info}")
+            try:
+                model_info = client.get_model_info()
+                print(f"   Model info: {model_info}")
+            except:
+                print(f"   Model info: Not available")
             
             # Test basic streaming
             messages = [{"role": "user", "content": "Say hello in exactly 10 words."}]
@@ -214,7 +219,7 @@ async def test_mistral_vs_competitors():
     ]
     
     providers = [
-        ("mistral", "mistral-large-latest"),
+        ("mistral", "mistral-medium-2505"),  # Use correct model name
         ("anthropic", "claude-sonnet-4-20250514"),
         ("openai", "gpt-4o-mini"),
         ("groq", "llama-3.3-70b-versatile")
@@ -316,10 +321,10 @@ async def test_mistral_features():
     """Test Mistral-specific features like function calling and vision."""
     print("\n\n=== Testing Mistral Advanced Features ===")
     
-    # Test function calling
+    # Test function calling with a model that supports tools
     print("\n🔍 Testing Mistral function calling...")
     try:
-        client = get_client(provider="mistral", model="mistral-large-latest")
+        client = get_client(provider="mistral", model="mistral-medium-2505")
         
         tools = [
             {
@@ -357,11 +362,11 @@ async def test_mistral_features():
     except Exception as e:
         print(f"   ❌ Function calling test failed: {e}")
     
-    # Test vision (if supported by model)
+    # Test vision with correct model name
     print("\n🔍 Testing Mistral vision capabilities...")
     try:
-        # Use vision-capable model
-        client = get_client(provider="mistral", model="pixtral-large-latest")
+        # Use vision-capable model from config
+        client = get_client(provider="mistral", model="pixtral-large-2411")
         
         # Test with a simple base64 image (1x1 red pixel)
         red_pixel_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
@@ -390,6 +395,31 @@ async def test_mistral_features():
         
     except Exception as e:
         print(f"   ⚠️  Vision test failed (may not be supported): {e}")
+
+    # Test reasoning models
+    print("\n🔍 Testing Mistral reasoning capabilities...")
+    try:
+        client = get_client(provider="mistral", model="magistral-medium-2506")
+        
+        messages = [
+            {"role": "user", "content": "Think step by step: If a train leaves station A at 2 PM traveling at 60 mph, and another train leaves station B at 3 PM traveling at 80 mph toward station A, and the stations are 200 miles apart, when will they meet?"}
+        ]
+        
+        response = await client.create_completion(messages, stream=False)
+        
+        if isinstance(response, dict) and response.get("response"):
+            content = response["response"]
+            print(f"   ✅ Reasoning response received ({len(content)} chars)")
+            # Check if the response shows step-by-step thinking
+            if any(phrase in content.lower() for phrase in ["step", "first", "then", "calculate", "therefore"]):
+                print(f"   ✅ Shows reasoning structure")
+            else:
+                print(f"   ⚠️  May not show explicit reasoning")
+        else:
+            print(f"   ❌ Reasoning test failed: {response}")
+        
+    except Exception as e:
+        print(f"   ❌ Reasoning test failed: {e}")
 
 async def main():
     """Run all Mistral streaming tests."""

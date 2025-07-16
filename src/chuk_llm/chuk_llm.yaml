@@ -1521,7 +1521,7 @@ azure_openai:
   
   # Azure-specific configuration
   extra:
-    azure_endpoint_env: AZURE_OPENAI_BASE
+    azure_endpoint_env: AZURE_OPENAI_ENDPOINT
     api_version: "2024-02-01"
     default_deployment_mapping: true  # Map model names to deployment names
     

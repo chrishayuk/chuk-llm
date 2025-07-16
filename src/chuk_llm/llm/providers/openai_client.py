@@ -4,6 +4,9 @@ OpenAI chat-completion adapter with unified configuration integration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Enhanced wrapper around the official `openai` SDK that uses the unified
 configuration system for all capabilities instead of hardcoding.
+
+Includes MCP tool name sanitization with bidirectional mapping to ensure
+original tool names are preserved in responses for seamless MCP compatibility.
 """
 from __future__ import annotations
 from typing import Any, AsyncIterator, Dict, List, Optional, Union, Tuple
@@ -12,6 +15,8 @@ import logging
 import asyncio
 import time
 import re
+import uuid
+import json
 
 # mixins
 from chuk_llm.llm.providers._mixins import OpenAIStyleMixin
@@ -26,6 +31,11 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
     """
     Configuration-driven wrapper around the official `openai` SDK that gets
     all capabilities from the unified YAML configuration.
+    
+    Includes MCP tool name sanitization with bidirectional mapping:
+    - Sanitizes MCP names (stdio.read_query -> stdio_read_query) for API compatibility
+    - Restores original names in responses for seamless MCP experience
+    - Works with all OpenAI-compatible providers (OpenAI, DeepSeek, Groq, etc.)
     """
 
     def __init__(
@@ -55,6 +65,9 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
             api_key=api_key, 
             base_url=api_base
         ) if api_base else openai.OpenAI(api_key=api_key)
+        
+        # Store current tool name mapping for response restoration
+        self._current_name_mapping: Dict[str, str] = {}
         
         log.debug(f"OpenAI client initialized: provider={self.detected_provider}, model={self.model}")
 
@@ -94,6 +107,8 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
                 "api_base": self.api_base,
                 "detected_provider": self.detected_provider,
                 "openai_compatible": True,
+                "tool_name_requirements": "aggressive_sanitization",
+                "mcp_compatibility": "requires_sanitization_with_restoration",
                 "parameter_mapping": {
                     "temperature": "temperature",
                     "max_tokens": "max_tokens",
@@ -107,15 +122,27 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
         
         return info
 
-    def _sanitize_tool_names(self, tools: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
+    def _sanitize_tools_for_openai(self, tools: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
         """
-        Sanitize tool names to be compatible with OpenAI API requirements.
-        Tool names must match ^[a-zA-Z0-9_-]{1,64}$ but some providers are stricter.
+        Sanitize tool names and create a mapping for response processing.
+        
+        Uses aggressive sanitization for compatibility with all OpenAI-compatible providers:
+        - Replaces dots, colons, and special chars with underscores
+        - Ensures names start with letter/underscore
+        - Truncates to 64 characters
+        - Works with OpenAI, DeepSeek, Groq, Together AI, etc.
+        
+        Returns:
+            tuple: (sanitized_tools, name_mapping)
+                - sanitized_tools: Tools with provider-compatible names
+                - name_mapping: Dict mapping sanitized_name -> original_name
         """
         if not tools:
-            return tools
-        
+            return tools, {}
+            
         sanitized_tools = []
+        name_mapping = {}
+        
         for tool in tools:
             if isinstance(tool, dict) and "function" in tool:
                 tool_copy = tool.copy()
@@ -123,25 +150,106 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
                 
                 original_name = func.get("name", "")
                 if original_name:
-                    # Replace invalid characters with underscores
+                    # Aggressive sanitization for all OpenAI-compatible providers
+                    # Replace any non-alphanumeric (except underscore/dash) with underscore
                     sanitized_name = re.sub(r'[^a-zA-Z0-9_-]', '_', original_name)
+                    
+                    # Remove multiple consecutive underscores
+                    sanitized_name = re.sub(r'_+', '_', sanitized_name)
+                    
                     # Ensure it starts with a letter or underscore
                     if sanitized_name and not sanitized_name[0].isalpha() and sanitized_name[0] != '_':
                         sanitized_name = '_' + sanitized_name
-                    # Truncate to 64 characters
-                    sanitized_name = sanitized_name[:64]
                     
-                    if sanitized_name != original_name:
-                        log.debug(f"Sanitized tool name: {original_name} -> {sanitized_name}")
+                    # Truncate to 64 characters and clean up trailing underscores
+                    sanitized_name = sanitized_name[:64].rstrip('_')
                     
+                    # Ensure we have a valid name
+                    if not sanitized_name:
+                        sanitized_name = "unnamed_function"
+                    
+                    # Store the mapping
+                    name_mapping[sanitized_name] = original_name
+                    
+                    # Update the tool
                     func["name"] = sanitized_name
+                    
+                    # Log the sanitization if it changed
+                    if sanitized_name != original_name:
+                        log.debug(f"Sanitized {self.detected_provider} tool name: {original_name} -> {sanitized_name}")
                 
                 tool_copy["function"] = func
                 sanitized_tools.append(tool_copy)
             else:
+                # Non-function tools pass through unchanged
                 sanitized_tools.append(tool)
+                
+        return sanitized_tools, name_mapping
+
+    def _restore_tool_names_in_response(self, response: Dict[str, Any], name_mapping: Dict[str, str]) -> Dict[str, Any]:
+        """
+        Restore original tool names in the response using the mapping.
+        
+        This makes the sanitization transparent to users - they send MCP-style names
+        and receive MCP-style names back, even though internally we use sanitized names.
+        """
+        if not name_mapping or not response.get("tool_calls"):
+            return response
+            
+        # Create a copy to avoid modifying the original
+        restored_response = response.copy()
+        restored_tool_calls = []
+        
+        for tool_call in response["tool_calls"]:
+            if "function" in tool_call and "name" in tool_call["function"]:
+                sanitized_name = tool_call["function"]["name"]
+                original_name = name_mapping.get(sanitized_name, sanitized_name)
+                
+                # Restore the original name
+                restored_tool_call = tool_call.copy()
+                restored_tool_call["function"] = tool_call["function"].copy()
+                restored_tool_call["function"]["name"] = original_name
+                
+                restored_tool_calls.append(restored_tool_call)
+                
+                # Log the restoration if it changed
+                if original_name != sanitized_name:
+                    log.debug(f"Restored {self.detected_provider} tool name: {sanitized_name} -> {original_name}")
+            else:
+                restored_tool_calls.append(tool_call)
+                
+        restored_response["tool_calls"] = restored_tool_calls
+        return restored_response
+
+    def _sanitize_tool_names(self, tools: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
+        """
+        Sanitize tool names with mapping storage for later restoration.
+        
+        This replaces the previous implementation to add bidirectional mapping support
+        for seamless MCP tool name handling across all OpenAI-compatible providers.
+        """
+        if not tools:
+            return tools
+        
+        log.debug(f"Sanitizing {len(tools)} tools for {self.detected_provider} compatibility")
+        
+        # Store the mapping for later restoration
+        sanitized_tools, self._current_name_mapping = self._sanitize_tools_for_openai(tools)
         
         return sanitized_tools
+
+    def _normalize_message_with_restoration(self, msg, name_mapping: Dict[str, str] = None) -> Dict[str, Any]:
+        """
+        Enhanced message normalization with tool name restoration.
+        """
+        # Use the existing normalization logic
+        result = self._normalize_message(msg)
+        
+        # Restore original tool names if we have a mapping
+        if name_mapping and result.get("tool_calls"):
+            result = self._restore_tool_names_in_response(result, name_mapping)
+        
+        return result
 
     def _normalize_message(self, msg) -> Dict[str, Any]:
         """
@@ -212,8 +320,6 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
                 raw_tool_calls = msg['tool_calls']
             
             if raw_tool_calls:
-                import json
-                import uuid
                 for tc in raw_tool_calls:
                     try:
                         tc_id = getattr(tc, "id", None) or f"call_{uuid.uuid4().hex[:8]}"
@@ -286,13 +392,14 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
         
         return result
 
-    async def _stream_from_async(
+    async def _stream_from_async_with_restoration(
         self,
         async_stream,
+        name_mapping: Dict[str, str] = None,
         normalize_chunk: Optional[callable] = None
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Enhanced streaming with configuration-aware error handling.
+        Enhanced streaming with tool name restoration.
         """
         try:
             chunk_count = 0
@@ -318,21 +425,22 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
                             
                             # Extract content with null safety
                             if hasattr(delta, 'content') and delta.content is not None:
-                                content = str(delta.content)  # Ensure string type
+                                content = str(delta.content)
                                 total_content += content
                             
-                            # Handle tool calls in delta
+                            # Handle tool calls in delta with name restoration
                             if hasattr(delta, 'tool_calls') and delta.tool_calls:
-                                import json
-                                import uuid
                                 for tc in delta.tool_calls:
                                     try:
                                         if hasattr(tc, 'function') and tc.function:
+                                            sanitized_name = getattr(tc.function, 'name', '')
+                                            original_name = name_mapping.get(sanitized_name, sanitized_name) if name_mapping else sanitized_name
+                                            
                                             tool_calls.append({
                                                 "id": getattr(tc, 'id', f"call_{uuid.uuid4().hex[:8]}"),
                                                 "type": "function",
                                                 "function": {
-                                                    "name": getattr(tc.function, 'name', ''),
+                                                    "name": original_name,  # Restored name
                                                     "arguments": getattr(tc.function, 'arguments', '') or ""
                                                 }
                                             })
@@ -348,7 +456,7 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
                                 total_content += content
                             
                             if hasattr(message, 'tool_calls') and message.tool_calls:
-                                normalized = self._normalize_message(message)
+                                normalized = self._normalize_message_with_restoration(message, name_mapping)
                                 tool_calls = normalized.get('tool_calls', [])
                     
                     # Provider-specific chunk formats
@@ -360,11 +468,17 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
                             content = str(chunk['content'])
                             total_content += content
                         if 'tool_calls' in chunk:
-                            tool_calls = chunk['tool_calls']
+                            # Restore names in chunk tool calls
+                            chunk_tool_calls = chunk['tool_calls']
+                            if name_mapping:
+                                restored_chunk = {"tool_calls": chunk_tool_calls}
+                                restored_chunk = self._restore_tool_names_in_response(restored_chunk, name_mapping)
+                                tool_calls = restored_chunk['tool_calls']
+                            else:
+                                tool_calls = chunk_tool_calls
                 
                 except Exception as chunk_error:
                     log.warning(f"Error processing chunk {chunk_count}: {chunk_error}")
-                    # Continue processing other chunks
                     content = ""
                     tool_calls = []
                 
@@ -390,16 +504,11 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
                              f"chunk_interval={current_time - last_chunk_time:.2f}s")
                     last_chunk_time = current_time
                 
-                # Always yield chunks (even empty ones for timing)
                 yield result
             
-            # Final statistics and validation
+            # Final statistics
             log.debug(f"[{self.detected_provider}] Streaming completed: "
                      f"{chunk_count} chunks, {len(total_content)} total characters")
-            
-            # Log completion without provider-specific assumptions
-            if len(total_content) == 0 and chunk_count > 0:
-                log.info(f"{self.detected_provider} streaming completed with no content - this may be normal for some requests")
                         
         except Exception as e:
             log.error(f"Error in {self.detected_provider} streaming: {e}")
@@ -493,13 +602,14 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
     ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
         Configuration-aware completion that validates capabilities before processing.
+        Includes transparent MCP tool name sanitization and restoration.
         """
         # Validate request against configuration
         validated_messages, validated_tools, validated_stream, validated_kwargs = self._validate_request_with_config(
             messages, tools, stream, **kwargs
         )
         
-        # Sanitize tool names (from mixin)
+        # Sanitize tool names (stores mapping for restoration)
         validated_tools = self._sanitize_tool_names(validated_tools)
         
         # Use configuration-aware parameter adjustment
@@ -517,7 +627,7 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
         **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Enhanced async streaming with configuration-aware retry logic.
+        Enhanced async streaming with configuration-aware retry logic and tool name restoration.
         """
         # Get retry configuration from provider config if available
         max_retries = 1  # Default
@@ -543,9 +653,9 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
                     **kwargs
                 )
                 
-                # Stream results
+                # Stream results with name restoration
                 chunk_count = 0
-                async for result in self._stream_from_async(response_stream):
+                async for result in self._stream_from_async_with_restoration(response_stream, self._current_name_mapping):
                     chunk_count += 1
                     yield result
                 
@@ -582,7 +692,7 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
         tools: Optional[List[Dict[str, Any]]] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        """Enhanced non-streaming completion using configuration."""
+        """Enhanced non-streaming completion with tool name restoration."""
         try:
             log.debug(f"[{self.detected_provider}] Starting completion: "
                      f"model={self.model}, messages={len(messages)}, tools={len(tools) if tools else 0}")
@@ -608,10 +718,10 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
                     else:
                         log.debug(f"[{self.detected_provider}] No content in message")
             
-            # Use enhanced normalization
-            result = self._normalize_message(resp.choices[0].message)
+            # Use enhanced normalization with name restoration
+            result = self._normalize_message_with_restoration(resp.choices[0].message, self._current_name_mapping)
             
-            # Log result without making assumptions about what's "normal"
+            # Log result
             log.debug(f"[{self.detected_provider}] Completion result: "
                      f"response={len(str(result.get('response', ''))) if result.get('response') else 0} chars, "
                      f"tool_calls={len(result.get('tool_calls', []))}")
@@ -625,3 +735,14 @@ class OpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient)
                 "tool_calls": [],
                 "error": True
             }
+
+    async def close(self):
+        """Cleanup resources"""
+        # Reset name mapping
+        self._current_name_mapping = {}
+        
+        # Cleanup OpenAI clients if needed
+        if hasattr(self.async_client, 'close'):
+            await self.async_client.close()
+        if hasattr(self.client, 'close'):
+            self.client.close()

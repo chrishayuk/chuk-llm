@@ -11,14 +11,16 @@ Features
 * Real async streaming without buffering
 * Vision capabilities for supported models
 * Function calling support for compatible models
+* MCP tool name sanitization for compatibility with Mistral's naming requirements
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import re
 import uuid
-from typing import Any, AsyncIterator, Dict, List, Optional, Union
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple, Union
 
 # Import Mistral SDK
 try:
@@ -41,6 +43,10 @@ class MistralLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
     
     Gets all capabilities from unified YAML configuration instead of
     hardcoded model patterns for better maintainability.
+    
+    Includes MCP tool name sanitization to handle tool names like
+    'stdio.read_query' that need to be converted to 'stdio_read_query'
+    for Mistral's API requirements.
     """
 
     def __init__(
@@ -65,6 +71,111 @@ class MistralLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         self.client = Mistral(**client_kwargs)
         
         log.info(f"MistralLLMClient initialized with model: {model}")
+
+    def _sanitize_tool_name_for_mistral(self, name: str) -> str:
+        """
+        Convert MCP/OpenAI tool names to Mistral-compatible format.
+        
+        Mistral requires function names to be:
+        - Letters (a-z, A-Z)
+        - Numbers (0-9) 
+        - Underscores (_)
+        - Dashes (-)
+        - Maximum length of 64 characters
+        
+        Examples:
+            stdio.read_query -> stdio_read_query
+            filesystem.read_file -> filesystem_read_file  
+            mcp.server:get_data -> mcp_server_get_data
+        """
+        if not name:
+            return name
+            
+        # Replace invalid characters with underscores
+        sanitized = re.sub(r'[^a-zA-Z0-9_-]', '_', name)
+        
+        # Remove multiple consecutive underscores
+        sanitized = re.sub(r'_+', '_', sanitized)
+        
+        # Remove leading/trailing underscores
+        sanitized = sanitized.strip('_')
+        
+        # Ensure it doesn't exceed 64 characters
+        if len(sanitized) > 64:
+            sanitized = sanitized[:64].rstrip('_')
+            
+        return sanitized
+
+    def _sanitize_tools_for_mistral(self, tools: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
+        """
+        Sanitize tool names and create a mapping for response processing.
+        
+        Returns:
+            tuple: (sanitized_tools, name_mapping)
+                - sanitized_tools: Tools with Mistral-compatible names
+                - name_mapping: Dict mapping sanitized_name -> original_name
+        """
+        if not tools:
+            return tools, {}
+            
+        sanitized_tools = []
+        name_mapping = {}
+        
+        for tool in tools:
+            if tool.get("type") == "function" and "function" in tool:
+                original_name = tool["function"]["name"]
+                sanitized_name = self._sanitize_tool_name_for_mistral(original_name)
+                
+                # Store the mapping
+                name_mapping[sanitized_name] = original_name
+                
+                # Create sanitized tool
+                sanitized_tool = tool.copy()
+                sanitized_tool["function"] = tool["function"].copy()
+                sanitized_tool["function"]["name"] = sanitized_name
+                
+                sanitized_tools.append(sanitized_tool)
+                
+                # Log the sanitization if it changed
+                if sanitized_name != original_name:
+                    log.debug(f"Sanitized tool name: {original_name} -> {sanitized_name}")
+            else:
+                # Non-function tools pass through unchanged
+                sanitized_tools.append(tool)
+                
+        return sanitized_tools, name_mapping
+
+    def _restore_tool_names_in_response(self, response: Dict[str, Any], name_mapping: Dict[str, str]) -> Dict[str, Any]:
+        """
+        Restore original tool names in the response using the mapping.
+        """
+        if not name_mapping or not response.get("tool_calls"):
+            return response
+            
+        # Create a copy to avoid modifying the original
+        restored_response = response.copy()
+        restored_tool_calls = []
+        
+        for tool_call in response["tool_calls"]:
+            if "function" in tool_call and "name" in tool_call["function"]:
+                sanitized_name = tool_call["function"]["name"]
+                original_name = name_mapping.get(sanitized_name, sanitized_name)
+                
+                # Restore the original name
+                restored_tool_call = tool_call.copy()
+                restored_tool_call["function"] = tool_call["function"].copy()
+                restored_tool_call["function"]["name"] = original_name
+                
+                restored_tool_calls.append(restored_tool_call)
+                
+                # Log the restoration if it changed
+                if original_name != sanitized_name:
+                    log.debug(f"Restored tool name: {sanitized_name} -> {original_name}")
+            else:
+                restored_tool_calls.append(tool_call)
+                
+        restored_response["tool_calls"] = restored_tool_calls
+        return restored_response
 
     def get_model_info(self) -> Dict[str, Any]:
         """
@@ -229,8 +340,8 @@ class MistralLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         
         return mistral_messages
 
-    def _normalize_mistral_response(self, response: Any) -> Dict[str, Any]:
-        """Convert Mistral response to standard format"""
+    def _normalize_mistral_response(self, response: Any, name_mapping: Dict[str, str] = None) -> Dict[str, Any]:
+        """Convert Mistral response to standard format and restore tool names"""
         # Handle both response types
         if hasattr(response, 'choices') and response.choices:
             choice = response.choices[0]
@@ -255,11 +366,14 @@ class MistralLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                     # If tools aren't supported but we got tool calls, log warning
                     log.warning(f"Received tool calls from {self.model} but tools not supported according to configuration")
             
-            # Return standard format
-            if tool_calls:
-                return {"response": None, "tool_calls": tool_calls}
-            else:
-                return {"response": content, "tool_calls": []}
+            # Create response
+            result = {"response": content if content else None, "tool_calls": tool_calls}
+            
+            # Restore original tool names if we have a mapping
+            if name_mapping and tool_calls:
+                result = self._restore_tool_names_in_response(result, name_mapping)
+            
+            return result
         
         # Fallback for unexpected response format
         return {"response": str(response), "tool_calls": []}
@@ -314,11 +428,11 @@ class MistralLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         **kwargs: Any,
     ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
-        Configuration-aware completion with Mistral API.
+        Configuration-aware completion with Mistral API and MCP tool name sanitization.
         
         Args:
             messages: ChatML-style messages
-            tools: OpenAI-style tool definitions
+            tools: OpenAI-style tool definitions (will be sanitized for Mistral)
             stream: Whether to stream response
             **kwargs: Additional parameters (temperature, max_tokens, etc.)
         
@@ -329,6 +443,12 @@ class MistralLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         validated_messages, validated_tools, validated_stream, validated_kwargs = self._validate_request_with_config(
             messages, tools, stream, **kwargs
         )
+        
+        # Sanitize tools for Mistral API compatibility
+        name_mapping = {}
+        if validated_tools:
+            validated_tools, name_mapping = self._sanitize_tools_for_mistral(validated_tools)
+            log.debug(f"Tool sanitization: {len(name_mapping)} tools renamed for Mistral compatibility")
         
         # Convert messages to Mistral format (with configuration-aware processing)
         mistral_messages = self._convert_messages_to_mistral_format(validated_messages)
@@ -348,16 +468,17 @@ class MistralLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                 request_params["tool_choice"] = "auto"
         
         if validated_stream:
-            return self._stream_completion_async(request_params)
+            return self._stream_completion_async(request_params, name_mapping)
         else:
-            return self._regular_completion(request_params)
+            return self._regular_completion(request_params, name_mapping)
 
     async def _stream_completion_async(
         self, 
-        request_params: Dict[str, Any]
+        request_params: Dict[str, Any],
+        name_mapping: Dict[str, str] = None
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Real streaming using Mistral's async streaming API.
+        Real streaming using Mistral's async streaming API with tool name restoration.
         """
         try:
             log.debug(f"Starting Mistral streaming for model: {self.model}")
@@ -400,12 +521,19 @@ class MistralLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                                         }
                                     })
                         
+                        # Create chunk response
+                        chunk_response = {
+                            "response": content,
+                            "tool_calls": tool_calls
+                        }
+                        
+                        # Restore tool names if needed
+                        if name_mapping and tool_calls:
+                            chunk_response = self._restore_tool_names_in_response(chunk_response, name_mapping)
+                        
                         # Yield chunk if it has content
                         if content or tool_calls:
-                            yield {
-                                "response": content,
-                                "tool_calls": tool_calls
-                            }
+                            yield chunk_response
                 
                 # Allow other async tasks to run
                 if chunk_count % 10 == 0:
@@ -415,6 +543,12 @@ class MistralLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         
         except Exception as e:
             log.error(f"Error in Mistral streaming: {e}")
+            
+            # Check if it's a tool name validation error
+            if "Function name" in str(e) and "must be a-z, A-Z, 0-9" in str(e):
+                log.error(f"Tool name sanitization may have failed: {e}")
+                log.error(f"Request tools: {[t.get('function', {}).get('name') for t in request_params.get('tools', []) if t.get('type') == 'function']}")
+            
             yield {
                 "response": f"Streaming error: {str(e)}",
                 "tool_calls": [],
@@ -423,9 +557,10 @@ class MistralLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
 
     async def _regular_completion(
         self, 
-        request_params: Dict[str, Any]
+        request_params: Dict[str, Any],
+        name_mapping: Dict[str, str] = None
     ) -> Dict[str, Any]:
-        """Non-streaming completion using async execution."""
+        """Non-streaming completion using async execution with tool name restoration."""
         try:
             log.debug(f"Starting Mistral completion for model: {self.model}")
             
@@ -435,8 +570,8 @@ class MistralLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
             # Run sync call in thread to avoid blocking
             response = await asyncio.to_thread(_sync_completion)
             
-            # Normalize response
-            result = self._normalize_mistral_response(response)
+            # Normalize response and restore tool names
+            result = self._normalize_mistral_response(response, name_mapping)
             
             log.debug(f"Mistral completion result: "
                      f"response={len(str(result.get('response', ''))) if result.get('response') else 0} chars, "
@@ -446,6 +581,12 @@ class MistralLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
             
         except Exception as e:
             log.error(f"Error in Mistral completion: {e}")
+            
+            # Check if it's a tool name validation error
+            if "Function name" in str(e) and "must be a-z, A-Z, 0-9" in str(e):
+                log.error(f"Tool name sanitization may have failed: {e}")
+                log.error(f"Request tools: {[t.get('function', {}).get('name') for t in request_params.get('tools', []) if t.get('type') == 'function']}")
+            
             return {
                 "response": f"Error: {str(e)}",
                 "tool_calls": [],

@@ -11,11 +11,13 @@ Key points
 *   Converts ChatML → Watson X Messages format (tools / multimodal, …)
 *   Maps Watson X replies back to the common `{response, tool_calls}` schema
 *   **Real Streaming** - uses Watson X's native streaming API
+*   **MCP Tool Compatibility** - handles MCP-style tool names with sanitization
 """
 from __future__ import annotations
 import json
 import logging
 import os
+import re
 import uuid
 from typing import Any, AsyncIterator, Dict, List, Optional, Union, Tuple
 
@@ -112,6 +114,9 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
     """
     Configuration-aware adapter around the *ibm-watsonx-ai* SDK that gets
     all capabilities from unified YAML configuration.
+    
+    Includes MCP tool name sanitization for compatibility with IBM's
+    tool naming requirements (typically similar to other enterprise providers).
     """
 
     def __init__(
@@ -138,6 +143,9 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
         
         self.client = APIClient(credentials)
         
+        # Store current tool name mapping for response restoration
+        self._current_name_mapping: Dict[str, str] = {}
+        
         # Default parameters - can be overridden by configuration
         self.default_params = {
             "time_limit": 10000,
@@ -145,6 +153,132 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
             "temperature": 0.7,
             "top_p": 1.0,
         }
+
+    def _sanitize_tool_name_for_watsonx(self, name: str) -> str:
+        """
+        Convert MCP/OpenAI tool names to WatsonX-compatible format.
+        
+        IBM WatsonX typically has enterprise-grade restrictions similar to
+        other enterprise providers. This sanitizes tool names to be safe.
+        
+        Examples:
+            stdio.read_query -> stdio_read_query
+            filesystem.read_file -> filesystem_read_file  
+            mcp.server:get_data -> mcp_server_get_data
+        """
+        if not name:
+            return name
+            
+        # Replace invalid characters with underscores (conservative approach)
+        # WatsonX likely prefers alphanumeric + underscores/dashes
+        sanitized = re.sub(r'[^a-zA-Z0-9_-]', '_', name)
+        
+        # Remove multiple consecutive underscores
+        sanitized = re.sub(r'_+', '_', sanitized)
+        
+        # Remove leading/trailing underscores
+        sanitized = sanitized.strip('_')
+        
+        # Ensure reasonable length (conservative 64 char limit)
+        if len(sanitized) > 64:
+            sanitized = sanitized[:64].rstrip('_')
+            
+        return sanitized
+
+    def _sanitize_tools_for_watsonx(self, tools: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
+        """
+        Sanitize tool names and create a mapping for response processing.
+        
+        Returns:
+            tuple: (sanitized_tools, name_mapping)
+                - sanitized_tools: Tools with WatsonX-compatible names
+                - name_mapping: Dict mapping sanitized_name -> original_name
+        """
+        if not tools:
+            return tools, {}
+            
+        sanitized_tools = []
+        name_mapping = {}
+        
+        for tool in tools:
+            if tool.get("type") == "function" and "function" in tool:
+                original_name = tool["function"]["name"]
+                sanitized_name = self._sanitize_tool_name_for_watsonx(original_name)
+                
+                # Store the mapping
+                name_mapping[sanitized_name] = original_name
+                
+                # Create sanitized tool
+                sanitized_tool = tool.copy()
+                sanitized_tool["function"] = tool["function"].copy()
+                sanitized_tool["function"]["name"] = sanitized_name
+                
+                sanitized_tools.append(sanitized_tool)
+                
+                # Log the sanitization if it changed
+                if sanitized_name != original_name:
+                    log.debug(f"Sanitized WatsonX tool name: {original_name} -> {sanitized_name}")
+            else:
+                # Non-function tools pass through unchanged
+                sanitized_tools.append(tool)
+                
+        return sanitized_tools, name_mapping
+
+    def _restore_tool_names_in_response(self, response: Dict[str, Any], name_mapping: Dict[str, str]) -> Dict[str, Any]:
+        """
+        Restore original tool names in the response using the mapping.
+        """
+        if not name_mapping or not response.get("tool_calls"):
+            return response
+            
+        # Create a copy to avoid modifying the original
+        restored_response = response.copy()
+        restored_tool_calls = []
+        
+        for tool_call in response["tool_calls"]:
+            if "function" in tool_call and "name" in tool_call["function"]:
+                sanitized_name = tool_call["function"]["name"]
+                original_name = name_mapping.get(sanitized_name, sanitized_name)
+                
+                # Restore the original name
+                restored_tool_call = tool_call.copy()
+                restored_tool_call["function"] = tool_call["function"].copy()
+                restored_tool_call["function"]["name"] = original_name
+                
+                restored_tool_calls.append(restored_tool_call)
+                
+                # Log the restoration if it changed
+                if original_name != sanitized_name:
+                    log.debug(f"Restored WatsonX tool name: {sanitized_name} -> {original_name}")
+            else:
+                restored_tool_calls.append(tool_call)
+                
+        restored_response["tool_calls"] = restored_tool_calls
+        return restored_response
+
+    def _sanitize_tool_names(self, tools: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
+        """
+        Tool name sanitization for WatsonX.
+        
+        IBM WatsonX is an enterprise platform that may have tool naming
+        restrictions. This provides sanitization similar to Mistral/Anthropic
+        to ensure compatibility.
+        
+        Args:
+            tools: List of tool definitions in OpenAI format
+            
+        Returns:
+            Sanitized tools list with name mapping stored for restoration
+        """
+        if not tools:
+            return tools
+            
+        log.debug(f"Sanitizing {len(tools)} tools for WatsonX compatibility")
+        
+        # Store the mapping for later restoration
+        sanitized_tools, self._current_name_mapping = self._sanitize_tools_for_watsonx(tools)
+        
+        return sanitized_tools
 
     def get_model_info(self) -> Dict[str, Any]:
         """
@@ -163,6 +297,8 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
                     "model_family": self._detect_model_family(),
                     "enterprise_features": True,
                 },
+                "tool_name_requirements": "enterprise_safe",  # Conservative approach
+                "mcp_compatibility": "requires_sanitization",  # Similar to other enterprise providers
                 "parameter_mapping": {
                     "temperature": "temperature",
                     "max_tokens": "max_tokens",
@@ -261,7 +397,12 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
 
     @staticmethod
     def _convert_tools(tools: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
-        """Convert OpenAI-style tools to Watson X format."""
+        """
+        Convert OpenAI-style tools to Watson X format.
+        
+        Note: Tool names should already be sanitized by _sanitize_tool_names
+        before reaching this method.
+        """
         if not tools:
             return []
 
@@ -272,7 +413,7 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
                 converted.append({
                     "type": "function",
                     "function": {
-                        "name": fn["name"],
+                        "name": fn["name"],  # Should already be sanitized
                         "description": fn.get("description", ""),
                         "parameters": fn.get("parameters") or fn.get("input_schema") or {},
                     }
@@ -406,6 +547,17 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
 
         return formatted
 
+    def _parse_watsonx_response_with_restoration(self, resp, name_mapping: Dict[str, str] = None) -> Dict[str, Any]:
+        """Convert Watson X response to standard format and restore tool names"""
+        # Use the standard parser first
+        result = _parse_watsonx_response(resp)
+        
+        # Restore original tool names if we have a mapping
+        if name_mapping and result.get("tool_calls"):
+            result = self._restore_tool_names_in_response(result, name_mapping)
+        
+        return result
+
     # ── main entrypoint ─────────────────────────────────────
 
     def create_completion(
@@ -418,10 +570,12 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
         **extra,
     ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
-        Configuration-aware completion generation with streaming support.
+        Configuration-aware completion generation with streaming support and MCP tool compatibility.
         
         • stream=False → returns awaitable that resolves to standardised dict
         • stream=True  → returns async iterator that yields chunks in real-time
+        
+        Includes MCP tool name sanitization for enterprise compatibility.
         """
         # Validate request against configuration
         validated_messages, validated_tools, validated_stream, validated_kwargs = self._validate_request_with_config(
@@ -432,7 +586,7 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
         if max_tokens:
             validated_kwargs["max_tokens"] = max_tokens
         
-        # Sanitize tool names and convert to WatsonX format
+        # Sanitize tool names and convert to WatsonX format (stores mapping internally)
         validated_tools = self._sanitize_tool_names(validated_tools)
         watsonx_tools = self._convert_tools(validated_tools)
         
@@ -455,7 +609,7 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
         params: Dict[str, Any]
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Streaming using Watson X with configuration awareness.
+        Streaming using Watson X with configuration awareness and tool name restoration.
         """
         try:
             log.debug(f"Starting Watson X streaming for model: {self.model}")
@@ -488,10 +642,20 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
                         content = delta.get("content", "")
                         tool_calls = delta.get("tool_calls", []) if self.supports_feature("tools") else []
                         
-                        yield {
+                        # Create chunk response
+                        chunk_response = {
                             "response": content,
                             "tool_calls": tool_calls
                         }
+                        
+                        # Restore tool names if needed
+                        if self._current_name_mapping and tool_calls:
+                            chunk_response = self._restore_tool_names_in_response(
+                                chunk_response, 
+                                self._current_name_mapping
+                            )
+                        
+                        yield chunk_response
                     else:
                         yield {
                             "response": str(chunk),
@@ -507,6 +671,13 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
         
         except Exception as e:
             log.error(f"Error in Watson X streaming: {e}")
+            
+            # Check if it's a tool name validation error
+            error_str = str(e).lower()
+            if "function" in error_str and ("name" in error_str or "invalid" in error_str):
+                log.error(f"Tool name sanitization may have failed: {e}")
+                log.error(f"Current mapping: {self._current_name_mapping}")
+            
             yield {
                 "response": f"Streaming error: {str(e)}",
                 "tool_calls": [],
@@ -519,7 +690,9 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
         tools: List[Dict[str, Any]],
         params: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Non-streaming completion using Watson X with configuration awareness."""
+        """
+        Non-streaming completion using Watson X with configuration awareness and tool name restoration.
+        """
         try:
             log.debug(f"Starting Watson X completion for model: {self.model}")
             
@@ -533,7 +706,8 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
                 # Use regular chat
                 resp = model.chat(messages=messages)
             
-            result = _parse_watsonx_response(resp)
+            # Parse response and restore tool names
+            result = self._parse_watsonx_response_with_restoration(resp, self._current_name_mapping)
             
             log.debug(f"Watson X completion result: "
                      f"response={len(str(result.get('response', ''))) if result.get('response') else 0} chars, "
@@ -543,8 +717,22 @@ class WatsonXLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient
             
         except Exception as e:
             log.error(f"Error in Watson X completion: {e}")
+            
+            # Check if it's a tool name validation error
+            error_str = str(e).lower()
+            if "function" in error_str and ("name" in error_str or "invalid" in error_str):
+                log.error(f"Tool name sanitization may have failed: {e}")
+                log.error(f"Current mapping: {self._current_name_mapping}")
+            
             return {
                 "response": f"Error: {str(e)}",
                 "tool_calls": [],
                 "error": True
             }
+
+    async def close(self):
+        """Cleanup resources"""
+        # Reset name mapping
+        self._current_name_mapping = {}
+        # Watson X client cleanup if needed
+        pass

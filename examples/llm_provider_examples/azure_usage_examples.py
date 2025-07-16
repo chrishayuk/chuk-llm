@@ -9,7 +9,7 @@ Run this script to see Azure-hosted GPT models in action with various capabiliti
 
 Requirements:
 - pip install openai chuk-llm
-- Set AZURE_OPENAI_API_KEY and AZURE_OPENAI_BASE environment variables
+- Set AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT environment variables
 - Configure your Azure OpenAI deployments
 
 Usage:
@@ -38,9 +38,9 @@ if not os.getenv("AZURE_OPENAI_API_KEY"):
     print("   export AZURE_OPENAI_API_KEY='your_azure_api_key_here'")
     sys.exit(1)
 
-if not os.getenv("AZURE_OPENAI_BASE"):
-    print("❌ Please set AZURE_OPENAI_BASE environment variable")
-    print("   export AZURE_OPENAI_BASE='https://your-resource.openai.azure.com'")
+if not os.getenv("AZURE_OPENAI_ENDPOINT"):
+    print("❌ Please set AZURE_OPENAI_ENDPOINT environment variable")
+    print("   export AZURE_OPENAI_ENDPOINT='https://your-resource.openai.azure.com'")
     sys.exit(1)
 
 try:
@@ -85,7 +85,7 @@ async def azure_setup_example(deployment: str = "gpt-4o-mini"):
         client = get_client(
             "azure_openai",
             model=deployment,
-            azure_endpoint=os.getenv("AZURE_OPENAI_BASE"),
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
             api_key=os.getenv("AZURE_OPENAI_API_KEY"),
             api_version="2024-02-01"
         )
@@ -117,7 +117,7 @@ async def azure_text_example(deployment: str = "gpt-4o-mini"):
     client = get_client(
         "azure_openai",
         model=deployment,
-        azure_endpoint=os.getenv("AZURE_OPENAI_BASE")
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
     )
     
     messages = [
@@ -152,7 +152,7 @@ async def azure_streaming_example(deployment: str = "gpt-4o-mini"):
     client = get_client(
         "azure_openai",
         model=deployment,
-        azure_endpoint=os.getenv("AZURE_OPENAI_BASE")
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
     )
     
     messages = [
@@ -194,7 +194,7 @@ async def azure_function_calling_example(deployment: str = "gpt-4o-mini"):
     client = get_client(
         "azure_openai",
         model=deployment,
-        azure_endpoint=os.getenv("AZURE_OPENAI_BASE")
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
     )
     
     # Define Azure-specific tools
@@ -317,7 +317,7 @@ async def azure_vision_example(deployment: str = "gpt-4o"):
     client = get_client(
         "azure_openai",
         model=deployment,
-        azure_endpoint=os.getenv("AZURE_OPENAI_BASE")
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
     )
     
     # Create a test image
@@ -368,7 +368,7 @@ async def azure_json_mode_example(deployment: str = "gpt-4o-mini"):
     client = get_client(
         "azure_openai",
         model=deployment,
-        azure_endpoint=os.getenv("AZURE_OPENAI_BASE")
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
     )
     
     messages = [
@@ -437,7 +437,7 @@ async def azure_deployment_comparison():
             client = get_client(
                 "azure_openai",
                 model=deployment,
-                azure_endpoint=os.getenv("AZURE_OPENAI_BASE")
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
             )
             messages = [{"role": "user", "content": prompt}]
             
@@ -488,7 +488,7 @@ async def azure_auth_methods_example(deployment: str = "gpt-4o-mini"):
             client = get_client(
                 "azure_openai",
                 model=deployment,
-                azure_endpoint=os.getenv("AZURE_OPENAI_BASE"),
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
                 api_key=os.getenv("AZURE_OPENAI_API_KEY")
             )
             
@@ -514,7 +514,7 @@ async def azure_auth_methods_example(deployment: str = "gpt-4o-mini"):
             client = get_client(
                 "azure_openai",
                 model=deployment,
-                azure_endpoint=os.getenv("AZURE_OPENAI_BASE"),
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
                 azure_ad_token=azure_ad_token
             )
             
@@ -562,12 +562,12 @@ async def main():
     args = parser.parse_args()
     
     if args.endpoint:
-        os.environ["AZURE_OPENAI_BASE"] = args.endpoint
+        os.environ["AZURE_OPENAI_ENDPOINT"] = args.endpoint
     
     print("🚀 Azure OpenAI Provider Examples")
     print("=" * 60)
     print(f"Using deployment: {args.deployment}")
-    print(f"Endpoint: {os.getenv('AZURE_OPENAI_BASE', 'Not set')}")
+    print(f"Endpoint: {os.getenv('AZURE_OPENAI_ENDPOINT', 'Not set')}")
     print(f"API Version: {args.api_version}")
     print(f"API Key: {'✅ Set' if os.getenv('AZURE_OPENAI_API_KEY') else '❌ Missing'}")
     
@@ -630,7 +630,7 @@ async def main():
     
     print(f"✅ Successful: {successful}/{total}")
     print(f"⏱️  Total time: {total_time:.2f}s")
-    print(f"🌐 Endpoint: {os.getenv('AZURE_OPENAI_BASE', 'Not configured')}")
+    print(f"🌐 Endpoint: {os.getenv('AZURE_OPENAI_ENDPOINT', 'Not configured')}")
     print(f"🎯 Deployment: {args.deployment}")
     
     for name, result in results.items():
@@ -647,7 +647,7 @@ async def main():
         
         # Show Azure-specific recommendations
         print(f"\n💡 Azure Setup Recommendations:")
-        print(f"   • Endpoint: Set AZURE_OPENAI_BASE to your resource URL")
+        print(f"   • Endpoint: Set AZURE_OPENAI_ENDPOINT to your resource URL")
         print(f"   • API Key: Set AZURE_OPENAI_API_KEY from Azure portal")
         print(f"   • Deployments: Ensure your models are deployed in Azure")
         print(f"   • Regions: Use supported regions for better performance")
