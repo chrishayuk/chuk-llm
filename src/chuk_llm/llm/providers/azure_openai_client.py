@@ -14,7 +14,9 @@ Key Features:
 - Universal tool name compatibility with bidirectional mapping
 """
 from __future__ import annotations
+import json
 from typing import Any, AsyncIterator, Dict, List, Optional, Union, Tuple
+import uuid
 import openai
 import logging
 import os
@@ -391,11 +393,58 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
 
     def _normalize_message(self, msg) -> Dict[str, Any]:
         """
-        Azure-specific message normalization that delegates to OpenAI mixin.
+        Azure-specific message normalization with FIXED argument parsing.
+        
+        CRITICAL FIX: Azure OpenAI returns tool arguments as JSON strings, not dicts.
+        This properly handles the string format and ensures arguments are always
+        properly formatted JSON strings for downstream processing.
         """
         try:
-            # Use the inherited OpenAI normalization method
-            return super()._normalize_message(msg)
+            # Use the inherited OpenAI normalization method as base
+            result = super()._normalize_message(msg)
+            
+            # AZURE FIX: Ensure tool arguments are properly formatted JSON strings
+            if result.get("tool_calls"):
+                fixed_tool_calls = []
+                
+                for tool_call in result["tool_calls"]:
+                    if "function" in tool_call and "arguments" in tool_call["function"]:
+                        args = tool_call["function"]["arguments"]
+                        
+                        # Azure often returns arguments as strings, sometimes double-quoted
+                        if isinstance(args, str):
+                            try:
+                                # Try to parse the JSON to validate it
+                                parsed_args = json.loads(args)
+                                # Re-serialize to ensure consistent format
+                                tool_call["function"]["arguments"] = json.dumps(parsed_args)
+                            except json.JSONDecodeError:
+                                # If parsing fails, try to handle nested quoting
+                                try:
+                                    # Handle cases like ""{\"key\":\"value\"}"" (double quotes)
+                                    if args.startswith('""') and args.endswith('""'):
+                                        inner_json = args[2:-2]  # Remove outer quotes
+                                        parsed_args = json.loads(inner_json)
+                                        tool_call["function"]["arguments"] = json.dumps(parsed_args)
+                                    else:
+                                        # Last resort: wrap in empty object if invalid
+                                        log.warning(f"Invalid tool arguments from Azure: {args}")
+                                        tool_call["function"]["arguments"] = "{}"
+                                except:
+                                    tool_call["function"]["arguments"] = "{}"
+                        elif isinstance(args, dict):
+                            # Already a dict, convert to JSON string
+                            tool_call["function"]["arguments"] = json.dumps(args)
+                        else:
+                            # Other types, default to empty object
+                            tool_call["function"]["arguments"] = "{}"
+                    
+                    fixed_tool_calls.append(tool_call)
+                
+                result["tool_calls"] = fixed_tool_calls
+            
+            return result
+            
         except AttributeError:
             # Fallback implementation if mixin method not available
             content = None
@@ -405,22 +454,38 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
             if hasattr(msg, 'content'):
                 content = msg.content
             
-            # Extract tool calls
+            # Extract tool calls with FIXED argument handling
             if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                import json
-                import uuid
                 for tc in msg.tool_calls:
                     try:
+                        # Get function arguments - Azure specific handling
+                        raw_args = getattr(tc.function, "arguments", "{}")
+                        
+                        # AZURE FIX: Properly handle argument formats
+                        if isinstance(raw_args, str):
+                            try:
+                                # Validate JSON and reformat
+                                parsed_args = json.loads(raw_args)
+                                formatted_args = json.dumps(parsed_args)
+                            except json.JSONDecodeError:
+                                log.warning(f"Invalid JSON in Azure tool call arguments: {raw_args}")
+                                formatted_args = "{}"
+                        elif isinstance(raw_args, dict):
+                            formatted_args = json.dumps(raw_args)
+                        else:
+                            log.warning(f"Unexpected Azure argument type: {type(raw_args)}")
+                            formatted_args = "{}"
+                        
                         tool_calls.append({
                             "id": getattr(tc, "id", f"call_{uuid.uuid4().hex[:8]}"),
                             "type": "function",
                             "function": {
                                 "name": getattr(tc.function, "name", "unknown"),
-                                "arguments": json.dumps(getattr(tc.function, "arguments", {}))
+                                "arguments": formatted_args  # Always a properly formatted JSON string
                             }
                         })
                     except Exception as e:
-                        log.warning(f"Failed to process tool call: {e}")
+                        log.warning(f"Failed to process Azure tool call: {e}")
                         continue
             
             # Return standard format
@@ -428,7 +493,7 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
                 return {"response": content if content else None, "tool_calls": tool_calls}
             else:
                 return {"response": content or "", "tool_calls": []}
-
+            
     def _adjust_parameters_for_provider(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         """
         Adjust parameters using configuration instead of hardcoded rules.

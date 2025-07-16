@@ -4,9 +4,10 @@
 Google Gemini chat-completion adapter with unified configuration integration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Configuration-driven capabilities with complete warning suppression and proper parameter handling.
-UPDATED: Fixed to match Anthropic client patterns - proper system instruction support, 
-universal vision format, robust response handling, and MCP tool name sanitization with restoration.
+UPDATED: Fixed to match other providers - proper system instruction support, 
+universal vision format, robust response handling, and universal tool name compatibility with restoration.
 CRITICAL FIX: Eliminates response concatenation and data loss issues.
+UNIVERSAL COMPATIBILITY: Full integration with ToolCompatibilityMixin for seamless MCP support.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from google.genai import types as gtypes
 # providers
 from chuk_llm.llm.core.base import BaseLLMClient
 from chuk_llm.llm.providers._config_mixin import ConfigAwareProviderMixin
+from chuk_llm.llm.providers._tool_compatibility import ToolCompatibilityMixin
 
 log = logging.getLogger(__name__)
 
@@ -469,12 +471,18 @@ def suppress_warnings():
 
 # ─────────────────────────────────────────────────── main adapter ───────────
 
-class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
+class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMClient):
     """
-    Configuration-aware `google-genai` wrapper following Anthropic client patterns.
-    UPDATED: Proper system instruction support, universal vision format, robust response handling,
-    and MCP tool name sanitization with bidirectional mapping for seamless MCP compatibility.
+    Configuration-aware `google-genai` wrapper with universal tool name compatibility.
+    
+    Uses universal tool name compatibility system to handle any naming convention:
+    - stdio.read_query -> stdio_read_query (sanitized and restored)
+    - web.api:search -> web_api_search (sanitized and restored)
+    - database.sql.execute -> database_sql_execute (sanitized and restored)
+    - service:method -> service_method (sanitized and restored)
+    
     CRITICAL FIX: Eliminates response concatenation and data loss issues.
+    UNIVERSAL COMPATIBILITY: Full integration with ToolCompatibilityMixin for seamless MCP support.
     """
 
     def __init__(self, model: str = "gemini-2.5-flash", *, api_key: Optional[str] = None) -> None:
@@ -484,8 +492,9 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         # Validate model
         safe_model = validate_and_map_model(model)
         
-        # Initialize the configuration mixin FIRST
+        # Initialize mixins FIRST
         ConfigAwareProviderMixin.__init__(self, "gemini", safe_model)
+        ToolCompatibilityMixin.__init__(self, "gemini")
         
         # load environment
         load_dotenv()
@@ -501,9 +510,6 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         with UltimateSuppression():
             self.model = safe_model
             self.client = genai.Client(api_key=api_key)
-
-        # Store current tool name mapping for response restoration
-        self._current_name_mapping: Dict[str, str] = {}
 
         log.info("GeminiLLMClient initialised with model '%s'", safe_model)
 
@@ -523,125 +529,13 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         else:
             return "unknown"
 
-    def _sanitize_tools_for_gemini(self, tools: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
-        """
-        Sanitize tool names and create a mapping for response processing.
-        
-        Gemini may have similar restrictions as other providers for tool names.
-        Uses aggressive sanitization for consistency across all providers.
-        
-        Returns:
-            tuple: (sanitized_tools, name_mapping)
-                - sanitized_tools: Tools with Gemini-compatible names
-                - name_mapping: Dict mapping sanitized_name -> original_name
-        """
-        if not tools:
-            return tools, {}
-            
-        sanitized_tools = []
-        name_mapping = {}
-        
-        for tool in tools:
-            if isinstance(tool, dict) and "function" in tool:
-                tool_copy = tool.copy()
-                func = tool_copy["function"].copy()
-                
-                original_name = func.get("name", "")
-                if original_name:
-                    # Aggressive sanitization for Gemini compatibility
-                    # Replace any non-alphanumeric (except underscore/dash) with underscore
-                    sanitized_name = re.sub(r'[^a-zA-Z0-9_-]', '_', original_name)
-                    
-                    # Remove multiple consecutive underscores
-                    sanitized_name = re.sub(r'_+', '_', sanitized_name)
-                    
-                    # Ensure it starts with a letter or underscore
-                    if sanitized_name and not sanitized_name[0].isalpha() and sanitized_name[0] != '_':
-                        sanitized_name = '_' + sanitized_name
-                    
-                    # Truncate to 64 characters and clean up trailing underscores
-                    sanitized_name = sanitized_name[:64].rstrip('_')
-                    
-                    # Ensure we have a valid name
-                    if not sanitized_name:
-                        sanitized_name = "unnamed_function"
-                    
-                    # Store the mapping
-                    name_mapping[sanitized_name] = original_name
-                    
-                    # Update the tool
-                    func["name"] = sanitized_name
-                    
-                    # Log the sanitization if it changed
-                    if sanitized_name != original_name:
-                        log.debug(f"Sanitized Gemini tool name: {original_name} -> {sanitized_name}")
-                
-                tool_copy["function"] = func
-                sanitized_tools.append(tool_copy)
-            else:
-                # Non-function tools pass through unchanged
-                sanitized_tools.append(tool)
-                
-        return sanitized_tools, name_mapping
-
-    def _restore_tool_names_in_response(self, response: Dict[str, Any], name_mapping: Dict[str, str]) -> Dict[str, Any]:
-        """
-        Restore original tool names in the response using the mapping.
-        
-        This makes the sanitization transparent to users - they send MCP-style names
-        and receive MCP-style names back, even though internally we use sanitized names.
-        """
-        if not name_mapping or not response.get("tool_calls"):
-            return response
-            
-        # Create a copy to avoid modifying the original
-        restored_response = response.copy()
-        restored_tool_calls = []
-        
-        for tool_call in response["tool_calls"]:
-            if "function" in tool_call and "name" in tool_call["function"]:
-                sanitized_name = tool_call["function"]["name"]
-                original_name = name_mapping.get(sanitized_name, sanitized_name)
-                
-                # Restore the original name
-                restored_tool_call = tool_call.copy()
-                restored_tool_call["function"] = tool_call["function"].copy()
-                restored_tool_call["function"]["name"] = original_name
-                
-                restored_tool_calls.append(restored_tool_call)
-                
-                # Log the restoration if it changed
-                if original_name != sanitized_name:
-                    log.debug(f"Restored Gemini tool name: {sanitized_name} -> {original_name}")
-            else:
-                restored_tool_calls.append(tool_call)
-                
-        restored_response["tool_calls"] = restored_tool_calls
-        return restored_response
-
-    def _sanitize_tool_names(self, tools: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
-        """
-        Sanitize tool names with mapping storage for later restoration.
-        
-        Adds bidirectional mapping support for seamless MCP tool name handling.
-        """
-        if not tools:
-            return tools
-        
-        log.debug(f"Sanitizing {len(tools)} tools for Gemini compatibility")
-        
-        # Store the mapping for later restoration
-        sanitized_tools, self._current_name_mapping = self._sanitize_tools_for_gemini(tools)
-        
-        return sanitized_tools
-
     @silence_gemini_warnings
     def _parse_gemini_response_with_restoration(self, resp, name_mapping: Dict[str, str] = None) -> Dict[str, Any]:
         """Convert Gemini response to standard format and restore tool names - WITH SILENCE"""
         # Use the safe parser (no concatenation)
         result = _safe_parse_gemini_response(resp)
         
-        # Restore original tool names if we have a mapping
+        # Restore original tool names using universal restoration
         if name_mapping and result.get("tool_calls"):
             result = self._restore_tool_names_in_response(result, name_mapping)
         
@@ -652,17 +546,19 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         # Get base info from configuration
         info = super().get_model_info()
         
+        # Add tool compatibility info from universal system
+        tool_compatibility = self.get_tool_compatibility_info()
+        
         # Add Gemini-specific metadata only if no error occurred
         if not info.get("error"):
             info.update({
+                # Universal tool compatibility info
+                **tool_compatibility,
                 "supports_function_calling": self.supports_feature("tools"),
                 "supports_streaming": self.supports_feature("streaming"),
                 "supports_vision": self.supports_feature("vision"),
                 "supports_json_mode": self.supports_feature("json_mode"),
                 "supports_system_messages": self.supports_feature("system_messages"),
-                "tool_name_requirements": "aggressive_sanitization",
-                "mcp_compatibility": "requires_sanitization_with_restoration",
-                "response_parsing": "safe_no_concatenation",
                 "gemini_specific": {
                     "context_length": "2M tokens" if "2.5" in self.model else ("2M tokens" if "2.0" in self.model else "1M tokens"),
                     "model_family": self._detect_model_family(),
@@ -939,7 +835,7 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         **extra,
     ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
-        Configuration-aware completion generation following Anthropic client patterns.
+        Configuration-aware completion generation with universal tool name compatibility.
         
         Uses configuration to validate:
         - Tool support before processing tools
@@ -947,8 +843,10 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         - JSON mode support before adding JSON instructions
         - Vision support during message processing
         
-        Includes MCP tool name sanitization with bidirectional mapping for seamless compatibility.
-        CRITICAL FIX: Uses safe response parsing to prevent data loss and concatenation.
+        Universal tool name compatibility handles any naming convention:
+        - stdio.read_query -> stdio_read_query (sanitized and restored)
+        - web.api:search -> web_api_search (sanitized and restored)
+        - database.sql.execute -> database_sql_execute (sanitized and restored)
         """
 
         # Validate capabilities using configuration
@@ -960,8 +858,13 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
             log.warning(f"Streaming requested but model {self.model} doesn't support streaming according to configuration")
             stream = False
 
-        # Sanitize tool names (stores mapping for restoration)
-        tools = self._sanitize_tool_names(tools)
+        # Apply universal tool name sanitization (stores mapping for restoration)
+        name_mapping = {}
+        if tools:
+            tools = self._sanitize_tool_names(tools)
+            name_mapping = self._current_name_mapping
+            log.debug(f"Tool sanitization: {len(name_mapping)} tools processed for Gemini compatibility")
+        
         gemini_tools = _convert_tools_to_gemini_format(tools)
         
         # Check for JSON mode (using configuration validation)
@@ -974,10 +877,10 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
 
         # --- streaming: return the async generator directly -------------------------
         if stream:
-            return self._stream_completion_async(system, json_instruction, messages, gemini_tools, filtered_params)
+            return self._stream_completion_async(system, json_instruction, messages, gemini_tools, filtered_params, name_mapping)
 
         # --- non-streaming: use async client ------------------------------
-        return self._regular_completion_async(system, json_instruction, messages, gemini_tools, filtered_params)
+        return self._regular_completion_async(system, json_instruction, messages, gemini_tools, filtered_params, name_mapping)
 
     async def _stream_completion_async(
         self, 
@@ -985,9 +888,10 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         json_instruction: Optional[str],
         messages: List[Dict[str, Any]],
         gemini_tools: Optional[List[gtypes.Tool]],
-        filtered_params: Dict[str, Any]
+        filtered_params: Dict[str, Any],
+        name_mapping: Dict[str, str] = None
     ) -> AsyncIterator[Dict[str, Any]]:
-        """Real streaming using Gemini client with SAFE response parsing - NO CONCATENATION."""
+        """Real streaming using Gemini client with SAFE response parsing and tool name restoration."""
         
         # Handle system message and JSON instruction
         system_from_messages, contents = await self._split_for_gemini_async(messages)
@@ -1008,35 +912,21 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         # Handle thinking models hitting token limits
         if "2.5" in self.model:
             if "max_output_tokens" not in config_params:
-                # Set a reasonable max_output_tokens to prevent thinking from consuming all tokens
                 config_params["max_output_tokens"] = 4096
                 log.debug("Set max_output_tokens=4096 for Gemini 2.5 to prevent thinking token overflow")
         elif "max_output_tokens" not in config_params:
-            # Set default for non-thinking models
             config_params["max_output_tokens"] = 4096
         
         config = None
         if config_params:
             try:
-                # Add system instruction to config if present and supported
                 if final_system and self.supports_feature("system_messages"):
                     config_params["system_instruction"] = final_system
                 
                 config = gtypes.GenerateContentConfig(**config_params)
             except Exception as e:
                 log.warning(f"Error creating GenerateContentConfig: {e}")
-                # Try with minimal config
-                minimal_config = {}
-                for key in ["max_output_tokens", "temperature", "top_p", "top_k"]:
-                    if key in config_params:
-                        minimal_config[key] = config_params[key]
-                
-                if minimal_config:
-                    try:
-                        config = gtypes.GenerateContentConfig(**minimal_config)
-                    except Exception as e2:
-                        log.warning(f"Failed to create minimal config: {e2}")
-                        config = None
+                config = None
 
         # Combine all content into a single message
         combined_content = "\n\n".join(contents) if contents else "Hello"
@@ -1058,21 +948,20 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         accumulated_response = ""
         
         try:
-            # Streaming with SAFE parsing - NO .text access
-            # Apply suppression only around the API call
+            # Streaming with SAFE parsing and universal tool name restoration
             with UltimateSuppression():
                 stream = await self.client.aio.models.generate_content_stream(**base_payload)
             
             async for chunk in stream:
                 with UltimateSuppression():
-                    # CRITICAL: Use safe parsing instead of chunk.text
+                    # CRITICAL: Use safe parsing with universal tool name restoration
                     chunk_result = _safe_parse_gemini_response(chunk)
                     chunk_text = chunk_result["response"]
                     tool_calls = chunk_result["tool_calls"]
                     
-                    # Restore tool names if needed
-                    if tool_calls and self._current_name_mapping:
-                        chunk_result = self._restore_tool_names_in_response(chunk_result, self._current_name_mapping)
+                    # Restore tool names using universal restoration
+                    if tool_calls and name_mapping:
+                        chunk_result = self._restore_tool_names_in_response(chunk_result, name_mapping)
                         tool_calls = chunk_result["tool_calls"]
                 
                 # Handle text content with deduplication
@@ -1108,9 +997,10 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         json_instruction: Optional[str],
         messages: List[Dict[str, Any]],
         gemini_tools: Optional[List[gtypes.Tool]],
-        filtered_params: Dict[str, Any]
+        filtered_params: Dict[str, Any],
+        name_mapping: Dict[str, str] = None
     ) -> Dict[str, Any]:
-        """Non-streaming completion using async client with SAFE response parsing - NO CONCATENATION."""
+        """Non-streaming completion with SAFE response parsing and universal tool name restoration."""
         try:
             # Handle system message and JSON instruction
             system_from_messages, contents = await self._split_for_gemini_async(messages)
@@ -1128,55 +1018,36 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
             if gemini_tools:
                 config_params["tools"] = gemini_tools
             
-            # Handle thinking models hitting token limits
             if "2.5" in self.model:
                 if "max_output_tokens" not in config_params:
-                    # Set a reasonable max_output_tokens to prevent thinking from consuming all tokens
                     config_params["max_output_tokens"] = 4096
                     log.debug("Set max_output_tokens=4096 for Gemini 2.5 to prevent thinking token overflow")
             elif "max_output_tokens" not in config_params:
-                # Set default for non-thinking models
                 config_params["max_output_tokens"] = 4096
             
             config = None
             if config_params:
                 try:
-                    # Add system instruction to config if present and supported
                     if final_system and self.supports_feature("system_messages"):
                         config_params["system_instruction"] = final_system
                     
                     config = gtypes.GenerateContentConfig(**config_params)
                 except Exception as e:
                     log.warning(f"Error creating GenerateContentConfig: {e}")
-                    # Try with minimal config
-                    minimal_config = {}
-                    for key in ["max_output_tokens", "temperature", "top_p", "top_k"]:
-                        if key in config_params:
-                            minimal_config[key] = config_params[key]
-                    
-                    if minimal_config:
-                        try:
-                            config = gtypes.GenerateContentConfig(**minimal_config)
-                        except Exception as e2:
-                            log.warning(f"Failed to create minimal config: {e2}")
-                            config = None
+                    config = None
 
             # Combine all content - handle both text and multimodal
             if contents:
-                # Check if we have any multimodal content
                 has_multimodal = any(isinstance(c, list) for c in contents)
                 
                 if has_multimodal:
-                    # Build structured content for Gemini
                     combined_content = []
                     for content_item in contents:
                         if isinstance(content_item, str):
                             combined_content.append(content_item)
                         elif isinstance(content_item, list):
-                            # This is multimodal content - add all parts
                             combined_content.extend(content_item)
                 else:
-                    # All text content - join as before
                     combined_content = "\n\n".join(contents)
             else:
                 combined_content = "Hello"
@@ -1184,7 +1055,6 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
             # Prepend system instruction if not supported in config
             if final_system and not self.supports_feature("system_messages"):
                 if isinstance(combined_content, list):
-                    # Insert system message at the beginning of multimodal content
                     combined_content.insert(0, f"System: {final_system}\n\nUser: ")
                 else:
                     combined_content = f"System: {final_system}\n\nUser: {combined_content}"
@@ -1199,11 +1069,11 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
 
             log.debug("Gemini payload keys: %s", list(base_payload.keys()))
             
-            # Make the request and use SAFE parsing
+            # Make the request and use SAFE parsing with universal tool name restoration
             resp = await self.client.aio.models.generate_content(**base_payload)
             
-            # CRITICAL: Use safe parsing and restore tool names
-            return self._parse_gemini_response_with_restoration(resp, self._current_name_mapping)
+            # CRITICAL: Use safe parsing and restore tool names using universal system
+            return self._parse_gemini_response_with_restoration(resp, name_mapping)
             
         except Exception as e:
             log.error(f"Error in Gemini completion: {e}")
@@ -1246,7 +1116,7 @@ class GeminiLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
 
     async def close(self):
         """Cleanup resources"""
-        # Reset name mapping
+        # Reset name mapping from universal system
         self._current_name_mapping = {}
         # Gemini client cleanup if needed
         pass
