@@ -523,9 +523,10 @@ def _generate_functions_for_models(provider_name: str, provider_config, models: 
                 
                 functions[name] = func
             
-            # ALSO generate functions for the base name (without :latest)
-            if model.endswith(':latest'):
-                base_model = model[:-7]  # Remove ':latest'
+            # FIXED: Generate functions for the base name (without ANY version tag)
+            # This was the bug - it only checked for :latest, but should check for any ':'
+            if ':' in model:
+                base_model = model.split(':')[0]  # Take everything before the first ':'
                 base_suffix = _sanitize_name(base_model)
                 
                 if base_suffix and base_suffix != model_suffix:
@@ -541,31 +542,33 @@ def _generate_functions_for_models(provider_name: str, provider_config, models: 
                     ]
                     
                     for func, name in zip([base_ask_func, base_stream_func, base_sync_func], base_func_names):
-                        func.__name__ = name
-                        
-                        # Set docstrings
-                        has_image_param = 'image' in func.__code__.co_varnames
-                        
-                        if name.endswith("_sync"):
-                            base = name[:-5].replace("_", " ")
-                            if has_image_param:
-                                func.__doc__ = f"Synchronous {base} call with optional image support."
-                            else:
-                                func.__doc__ = f"Synchronous {base} call."
-                        elif name.startswith("ask_"):
-                            base = name[4:].replace("_", " ")
-                            if has_image_param:
-                                func.__doc__ = f"Async {base} call with optional image support."
-                            else:
-                                func.__doc__ = f"Async {base} call."
-                        elif name.startswith("stream_"):
-                            base = name[7:].replace("_", " ")
-                            if has_image_param:
-                                func.__doc__ = f"Stream from {base} with optional image support."
-                            else:
-                                func.__doc__ = f"Stream from {base}."
-                        
-                        functions[name] = func
+                        # Only add if not already exists (avoid conflicts)
+                        if name not in functions:
+                            func.__name__ = name
+                            
+                            # Set docstrings
+                            has_image_param = 'image' in func.__code__.co_varnames
+                            
+                            if name.endswith("_sync"):
+                                base = name[:-5].replace("_", " ")
+                                if has_image_param:
+                                    func.__doc__ = f"Synchronous {base} call with optional image support."
+                                else:
+                                    func.__doc__ = f"Synchronous {base} call."
+                            elif name.startswith("ask_"):
+                                base = name[4:].replace("_", " ")
+                                if has_image_param:
+                                    func.__doc__ = f"Async {base} call with optional image support."
+                                else:
+                                    func.__doc__ = f"Async {base} call."
+                            elif name.startswith("stream_"):
+                                base = name[7:].replace("_", " ")
+                                if has_image_param:
+                                    func.__doc__ = f"Stream from {base} with optional image support."
+                                else:
+                                    func.__doc__ = f"Stream from {base}."
+                            
+                            functions[name] = func
     
     return functions
 
@@ -875,25 +878,30 @@ def refresh_provider_functions(provider_name: str = None):
             if provider_name == "ollama":
                 # For Ollama, force a fresh check of available models
                 timeout = float(os.getenv('CHUK_LLM_DISCOVERY_TIMEOUT', '5'))
-                current_models = _check_ollama_available_models(timeout=timeout)
-                if current_models:
-                    logger.info(f"Ollama refresh: found {len(current_models)} available models")
+                discovered_models = _check_ollama_available_models(timeout=timeout)
+                if discovered_models:
+                    logger.info(f"Ollama refresh: found {len(discovered_models)} available models")
                     
-                    # 🎯 FIX: Update provider configuration with discovered models
-                    original_count = len(provider_config.models)
+                    # 🎯 CRITICAL FIX: Replace the entire model list with discovered models
+                    original_models = provider_config.models.copy()
                     
-                    # Add discovered models to provider config (avoid duplicates)
-                    all_models = list(set(provider_config.models + current_models))
-                    provider_config.models = all_models
+                    # FIXED: Use complete discovered list instead of merging
+                    provider_config.models = discovered_models  # Replace, don't merge!
                     
-                    # Update the config manager's provider cache
-                    # UnifiedConfigManager uses self.providers (not _providers)
+                    # FIXED: Force update the config manager's cache
                     config_manager.providers[provider_name] = provider_config
                     
-                    discovered_count = len(all_models) - original_count
-                    logger.info(f"Updated provider config: {original_count} -> {len(all_models)} models ({discovered_count} discovered)")
+                    # FIXED: Also update any internal caches the config manager might have
+                    if hasattr(config_manager, '_provider_cache'):
+                        config_manager._provider_cache[provider_name] = provider_config
                     
-                    current_models = all_models  # Use the full list for function generation
+                    # Get fresh reference to ensure we're using the updated config
+                    provider_config = config_manager.get_provider(provider_name)
+                    
+                    logger.info(f"Updated provider config: {len(original_models)} -> {len(provider_config.models)} models")
+                    logger.info(f"New model list: {provider_config.models}")
+                    
+                    current_models = provider_config.models  # Use the updated list
                 else:
                     logger.info("Ollama refresh: no models available")
                     current_models = provider_config.models  # Fall back to static models
@@ -962,7 +970,10 @@ def refresh_provider_functions(provider_name: str = None):
 
 
 def trigger_ollama_discovery_and_refresh():
-    """Trigger Ollama model discovery and refresh functions with environment controls"""
+    """
+    CRITICAL FIX: Use singleton pattern to ensure we're working with the same config instance
+    Trigger Ollama model discovery and refresh functions - FIXED VERSION
+    """
     if not _is_discovery_enabled('ollama'):
         logger.warning("Ollama discovery disabled by environment variable CHUK_LLM_OLLAMA_DISCOVERY=false")
         print("💡 To enable: export CHUK_LLM_OLLAMA_DISCOVERY=true")
@@ -977,30 +988,72 @@ def trigger_ollama_discovery_and_refresh():
             logger.warning("No Ollama models available - is Ollama running?")
             return {}
         
-        # 🎯 FIX: Update provider configuration BEFORE generating functions
+        # 🎯 CRITICAL FIX: Use singleton config manager
         config_manager = get_config()
-        provider_config = config_manager.get_provider("ollama")
         
-        original_models = provider_config.models.copy()
-        all_models = list(set(original_models + current_models))
+        # Get original count for logging
+        original_provider = config_manager.get_provider("ollama")
+        original_count = len(original_provider.models)
         
-        # Update the provider config
-        provider_config.models = all_models
-        config_manager.providers["ollama"] = provider_config
+        logger.info(f"Before update: {original_count} models")
+        logger.info(f"Available from Ollama: {len(current_models)} models")
+        logger.info(f"Available models: {current_models}")
         
-        discovered_count = len(all_models) - len(original_models)
-        logger.info(f"Provider config updated: {len(original_models)} -> {len(all_models)} models ({discovered_count} discovered)")
+        # CRITICAL FIX: Update the provider's models list directly on the singleton
+        original_provider.models = current_models
         
-        # Now refresh functions with the updated provider config
-        new_functions = refresh_provider_functions("ollama")
+        # CRITICAL FIX: Also update the provider in the config manager's internal cache
+        config_manager.providers["ollama"] = original_provider
+        
+        # Force any other internal caches to update
+        if hasattr(config_manager, '_provider_cache'):
+            config_manager._provider_cache["ollama"] = original_provider
+        
+        # Verify the update worked by getting a fresh reference
+        updated_provider = config_manager.get_provider("ollama")
+        logger.info(f"After update verification: {len(updated_provider.models)} models")
+        logger.info(f"Updated model list: {updated_provider.models}")
+        logger.info(f"Contains mistral-nemo:latest: {'mistral-nemo:latest' in updated_provider.models}")
+        
+        # Generate functions with the updated models
+        logger.info(f"Generating functions for {len(current_models)} ollama models")
+        new_functions = _generate_functions_for_models("ollama", updated_provider, current_models)
+        
+        # Update the global functions dict
+        global _GENERATED_FUNCTIONS
+        _GENERATED_FUNCTIONS.update(new_functions)
+        
+        # Update module namespace
+        import sys
+        current_module = sys.modules[__name__]
+        for name, func in new_functions.items():
+            setattr(current_module, name, func)
+        
+        # Update main chuk_llm module too
+        try:
+            import chuk_llm
+            for name, func in new_functions.items():
+                if name.startswith(('ask_', 'stream_')) and 'ollama' in name:
+                    setattr(chuk_llm, name, func)
+        except:
+            pass
+        
+        # Update __all__
+        if hasattr(current_module, '__all__'):
+            for name in new_functions.keys():
+                if name not in current_module.__all__:
+                    current_module.__all__.append(name)
         
         logger.info(f"Ollama discovery: {len(current_models)} available models, {len(new_functions)} functions generated")
+        
         return new_functions
         
     except Exception as e:
         logger.error(f"Failed to trigger Ollama discovery: {e}")
+        import traceback
+        logger.debug(traceback.format_exc())
         return {}
-
+    
 
 def _ensure_model_available_for_get_client(provider_name: str, model_name: str) -> bool:
     """

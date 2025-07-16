@@ -1,3 +1,4 @@
+# chuk_llm/configuration/unified_config.py
 """
 Clean Unified Configuration System with Transparent Discovery
 ===========================================================
@@ -9,6 +10,7 @@ Discovery is completely transparent - no API changes needed.
 
 import os
 import logging
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Any, Tuple, Union
 
@@ -633,19 +635,97 @@ class CapabilityChecker:
             return {"error": f"Failed to get model info: {exc}"}
 
 
-# ──────────────────────────── Global Instance ─────────────────────────────
-_unified_config = UnifiedConfigManager()
+# ──────────────────────────── SINGLETON FIX ─────────────────────────────
+class SingletonConfigManager(UnifiedConfigManager):
+    """
+    Singleton version of UnifiedConfigManager that persists runtime changes
+    """
+    _instance = None
+    _initialized = False
+    
+    def __new__(cls, config_path: Optional[str] = None):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    
+    def __init__(self, config_path: Optional[str] = None):
+        # Only initialize once
+        if not self.__class__._initialized:
+            super().__init__(config_path)
+            self.__class__._initialized = True
+    
+    def update_provider_models(self, provider_name: str, models: List[str], persist: bool = True):
+        """Update provider models and persist the change"""
+        self.load()  # Ensure config is loaded
+        
+        if provider_name not in self.providers:
+            raise ValueError(f"Provider {provider_name} not found")
+        
+        # Update the models
+        old_count = len(self.providers[provider_name].models)
+        self.providers[provider_name].models = models
+        new_count = len(models)
+        
+        logger.info(f"Updated {provider_name} models: {old_count} → {new_count}")
+        
+        if persist:
+            # Mark as runtime-modified
+            if not hasattr(self, '_runtime_modifications'):
+                self._runtime_modifications = {}
+            self._runtime_modifications[provider_name] = {
+                'models': models,
+                'timestamp': time.time()
+            }
+    
+    def get_provider(self, name: str) -> ProviderConfig:
+        """Get provider configuration (preserves runtime changes)"""
+        self.load()  # Ensure loaded
+        
+        if name not in self.providers:
+            available = ", ".join(self.providers.keys())
+            raise ValueError(f"Unknown provider: {name}. Available: {available}")
+        
+        return self.providers[name]
+    
+    def reload(self):
+        """Reload configuration but preserve runtime modifications"""
+        # Save runtime modifications
+        runtime_mods = getattr(self, '_runtime_modifications', {})
+        
+        # Call parent reload
+        super().reload()
+        
+        # Restore runtime modifications
+        for provider_name, mod_data in runtime_mods.items():
+            if provider_name in self.providers:
+                self.providers[provider_name].models = mod_data['models']
+                logger.info(f"Restored runtime modifications for {provider_name}")
+        
+        # Restore the modifications tracker
+        self._runtime_modifications = runtime_mods
+    
+    @classmethod
+    def reset_singleton(cls):
+        """Reset singleton instance (for testing)"""
+        cls._instance = None
+        cls._initialized = False
 
 
-def get_config() -> UnifiedConfigManager:
-    """Get global configuration manager"""
+# ──────────────────────────── REPLACE GLOBAL INSTANCE ─────────────────────────────
+# Use singleton instead of regular UnifiedConfigManager
+_unified_config = SingletonConfigManager()
+
+
+def get_config() -> SingletonConfigManager:
+    """Get global configuration manager (singleton)"""
     return _unified_config
 
 
 def reset_config():
     """Reset configuration"""
     global _unified_config
-    _unified_config = UnifiedConfigManager()
+    SingletonConfigManager.reset_singleton()
+    _unified_config = SingletonConfigManager()
 
 
 def reset_unified_config():
@@ -654,7 +734,7 @@ def reset_unified_config():
 
 
 # Clean aliases
-ConfigManager = UnifiedConfigManager
+ConfigManager = SingletonConfigManager
 
 
 # Export clean API
@@ -662,7 +742,8 @@ __all__ = [
     "Feature", 
     "ModelCapabilities", 
     "ProviderConfig", 
-    "UnifiedConfigManager", 
+    "UnifiedConfigManager",
+    "SingletonConfigManager", 
     "ConfigValidator", 
     "CapabilityChecker",
     "get_config",

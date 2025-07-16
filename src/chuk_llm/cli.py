@@ -78,6 +78,27 @@ def parse_convenience_function(command: str) -> Optional[Tuple[str, str, bool, b
     return None
 
 
+def trigger_discovery_for_provider(provider: str, quiet: bool = True) -> bool:
+    """
+    Trigger discovery for a specific provider.
+    
+    Returns:
+        True if discovery succeeded, False otherwise
+    """
+    try:
+        # Always run discovery silently unless explicitly verbose
+        if provider == "ollama":
+            new_functions = trigger_ollama_discovery_and_refresh()
+        else:
+            new_functions = refresh_provider_functions(provider)
+        
+        return bool(new_functions)
+        
+    except Exception:
+        # Silently fail - don't show discovery errors
+        return False
+
+
 class ChukLLMCLI:
     """ChukLLM Command Line Interface"""
     
@@ -123,6 +144,7 @@ class ChukLLMCLI:
         """Ask a question to a specific model using sync API with optional streaming"""
         try:
             if stream and not json_mode:
+                # Use streaming (this prints as it goes)
                 return self.stream_response(prompt, provider, model, json_mode=json_mode)
             else:
                 # Non-streaming for JSON mode or when explicitly disabled
@@ -130,9 +152,14 @@ class ChukLLMCLI:
                     response = ask_sync(prompt, provider=provider, model=model, json_mode=json_mode)
                 else:
                     response = ask_sync(prompt, provider=provider, json_mode=json_mode)
+                
+                # Print the response for non-streaming
+                print(response)
                 return response
         except Exception as e:
-            raise Exception(f"Failed to get response from {provider}: {e}")
+            error_msg = f"Failed to get response from {provider}: {e}"
+            print(error_msg)
+            raise Exception(error_msg)
 
     def handle_ask_alias(self, alias: str, prompt: str, **kwargs) -> str:
         """Handle ask_alias commands (like ask_granite) with streaming"""
@@ -165,16 +192,7 @@ class ChukLLMCLI:
         try:
             # Check if the function exists
             if not has_function(function_name):
-                # Parse function to suggest alternative
-                parsed = parse_convenience_function(function_name)
-                if parsed:
-                    provider, model, is_sync, is_stream = parsed
-                    cmd_type = "stream" if is_stream else "ask"
-                    self.print_rich(f"❌ Function '{function_name}' not found", "error")
-                    self.print_rich(f"💡 Try: chuk-llm {cmd_type} --provider {provider} --model {model} \"{prompt}\"", "info")
-                    return ""
-                else:
-                    raise Exception(f"Function '{function_name}' not available")
+                raise Exception(f"Function '{function_name}' not available")
             
             # Get the actual function
             func = _GENERATED_FUNCTIONS[function_name]
@@ -243,19 +261,29 @@ class ChukLLMCLI:
                 print(chunk, end="", flush=True)
                 full_response += chunk
             
-            print("\n")  # Add final newline
+            print()  # Add final newline after streaming
             return full_response
             
         except Exception as e:
             # Fallback to non-streaming
             if self.verbose:
-                self.print_rich(f"⚠ Streaming failed, using non-streaming: {e}", "error")
-            if provider and model:
-                return ask_sync(prompt, provider=provider, model=model, **kwargs)
-            elif provider:
-                return ask_sync(prompt, provider=provider, **kwargs)
-            else:
-                return ask_sync(prompt, **kwargs)
+                self.print_rich(f"⚠ Streaming failed ({e}), using non-streaming", "error")
+            
+            # Try non-streaming fallback
+            try:
+                if provider and model:
+                    response = ask_sync(prompt, provider=provider, model=model, **kwargs)
+                elif provider:
+                    response = ask_sync(prompt, provider=provider, **kwargs)
+                else:
+                    response = ask_sync(prompt, **kwargs)
+                
+                print(response)  # Print the fallback response
+                return response
+            except Exception as fallback_error:
+                error_msg = f"Both streaming and non-streaming failed: {e}, {fallback_error}"
+                print(error_msg)
+                raise Exception(error_msg)
 
     def show_providers(self) -> None:
         """List all available providers"""
@@ -584,7 +612,7 @@ uvx chuk-llm discover ollama
 
 
 def main():
-    """Main CLI entry point with convenience function support"""
+    """Main CLI entry point with automatic discovery for convenience functions"""
     if len(sys.argv) < 2:
         print("ChukLLM CLI - Quick access to AI models")
         print("")
@@ -627,9 +655,24 @@ def main():
     
     cli = ChukLLMCLI(verbose=verbose)
     
+    # 🎯 AUTO-DISCOVERY: Check if this is a convenience function and trigger discovery if needed
+    parsed_convenience = parse_convenience_function(command)
+    if parsed_convenience:
+        provider, model, is_sync, is_stream = parsed_convenience
+        
+        # Check if function exists, if not trigger discovery silently
+        if not has_function(command):
+            trigger_discovery_for_provider(provider, quiet=True)
+            
+            # Check again after discovery
+            if not has_function(command):
+                # Only show error if discovery didn't help
+                print(f"❌ Function '{command}' not available")
+                print(f"💡 Try: chuk-llm ask --provider {provider} --model {model} \"your question\"")
+                sys.exit(1)
+    
     try:
-        # 🎯 NEW: Handle convenience functions first (ask_provider_model pattern)
-        parsed_convenience = parse_convenience_function(command)
+        # 🎯 Handle convenience functions first (ask_provider_model pattern)
         if parsed_convenience:
             if len(args) < 2:
                 print(f"Usage: chuk-llm {command} \"your question here\"")
@@ -661,16 +704,44 @@ def main():
             parser.add_argument("--no-stream", action="store_true", help="Disable streaming")
             
             try:
-                args = parser.parse_args(args[1:])  # Use filtered args
+                parsed_args = parser.parse_args(args[1:])  # Use filtered args
                 
-                # Note: We don't need to print the response since streaming handles it
-                cli.ask_model(
-                    args.prompt, 
-                    args.provider, 
-                    args.model,
-                    json_mode=args.json,
-                    stream=not args.no_stream
+                # 🎯 AUTO-DISCOVERY: If model is specified, ensure it's available
+                if parsed_args.model and parsed_args.provider:
+                    # Check if the model is available for this provider
+                    try:
+                        provider_config = cli.config.get_provider(parsed_args.provider)
+                        if parsed_args.model not in provider_config.models:
+                            # Model not found, try discovery
+                            trigger_discovery_for_provider(parsed_args.provider, quiet=True)
+                    except Exception:
+                        # If provider doesn't exist, let the normal error handling deal with it
+                        pass
+                
+                # Call ask_model and ensure response is handled
+                response = cli.ask_model(
+                    parsed_args.prompt, 
+                    parsed_args.provider, 
+                    parsed_args.model,
+                    json_mode=parsed_args.json,
+                    stream=not parsed_args.no_stream
                 )
+                
+                # The streaming methods should already print, but ensure we have output
+                if not response and not parsed_args.no_stream:
+                    # If streaming didn't work, try non-streaming fallback
+                    if not quiet:
+                        print("⚠ Streaming may have failed, trying non-streaming...")
+                    response = cli.ask_model(
+                        parsed_args.prompt, 
+                        parsed_args.provider, 
+                        parsed_args.model,
+                        json_mode=parsed_args.json,
+                        stream=False
+                    )
+                    if response:
+                        print(response)
+                        
             except SystemExit:
                 # Handle argument parsing errors gracefully
                 print("Error: Invalid arguments. Use quotes around your question.")
