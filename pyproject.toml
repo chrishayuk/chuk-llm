@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chuk-llm"
-version = "0.8.6"
+version = "0.8.8"
 description = "A unified, production-ready Python library for Large Language Model (LLM) providers with real-time streaming, function calling, middleware support, automatic session tracking, dynamic model discovery, and intelligent system prompt generation."
 readme = "README.md"
 authors = [
@@ -20,6 +20,7 @@ dependencies = [
     "google-genai>=1.15.0",
     "groq>=0.25.0",
     "httpx>=0.28.1",
+    "ibm-watsonx-ai>=1.3.30",
     "mistralai>=1.7.1",
     "ollama>=0.4.8",
     "openai>=1.79.0",
