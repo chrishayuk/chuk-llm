@@ -878,8 +878,25 @@ def refresh_provider_functions(provider_name: str = None):
                 current_models = _check_ollama_available_models(timeout=timeout)
                 if current_models:
                     logger.info(f"Ollama refresh: found {len(current_models)} available models")
+                    
+                    # 🎯 FIX: Update provider configuration with discovered models
+                    original_count = len(provider_config.models)
+                    
+                    # Add discovered models to provider config (avoid duplicates)
+                    all_models = list(set(provider_config.models + current_models))
+                    provider_config.models = all_models
+                    
+                    # Update the config manager's provider cache
+                    # UnifiedConfigManager uses self.providers (not _providers)
+                    config_manager.providers[provider_name] = provider_config
+                    
+                    discovered_count = len(all_models) - original_count
+                    logger.info(f"Updated provider config: {original_count} -> {len(all_models)} models ({discovered_count} discovered)")
+                    
+                    current_models = all_models  # Use the full list for function generation
                 else:
                     logger.info("Ollama refresh: no models available")
+                    current_models = provider_config.models  # Fall back to static models
             else:
                 # For other providers, get all configured models
                 current_models = provider_config.models
@@ -960,7 +977,21 @@ def trigger_ollama_discovery_and_refresh():
             logger.warning("No Ollama models available - is Ollama running?")
             return {}
         
-        # Refresh functions for actually available models
+        # 🎯 FIX: Update provider configuration BEFORE generating functions
+        config_manager = get_config()
+        provider_config = config_manager.get_provider("ollama")
+        
+        original_models = provider_config.models.copy()
+        all_models = list(set(original_models + current_models))
+        
+        # Update the provider config
+        provider_config.models = all_models
+        config_manager.providers["ollama"] = provider_config
+        
+        discovered_count = len(all_models) - len(original_models)
+        logger.info(f"Provider config updated: {len(original_models)} -> {len(all_models)} models ({discovered_count} discovered)")
+        
+        # Now refresh functions with the updated provider config
         new_functions = refresh_provider_functions("ollama")
         
         logger.info(f"Ollama discovery: {len(current_models)} available models, {len(new_functions)} functions generated")
@@ -969,6 +1000,55 @@ def trigger_ollama_discovery_and_refresh():
     except Exception as e:
         logger.error(f"Failed to trigger Ollama discovery: {e}")
         return {}
+
+
+def _ensure_model_available_for_get_client(provider_name: str, model_name: str) -> bool:
+    """
+    Enhanced model availability check that triggers discovery if needed.
+    This is called by get_client() when a model isn't found.
+    """
+    if not _is_auto_discover_enabled() or not _is_discovery_enabled(provider_name):
+        return False
+    
+    try:
+        config_manager = get_config()
+        provider_config = config_manager.get_provider(provider_name)
+        
+        # If model is already available, no need to discover
+        if model_name in provider_config.models:
+            return True
+        
+        # For Ollama, check if the model is actually available
+        if provider_name == "ollama":
+            timeout = float(os.getenv('CHUK_LLM_DISCOVERY_QUICK_TIMEOUT', '2.0'))
+            available_models = _check_ollama_available_models(timeout=timeout)
+            
+            if model_name in available_models:
+                # Model exists in Ollama but not in our config - add it
+                logger.info(f"Discovered {model_name} in Ollama - updating provider config")
+                
+                # Update provider configuration
+                provider_config.models.append(model_name)
+                config_manager.providers[provider_name] = provider_config
+                
+                # Generate functions for this model
+                model_functions = _generate_functions_for_models(provider_name, provider_config, [model_name])
+                _GENERATED_FUNCTIONS.update(model_functions)
+                
+                # Update module namespace
+                import sys
+                current_module = sys.modules[__name__]
+                for name, func in model_functions.items():
+                    setattr(current_module, name, func)
+                
+                logger.info(f"Added {model_name} to {provider_name} and generated {len(model_functions)} functions")
+                return True
+        
+        return False
+        
+    except Exception as e:
+        logger.debug(f"Model availability check failed for {provider_name}/{model_name}: {e}")
+        return False
 
 
 # Generate all functions at module import with environment controls

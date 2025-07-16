@@ -6,6 +6,8 @@ ChukLLM CLI - Quick access to AI models from command line
 Usage:
     chuk-llm ask_granite "What is Python?"
     chuk-llm ask_claude "Explain quantum computing"
+    chuk-llm ask_ollama_gemma3 "Hello"                    # NEW: Convenience functions
+    chuk-llm ask_ollama_mistral_small_latest "Tell joke"  # NEW: Discovered models
     chuk-llm ask "What is AI?" --provider openai --model gpt-4o-mini
     chuk-llm providers
     chuk-llm models ollama
@@ -17,7 +19,8 @@ Usage:
 
 import argparse
 import sys
-from typing import Optional, List
+import re
+from typing import Optional, List, Tuple
 
 try:
     from rich.console import Console
@@ -37,12 +40,42 @@ try:
         trigger_ollama_discovery_and_refresh,
         list_provider_functions,
         get_discovered_functions,
-        show_config as show_provider_config
+        show_config as show_provider_config,
+        has_function,
+        _GENERATED_FUNCTIONS
     )
 except ImportError as e:
     print(f"Error importing chuk_llm: {e}")
     print("Make sure chuk-llm is properly installed")
     sys.exit(1)
+
+
+def parse_convenience_function(command: str) -> Optional[Tuple[str, str, bool, bool]]:
+    """
+    Parse convenience function commands like ask_ollama_gemma3.
+    
+    Returns:
+        Tuple of (provider, model, is_sync, is_stream) or None if not a convenience function
+    """
+    # Pattern for convenience functions:
+    # ask_{provider}_{model}[_sync]
+    # stream_{provider}_{model}[_sync] 
+    
+    # Check for streaming functions
+    stream_match = re.match(r'^stream_([a-z0-9_]+?)_([a-z0-9_:.-]+?)(?:_sync)?$', command)
+    if stream_match:
+        provider, model = stream_match.groups()
+        is_sync = command.endswith('_sync')
+        return provider, model, is_sync, True
+    
+    # Check for ask functions  
+    ask_match = re.match(r'^ask_([a-z0-9_]+?)_([a-z0-9_:.-]+?)(?:_sync)?$', command)
+    if ask_match:
+        provider, model = ask_match.groups()
+        is_sync = command.endswith('_sync')
+        return provider, model, is_sync, False
+    
+    return None
 
 
 class ChukLLMCLI:
@@ -126,6 +159,67 @@ class ChukLLMCLI:
                 
         except Exception as e:
             raise Exception(f"Alias or provider '{alias}' not available: {e}")
+
+    def handle_convenience_function(self, function_name: str, prompt: str) -> str:
+        """Handle convenience function calls like ask_ollama_gemma3"""
+        try:
+            # Check if the function exists
+            if not has_function(function_name):
+                # Parse function to suggest alternative
+                parsed = parse_convenience_function(function_name)
+                if parsed:
+                    provider, model, is_sync, is_stream = parsed
+                    cmd_type = "stream" if is_stream else "ask"
+                    self.print_rich(f"❌ Function '{function_name}' not found", "error")
+                    self.print_rich(f"💡 Try: chuk-llm {cmd_type} --provider {provider} --model {model} \"{prompt}\"", "info")
+                    return ""
+                else:
+                    raise Exception(f"Function '{function_name}' not available")
+            
+            # Get the actual function
+            func = _GENERATED_FUNCTIONS[function_name]
+            
+            # Show what we're calling in verbose mode
+            if self.verbose:
+                parsed = parse_convenience_function(function_name)
+                if parsed:
+                    provider, model, is_sync, is_stream = parsed
+                    self.print_rich(f"🤖 {provider}/{model} (via {function_name}):", "info")
+                    print("")
+            
+            # Handle different function types
+            if function_name.endswith('_sync'):
+                # Sync function - call directly
+                response = func(prompt)
+                print(response)
+                return response
+            elif function_name.startswith('stream_'):
+                # Stream function - handle async streaming
+                import asyncio
+                from .api.event_loop_manager import run_sync
+                
+                async def stream_and_print():
+                    full_response = ""
+                    async for chunk in func(prompt):
+                        if isinstance(chunk, dict):
+                            content = chunk.get("response", "")
+                        else:
+                            content = str(chunk)
+                        print(content, end="", flush=True)
+                        full_response += content
+                    print()  # Final newline
+                    return full_response
+                
+                return run_sync(stream_and_print())
+            else:
+                # Regular async function - run and print result
+                from .api.event_loop_manager import run_sync
+                response = run_sync(func(prompt))
+                print(response)
+                return response
+                
+        except Exception as e:
+            raise Exception(f"Error calling convenience function '{function_name}': {e}")
 
     def stream_response(self, prompt: str, provider: str = None, model: str = None, **kwargs) -> str:
         """Stream a response and display it in real-time"""
@@ -305,7 +399,7 @@ class ChukLLMCLI:
                 if provider_funcs:
                     self.print_rich("Example functions:", "info")
                     for func_name in provider_funcs:
-                        self.print_rich(f"  - {func_name}()")
+                        self.print_rich(f"  - chuk-llm {func_name} \"your question\"")
                         
         except Exception as e:
             self.print_rich(f"Error discovering models for {provider}: {e}", "error")
@@ -325,14 +419,14 @@ class ChukLLMCLI:
             if ask_funcs:
                 self.print_rich(f"\nAsync functions ({len(ask_funcs)}):", "info")
                 for func in ask_funcs[:10]:  # Show first 10
-                    self.print_rich(f"  - {func}()")
+                    self.print_rich(f"  - chuk-llm {func} \"your question\"")
                 if len(ask_funcs) > 10:
                     self.print_rich(f"  ... and {len(ask_funcs) - 10} more")
             
             if sync_funcs:
                 self.print_rich(f"\nSync functions ({len(sync_funcs)}):", "info")
                 for func in sync_funcs[:10]:  # Show first 10
-                    self.print_rich(f"  - {func}()")
+                    self.print_rich(f"  - chuk-llm {func} \"your question\"")
                 if len(sync_funcs) > 10:
                     self.print_rich(f"  ... and {len(sync_funcs) - 10} more")
                     
@@ -352,7 +446,7 @@ class ChukLLMCLI:
                 if functions:
                     self.print_rich(f"\nDiscovered functions for {provider_name}:", "info")
                     for func_name in sorted(functions.keys())[:10]:
-                        self.print_rich(f"  - {func_name}()")
+                        self.print_rich(f"  - chuk-llm {func_name} \"your question\"")
                     if len(functions) > 10:
                         self.print_rich(f"  ... and {len(functions) - 10} more")
                         
@@ -435,6 +529,13 @@ chuk-llm ask_gpt "Write a haiku about code"
 chuk-llm ask_llama "What is machine learning?"
 ```
 
+## Convenience Functions (Generated by Discovery)
+```bash
+chuk-llm ask_ollama_gemma3 "Hello world"
+chuk-llm ask_ollama_mistral_small_latest "Tell me a joke"
+chuk-llm stream_ollama_qwen3 "Explain Python in detail"
+```
+
 ## General Ask Command
 ```bash
 chuk-llm ask "Question" --provider openai --model gpt-4o-mini
@@ -458,6 +559,10 @@ chuk-llm functions             # Show all dynamic functions
 chuk-llm ask_claude "What's the weather API for Python?"
 chuk-llm ask_granite "Explain Python decorators"
 
+# Using discovered convenience functions
+chuk-llm ask_ollama_gemma3 "What is machine learning?"
+chuk-llm ask_ollama_qwen3_latest "Write a Python function"
+
 # JSON responses
 chuk-llm ask "List 3 Python libraries" --json --provider openai
 
@@ -470,6 +575,7 @@ chuk-llm functions             # See all available functions
 ## Using with uvx
 ```bash
 uvx chuk-llm ask_granite "What is Python?"
+uvx chuk-llm ask_ollama_gemma3 "Hello"
 uvx chuk-llm providers
 uvx chuk-llm discover ollama
 ```
@@ -478,12 +584,13 @@ uvx chuk-llm discover ollama
 
 
 def main():
-    """Main CLI entry point"""
+    """Main CLI entry point with convenience function support"""
     if len(sys.argv) < 2:
         print("ChukLLM CLI - Quick access to AI models")
         print("")
         print("Usage:")
         print("  chuk-llm ask_granite \"What is Python?\"")
+        print("  chuk-llm ask_ollama_gemma3 \"Hello world\"          # NEW: Convenience functions")
         print("  chuk-llm providers")
         print("  chuk-llm models ollama")
         print("  chuk-llm test anthropic")
@@ -521,8 +628,19 @@ def main():
     cli = ChukLLMCLI(verbose=verbose)
     
     try:
+        # 🎯 NEW: Handle convenience functions first (ask_provider_model pattern)
+        parsed_convenience = parse_convenience_function(command)
+        if parsed_convenience:
+            if len(args) < 2:
+                print(f"Usage: chuk-llm {command} \"your question here\"")
+                sys.exit(1)
+            
+            prompt = args[1]
+            cli.handle_convenience_function(command, prompt)
+            return
+        
         # Handle ask_alias commands (ask_granite, ask_claude, etc.)
-        if command.startswith("ask_"):
+        elif command.startswith("ask_"):
             if len(args) < 2:
                 print(f"Usage: chuk-llm {command} \"your question here\"")
                 sys.exit(1)
