@@ -11,7 +11,7 @@ Key Features:
 - Azure API versioning support
 - Full compatibility with existing OpenAI provider features
 - Configuration-driven capabilities
-- MCP tool name compatibility (sanitization if needed)
+- Universal tool name compatibility with bidirectional mapping
 """
 from __future__ import annotations
 from typing import Any, AsyncIterator, Dict, List, Optional, Union, Tuple
@@ -23,19 +23,25 @@ import re
 # mixins
 from chuk_llm.llm.providers._mixins import OpenAIStyleMixin
 from chuk_llm.llm.providers._config_mixin import ConfigAwareProviderMixin
+from chuk_llm.llm.providers._tool_compatibility import ToolCompatibilityMixin
 
 # base
 from ..core.base import BaseLLMClient
 
 log = logging.getLogger(__name__)
 
-class AzureOpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient):
+class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAIStyleMixin, BaseLLMClient):
     """
     Configuration-driven wrapper around the official `openai` SDK for Azure OpenAI
     that gets all capabilities from the unified YAML configuration.
     
-    Includes MCP tool name compatibility - typically Azure OpenAI is more lenient
-    with tool names but provides sanitization interface for consistency.
+    Uses universal tool name compatibility system to handle any naming convention:
+    - stdio.read_query -> stdio_read_query (if needed)
+    - web.api:search -> web_api_search (if needed)  
+    - database.sql.execute -> database_sql_execute (if needed)
+    
+    Note: Azure OpenAI typically supports more flexible tool names than Mistral/Anthropic,
+    but universal compatibility ensures consistent behavior across all providers.
     """
 
     def __init__(
@@ -48,8 +54,9 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMCl
         azure_ad_token: Optional[str] = None,
         azure_ad_token_provider: Optional[Any] = None,
     ) -> None:
-        # Initialize the configuration mixin FIRST
+        # Initialize mixins
         ConfigAwareProviderMixin.__init__(self, "azure_openai", model)
+        ToolCompatibilityMixin.__init__(self, "azure_openai")
         
         self.model = model
         self.azure_endpoint = azure_endpoint
@@ -85,49 +92,15 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMCl
         
         log.debug(f"Azure OpenAI client initialized: endpoint={azure_endpoint}, deployment={self.azure_deployment}, model={self.model}")
 
-    def _sanitize_tool_names(self, tools: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
-        """
-        Tool name sanitization for Azure OpenAI.
-        
-        Azure OpenAI typically inherits OpenAI's more lenient tool naming,
-        but we provide sanitization for consistency with other providers
-        and potential edge cases.
-        
-        Most Azure deployments should accept MCP-style tool names like:
-        - stdio.read_query
-        - filesystem.read_file
-        - mcp.server:get_data
-        
-        But if issues arise, this method can be enhanced to sanitize like
-        Mistral/Anthropic.
-        
-        Args:
-            tools: List of tool definitions in OpenAI format
-            
-        Returns:
-            Tools (potentially sanitized, but typically unchanged for Azure)
-        """
-        if not tools:
-            return tools
-            
-        # Azure OpenAI typically accepts most tool names including dots, colons, etc.
-        # This is a pass-through implementation, but can be enhanced if needed
-        log.debug(f"Processing {len(tools)} tools for Azure OpenAI (typically no sanitization needed)")
-        
-        # Optional: Log tool names for debugging MCP compatibility
-        for tool in tools:
-            if tool.get("type") == "function" and "function" in tool:
-                name = tool["function"].get("name", "unknown")
-                log.debug(f"Azure OpenAI tool: {name}")
-        
-        return tools
-
     def get_model_info(self) -> Dict[str, Any]:
         """
         Get model info using configuration, with Azure OpenAI-specific additions.
         """
         # Get base info from configuration
         info = super().get_model_info()
+        
+        # Add tool compatibility info
+        tool_compatibility = self.get_tool_compatibility_info()
         
         # Add Azure OpenAI-specific metadata only if no error
         if not info.get("error"):
@@ -140,8 +113,8 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMCl
                     "deployment_to_model_mapping": True,
                 },
                 "openai_compatible": True,
-                "tool_name_requirements": "typically_flexible",  # Usually more lenient than Mistral/Anthropic
-                "mcp_compatibility": "typically_native",  # Usually supports MCP tool names natively
+                # Universal tool compatibility info
+                **tool_compatibility,
                 "parameter_mapping": {
                     "temperature": "temperature",
                     "max_tokens": "max_tokens", 
@@ -243,32 +216,37 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMCl
     ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
         Configuration-aware completion that validates capabilities before processing.
-        Includes MCP tool name compatibility (typically native for Azure OpenAI).
+        Uses universal tool name compatibility with bidirectional mapping.
         """
         # Validate request against configuration
         validated_messages, validated_tools, validated_stream, validated_kwargs = self._validate_request_with_config(
             messages, tools, stream, **kwargs
         )
         
-        # Sanitize tool names (typically a pass-through for Azure OpenAI)
-        validated_tools = self._sanitize_tool_names(validated_tools)
+        # Apply universal tool name sanitization (stores mapping for restoration)
+        name_mapping = {}
+        if validated_tools:
+            validated_tools = self._sanitize_tool_names(validated_tools)
+            name_mapping = self._current_name_mapping
+            log.debug(f"Tool sanitization: {len(name_mapping)} tools processed for Azure OpenAI compatibility")
         
         # Use configuration-aware parameter adjustment
         validated_kwargs = self._adjust_parameters_for_provider(validated_kwargs)
 
         if validated_stream:
-            return self._stream_completion_async(validated_messages, validated_tools, **validated_kwargs)
+            return self._stream_completion_async(validated_messages, validated_tools, name_mapping, **validated_kwargs)
         else:
-            return self._regular_completion(validated_messages, validated_tools, **validated_kwargs)
+            return self._regular_completion(validated_messages, validated_tools, name_mapping, **validated_kwargs)
 
     async def _stream_completion_async(
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
+        name_mapping: Dict[str, str] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Enhanced async streaming with Azure OpenAI configuration-aware retry logic.
+        Enhanced async streaming with Azure OpenAI configuration-aware retry logic and tool name restoration.
         """
         # Get retry configuration from provider config if available
         max_retries = 1  # Default
@@ -295,9 +273,13 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMCl
                 # Create streaming request
                 response_stream = await self.async_client.chat.completions.create(**request_params)
                 
-                # Stream results using inherited method from OpenAIStyleMixin
+                # Stream results using inherited method from OpenAIStyleMixin with tool restoration
                 chunk_count = 0
                 async for result in self._stream_from_async(response_stream):
+                    # Restore tool names using universal restoration
+                    if name_mapping and result.get("tool_calls"):
+                        result = self._restore_tool_names_in_response(result, name_mapping)
+                    
                     chunk_count += 1
                     yield result
                 
@@ -310,7 +292,7 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMCl
                 
                 # Check for tool naming errors (uncommon but possible)
                 if "function" in error_str and ("name" in error_str or "invalid" in error_str):
-                    log.error(f"[azure_openai] Possible tool naming error: {e}")
+                    log.error(f"[azure_openai] Tool naming error (this should not happen with universal compatibility): {e}")
                     yield {
                         "response": f"Tool naming error: {str(e)}",
                         "tool_calls": [],
@@ -343,9 +325,10 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMCl
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
+        name_mapping: Dict[str, str] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        """Enhanced non-streaming completion using Azure OpenAI configuration."""
+        """Enhanced non-streaming completion using Azure OpenAI configuration with tool name restoration."""
         try:
             log.debug(f"[azure_openai] Starting completion: "
                      f"deployment={self.azure_deployment}, messages={len(messages)}, tools={len(tools) if tools else 0}")
@@ -376,6 +359,10 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMCl
             # Use enhanced normalization from OpenAIStyleMixin
             result = self._normalize_message(resp.choices[0].message)
             
+            # Restore original tool names using universal restoration
+            if name_mapping and result.get("tool_calls"):
+                result = self._restore_tool_names_in_response(result, name_mapping)
+            
             # Log result
             log.debug(f"[azure_openai] Completion result: "
                      f"response={len(str(result.get('response', ''))) if result.get('response') else 0} chars, "
@@ -388,7 +375,7 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMCl
             
             # Check for tool naming errors
             if "function" in error_str and ("name" in error_str or "invalid" in error_str):
-                log.error(f"[azure_openai] Possible tool naming error: {e}")
+                log.error(f"[azure_openai] Tool naming error (this should not happen with universal compatibility): {e}")
                 return {
                     "response": f"Tool naming error: {str(e)}",
                     "tool_calls": [],
@@ -471,6 +458,8 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMCl
 
     async def close(self):
         """Cleanup resources"""
+        # Reset name mapping
+        self._current_name_mapping = {}
         if hasattr(self.async_client, 'close'):
             await self.async_client.close()
         if hasattr(self.client, 'close'):

@@ -14,7 +14,7 @@ Key points
 *   **Universal Vision Format** - supports standard image_url format with URL downloading
 *   **JSON Mode Support** - via system instructions
 *   **System Parameter Support** - proper system message handling
-*   **MCP Tool Name Sanitization** - handles MCP-style tool names with sanitization
+*   **Universal Tool Name Compatibility** - handles any naming convention with bidirectional mapping
 """
 from __future__ import annotations
 import base64
@@ -32,6 +32,7 @@ from anthropic import AsyncAnthropic
 from ..core.base import BaseLLMClient
 from ._mixins import OpenAIStyleMixin
 from ._config_mixin import ConfigAwareProviderMixin
+from ._tool_compatibility import ToolCompatibilityMixin
 
 log = logging.getLogger(__name__)
 if os.getenv("LOGLEVEL"):
@@ -73,13 +74,15 @@ def _parse_claude_response(resp) -> Dict[str, Any]:  # noqa: D401 - small helper
 # ─────────────────────────── client ───────────────────────────
 
 
-class AnthropicLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClient):
+class AnthropicLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAIStyleMixin, BaseLLMClient):
     """
     Configuration-aware Anthropic adapter that gets all capabilities from YAML config.
     
-    Includes MCP tool name sanitization to handle tool names like 'stdio.read_query'
-    that need to be converted to 'stdio_read_query' for Anthropic's API requirements:
-    ^[a-zA-Z0-9_-]{1,128}$
+    Uses universal tool name compatibility system to handle any naming convention:
+    - stdio.read_query -> stdio_read_query
+    - web.api:search -> web_api_search  
+    - database.sql.execute -> database_sql_execute
+    - service:method -> service_method
     """
 
     def __init__(
@@ -88,8 +91,9 @@ class AnthropicLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClie
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
     ) -> None:
-        # Initialize the configuration mixin FIRST
+        # Initialize mixins
         ConfigAwareProviderMixin.__init__(self, "anthropic", model)
+        ToolCompatibilityMixin.__init__(self, "anthropic")
         
         self.model = model
         
@@ -104,140 +108,7 @@ class AnthropicLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClie
         from anthropic import Anthropic
         self.client = Anthropic(**kwargs)
         
-        # Store current tool name mapping for response restoration
-        self._current_name_mapping: Dict[str, str] = {}
-        
         log.debug(f"Anthropic client initialized with model: {model}")
-
-    def _sanitize_tool_name_for_anthropic(self, name: str) -> str:
-        """
-        Convert MCP/OpenAI tool names to Anthropic-compatible format.
-        
-        Anthropic requires function names to match pattern: ^[a-zA-Z0-9_-]{1,128}$
-        - Letters (a-z, A-Z)
-        - Numbers (0-9) 
-        - Underscores (_)
-        - Dashes (-)
-        - Length: 1-128 characters
-        
-        Examples:
-            stdio.read_query -> stdio_read_query
-            filesystem.read_file -> filesystem_read_file  
-            mcp.server:get_data -> mcp_server_get_data
-        """
-        if not name:
-            return name
-            
-        # Replace invalid characters with underscores
-        # Pattern allows: a-zA-Z0-9_- (dots and colons are NOT allowed)
-        sanitized = re.sub(r'[^a-zA-Z0-9_-]', '_', name)
-        
-        # Remove multiple consecutive underscores
-        sanitized = re.sub(r'_+', '_', sanitized)
-        
-        # Remove leading/trailing underscores
-        sanitized = sanitized.strip('_')
-        
-        # Ensure it doesn't exceed 128 characters (Anthropic's limit)
-        if len(sanitized) > 128:
-            sanitized = sanitized[:128].rstrip('_')
-            
-        return sanitized
-
-    def _sanitize_tools_for_anthropic(self, tools: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, str]]:
-        """
-        Sanitize tool names and create a mapping for response processing.
-        
-        Returns:
-            tuple: (sanitized_tools, name_mapping)
-                - sanitized_tools: Tools with Anthropic-compatible names
-                - name_mapping: Dict mapping sanitized_name -> original_name
-        """
-        if not tools:
-            return tools, {}
-            
-        sanitized_tools = []
-        name_mapping = {}
-        
-        for tool in tools:
-            if tool.get("type") == "function" and "function" in tool:
-                original_name = tool["function"]["name"]
-                sanitized_name = self._sanitize_tool_name_for_anthropic(original_name)
-                
-                # Store the mapping
-                name_mapping[sanitized_name] = original_name
-                
-                # Create sanitized tool
-                sanitized_tool = tool.copy()
-                sanitized_tool["function"] = tool["function"].copy()
-                sanitized_tool["function"]["name"] = sanitized_name
-                
-                sanitized_tools.append(sanitized_tool)
-                
-                # Log the sanitization if it changed
-                if sanitized_name != original_name:
-                    log.debug(f"Sanitized Anthropic tool name: {original_name} -> {sanitized_name}")
-            else:
-                # Non-function tools pass through unchanged
-                sanitized_tools.append(tool)
-                
-        return sanitized_tools, name_mapping
-
-    def _restore_tool_names_in_response(self, response: Dict[str, Any], name_mapping: Dict[str, str]) -> Dict[str, Any]:
-        """
-        Restore original tool names in the response using the mapping.
-        """
-        if not name_mapping or not response.get("tool_calls"):
-            return response
-            
-        # Create a copy to avoid modifying the original
-        restored_response = response.copy()
-        restored_tool_calls = []
-        
-        for tool_call in response["tool_calls"]:
-            if "function" in tool_call and "name" in tool_call["function"]:
-                sanitized_name = tool_call["function"]["name"]
-                original_name = name_mapping.get(sanitized_name, sanitized_name)
-                
-                # Restore the original name
-                restored_tool_call = tool_call.copy()
-                restored_tool_call["function"] = tool_call["function"].copy()
-                restored_tool_call["function"]["name"] = original_name
-                
-                restored_tool_calls.append(restored_tool_call)
-                
-                # Log the restoration if it changed
-                if original_name != sanitized_name:
-                    log.debug(f"Restored Anthropic tool name: {sanitized_name} -> {original_name}")
-            else:
-                restored_tool_calls.append(tool_call)
-                
-        restored_response["tool_calls"] = restored_tool_calls
-        return restored_response
-
-    def _sanitize_tool_names(self, tools: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
-        """
-        Tool name sanitization for Anthropic.
-        
-        Anthropic requires tool names to match: ^[a-zA-Z0-9_-]{1,128}$
-        This means MCP-style tool names like 'stdio.read_query' need to be
-        converted to 'stdio_read_query' before sending to the API.
-        
-        Args:
-            tools: List of tool definitions in OpenAI format
-            
-        Returns:
-            Sanitized tools list with name mapping stored for restoration
-        """
-        if not tools:
-            return tools
-            
-        log.debug(f"Sanitizing {len(tools)} tools for Anthropic compatibility")
-        
-        # Store the mapping for later restoration
-        sanitized_tools, self._current_name_mapping = self._sanitize_tools_for_anthropic(tools)
-        
-        return sanitized_tools
 
     def get_model_info(self) -> Dict[str, Any]:
         """
@@ -246,12 +117,15 @@ class AnthropicLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClie
         # Get base info from configuration
         info = super().get_model_info()
         
+        # Add tool compatibility info
+        tool_compatibility = self.get_tool_compatibility_info()
+        
         # Add Anthropic-specific metadata
         if not info.get("error"):
             info.update({
                 "vision_format": "universal_image_url",
-                "tool_name_requirements": "^[a-zA-Z0-9_-]{1,128}$",  # Updated based on testing
-                "mcp_compatibility": "requires_sanitization",  # Updated based on testing
+                # Universal tool compatibility info
+                **tool_compatibility,
                 "supported_parameters": ["temperature", "max_tokens", "top_p", "stream"],
                 "unsupported_parameters": [
                     "frequency_penalty", "presence_penalty", "stop", "logit_bias",
@@ -332,7 +206,7 @@ class AnthropicLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClie
         """
         Convert OpenAI-style tools to Anthropic format.
         
-        Note: Tool names should already be sanitized by _sanitize_tool_names
+        Note: Tool names should already be sanitized by ToolCompatibilityMixin
         before reaching this method.
         """
         if not tools:
@@ -567,7 +441,7 @@ class AnthropicLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClie
 
         if tool_calls:
             result = {"response": None, "tool_calls": tool_calls}
-            # Restore original tool names if we have a mapping
+            # Restore original tool names using universal restoration
             if name_mapping:
                 result = self._restore_tool_names_in_response(result, name_mapping)
             return result
@@ -588,7 +462,7 @@ class AnthropicLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClie
         **extra,
     ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
-        Configuration-aware completion generation with MCP tool name sanitization.
+        Configuration-aware completion generation with universal tool name compatibility.
         
         Uses configuration to validate:
         - Tool support before processing tools
@@ -596,8 +470,10 @@ class AnthropicLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClie
         - JSON mode support before adding JSON instructions
         - Vision support during message processing
         
-        Anthropic requires tool name sanitization just like Mistral:
-        ^[a-zA-Z0-9_-]{1,128}$
+        Universal tool name compatibility handles any naming convention:
+        - stdio.read_query -> stdio_read_query
+        - web.api:search -> web_api_search  
+        - database.sql.execute -> database_sql_execute
         """
 
         # Validate capabilities using configuration
@@ -609,8 +485,13 @@ class AnthropicLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClie
             log.warning(f"Streaming requested but model {self.model} doesn't support streaming according to configuration")
             stream = False
 
-        # Sanitize tool names for Anthropic compatibility (stores mapping internally)
-        tools = self._sanitize_tool_names(tools)
+        # Apply universal tool name sanitization (stores mapping for restoration)
+        name_mapping = {}
+        if tools:
+            tools = self._sanitize_tool_names(tools)
+            name_mapping = self._current_name_mapping
+            log.debug(f"Tool sanitization: {len(name_mapping)} tools processed for Anthropic compatibility")
+        
         anth_tools = self._convert_tools(tools)
         
         # Check for JSON mode (using configuration validation)
@@ -623,10 +504,10 @@ class AnthropicLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClie
 
         # --- streaming: use real async streaming -------------------------
         if stream:
-            return self._stream_completion_async(system, json_instruction, messages, anth_tools, filtered_params)
+            return self._stream_completion_async(system, json_instruction, messages, anth_tools, filtered_params, name_mapping)
 
         # --- non-streaming: use async client ------------------------------
-        return self._regular_completion_async(system, json_instruction, messages, anth_tools, filtered_params)
+        return self._regular_completion_async(system, json_instruction, messages, anth_tools, filtered_params, name_mapping)
 
     async def _stream_completion_async(
         self, 
@@ -634,11 +515,12 @@ class AnthropicLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClie
         json_instruction: Optional[str],
         messages: List[Dict[str, Any]],
         anth_tools: List[Dict[str, Any]],
-        filtered_params: Dict[str, Any]
+        filtered_params: Dict[str, Any],
+        name_mapping: Dict[str, str] = None
     ) -> AsyncIterator[Dict[str, Any]]:
         """
         Real streaming using AsyncAnthropic with configuration-aware vision processing.
-        Restores original MCP tool names in responses.
+        Restores original tool names using universal restoration.
         """
         try:
             # Handle system message and JSON instruction
@@ -680,7 +562,7 @@ class AnthropicLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClie
                                 "tool_calls": []
                             }
                     
-                    # Tool use events (restore original MCP tool names)
+                    # Tool use events (restore original tool names using universal restoration)
                     elif hasattr(event, 'type') and event.type == 'content_block_start':
                         if hasattr(event, 'content_block') and event.content_block.type == 'tool_use':
                             tool_call = {
@@ -698,11 +580,11 @@ class AnthropicLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClie
                                 "tool_calls": [tool_call]
                             }
                             
-                            # Restore original tool names
-                            if self._current_name_mapping:
+                            # Restore original tool names using universal restoration
+                            if name_mapping:
                                 chunk_response = self._restore_tool_names_in_response(
                                     chunk_response, 
-                                    self._current_name_mapping
+                                    name_mapping
                                 )
                             
                             yield chunk_response
@@ -712,8 +594,8 @@ class AnthropicLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClie
             
             # Check if it's a tool name validation error
             if "tools.0.custom.name" in str(e) and "should match pattern" in str(e):
-                log.error(f"Tool name sanitization may have failed: {e}")
-                log.error(f"Current mapping: {self._current_name_mapping}")
+                log.error(f"Tool name validation error (this should not happen with universal compatibility): {e}")
+                log.error(f"Request tools: {[t.get('name') for t in anth_tools]}")
             
             yield {
                 "response": f"Streaming error: {str(e)}",
@@ -727,11 +609,12 @@ class AnthropicLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClie
         json_instruction: Optional[str],
         messages: List[Dict[str, Any]],
         anth_tools: List[Dict[str, Any]],
-        filtered_params: Dict[str, Any]
+        filtered_params: Dict[str, Any],
+        name_mapping: Dict[str, str] = None
     ) -> Dict[str, Any]:
         """
         Non-streaming completion using async client with configuration-aware vision processing.
-        Restores original MCP tool names in responses.
+        Restores original tool names using universal restoration.
         """
         try:
             # Handle system message and JSON instruction
@@ -760,8 +643,8 @@ class AnthropicLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClie
             
             resp = await self.async_client.messages.create(**base_payload)
             
-            # Parse response and restore tool names
-            result = self._parse_claude_response_with_restoration(resp, self._current_name_mapping)
+            # Parse response and restore tool names using universal restoration
+            result = self._parse_claude_response_with_restoration(resp, name_mapping)
             
             return result
             
@@ -770,8 +653,8 @@ class AnthropicLLMClient(ConfigAwareProviderMixin, OpenAIStyleMixin, BaseLLMClie
             
             # Check if it's a tool name validation error
             if "tools.0.custom.name" in str(e) and "should match pattern" in str(e):
-                log.error(f"Tool name sanitization may have failed: {e}")
-                log.error(f"Current mapping: {self._current_name_mapping}")
+                log.error(f"Tool name validation error (this should not happen with universal compatibility): {e}")
+                log.error(f"Request tools: {[t.get('name') for t in anth_tools]}")
             
             return {
                 "response": f"Error: {str(e)}",

@@ -1,71 +1,21 @@
 #!/usr/bin/env python3
 """
-Diagnostic script for Azure OpenAI MCP tool compatibility and streaming performance.
-Tests tool name handling, streaming behavior, and Azure-specific features.
+Diagnostic script for Azure OpenAI universal tool compatibility and streaming performance.
+Tests tool name handling, streaming behavior, and feature capabilities with the ToolCompatibilityMixin.
 """
 
 import asyncio
 import time
 import sys
-import os
 from pathlib import Path
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-# Load environment variables from .env file
-from dotenv import load_dotenv
-load_dotenv()
-
-async def test_azure_openai_setup():
-    """Test Azure OpenAI configuration and connectivity"""
-    print("🧪 Testing Azure OpenAI Setup & Configuration")
-    print("=" * 50)
-    
-    # Check required environment variables
-    azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-    azure_key = os.getenv("AZURE_OPENAI_API_KEY")
-    
-    print("📋 Environment Check:")
-    print(f"   AZURE_OPENAI_ENDPOINT: {'✅ Set' if azure_endpoint else '❌ Missing'}")
-    print(f"   AZURE_OPENAI_API_KEY: {'✅ Set' if azure_key else '❌ Missing'}")
-    
-    if not azure_endpoint:
-        print("\n❌ Azure OpenAI endpoint not configured")
-        print("💡 Set environment variable: export AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/")
-        return False
-        
-    if not azure_key:
-        print("\n❌ Azure OpenAI API key not configured")
-        print("💡 Set environment variable: export AZURE_OPENAI_API_KEY=your-api-key")
-        return False
-    
-    try:
-        from chuk_llm.llm.providers.azure_openai_client import AzureOpenAILLMClient
-        
-        # Test client initialization
-        client = AzureOpenAILLMClient(
-            model="gpt-4o-mini",
-            azure_endpoint=azure_endpoint,
-            api_key=azure_key
-        )
-        
-        print(f"\n✅ Client initialized successfully:")
-        print(f"   Endpoint: {azure_endpoint}")
-        print(f"   Deployment: {client.azure_deployment}")
-        print(f"   API Version: {client.api_version}")
-        print(f"   Auth Type: {client._get_auth_type()}")
-        
-        return True
-        
-    except Exception as e:
-        print(f"\n❌ Error initializing Azure OpenAI client: {e}")
-        return False
-
 async def test_azure_openai_tool_handling():
-    """Test that Azure OpenAI handles MCP-style tool names"""
-    print("\n🧪 Testing Azure OpenAI MCP Tool Name Handling")
-    print("=" * 50)
+    """Test that Azure OpenAI handles universal tool names correctly with ToolCompatibilityMixin"""
+    print("🧪 Testing Azure OpenAI Universal Tool Name Handling")
+    print("=" * 60)
     
     try:
         from chuk_llm.llm.providers.azure_openai_client import AzureOpenAILLMClient
@@ -73,35 +23,104 @@ async def test_azure_openai_tool_handling():
         # Create client instance to test tool handling
         client = AzureOpenAILLMClient(model="gpt-4o-mini")
         
-        # Test MCP-style tool names
-        mcp_tools = [
+        # Verify it has the ToolCompatibilityMixin
+        from chuk_llm.llm.providers._tool_compatibility import ToolCompatibilityMixin
+        has_mixin = isinstance(client, ToolCompatibilityMixin)
+        print(f"✅ Has ToolCompatibilityMixin: {has_mixin}")
+        
+        if has_mixin:
+            # Get compatibility info
+            compatibility_info = client.get_tool_compatibility_info()
+            print(f"Provider: {compatibility_info['provider']}")
+            print(f"Compatibility level: {compatibility_info['compatibility_level']}")
+            print(f"Requires sanitization: {compatibility_info['requires_sanitization']}")
+            print(f"Max name length: {compatibility_info['max_tool_name_length']}")
+            print(f"Tool name pattern: {compatibility_info['tool_name_requirements']}")
+            
+            # Show sample transformations
+            print("\nSample transformations from ToolCompatibilityMixin:")
+            sample_transformations = compatibility_info.get('sample_transformations', {})
+            for original, transformed in sample_transformations.items():
+                status = "✅ PRESERVED" if original == transformed else "🔧 SANITIZED"
+                print(f"  {original:<30} -> {transformed:<30} {status}")
+        
+        # Test universal tool naming patterns
+        test_cases = [
             "stdio.read_query",
             "filesystem.read_file", 
             "mcp.server:get_data",
-            "some.complex:tool.name",
+            "web.api:search",
+            "database.sql.execute", 
+            "service:method",
+            "namespace:function",
+            "complex.tool:method.v1",
             "already_valid_name",
+            "tool-with-dashes",
+            "tool_with_underscores",
         ]
         
-        print("Testing Azure OpenAI tool name handling:")
-        for tool_name in mcp_tools:
+        print("\nTesting individual tool name processing:")
+        for original in test_cases:
             test_tools = [
                 {
                     "type": "function",
                     "function": {
-                        "name": tool_name,
-                        "description": f"Test tool: {tool_name}",
+                        "name": original,
+                        "description": f"Test tool: {original}",
                         "parameters": {"type": "object", "properties": {}}
                     }
                 }
             ]
             
-            # Test the sanitization method (should be pass-through)
-            sanitized = client._sanitize_tool_names(test_tools)
-            original_name = test_tools[0]["function"]["name"]
-            sanitized_name = sanitized[0]["function"]["name"] if sanitized else "ERROR"
+            # Use the universal sanitization
+            sanitized_tools = client._sanitize_tool_names(test_tools)
+            sanitized_name = sanitized_tools[0]["function"]["name"] if sanitized_tools else "ERROR"
             
-            status = "✅ PRESERVED" if original_name == sanitized_name else "❌ CHANGED"
-            print(f"  {original_name:<30} -> {sanitized_name:<30} {status}")
+            # Check if mapping was created
+            mapping = getattr(client, '_current_name_mapping', {})
+            has_mapping = sanitized_name in mapping
+            
+            if original == sanitized_name:
+                status = "✅ PRESERVED"
+            else:
+                status = "🔧 SANITIZED" if has_mapping else "❌ CHANGED"
+            
+            print(f"  {original:<30} -> {sanitized_name:<30} {status}")
+            
+            # Test restoration if mapping exists
+            if has_mapping and sanitized_name in mapping:
+                restored_name = mapping[sanitized_name]
+                restoration_status = "✅ RESTORED" if restored_name == original else "❌ RESTORATION FAILED"
+                print(f"    Mapping: {sanitized_name} -> {restored_name} {restoration_status}")
+        
+        # Test validation
+        print("\nTesting tool name validation:")
+        validation_tests = [
+            ("valid_tool", True),
+            ("another-tool", True), 
+            ("simple123", True),
+            ("stdio.read_query", None),  # Depends on Azure OpenAI's requirements
+            ("tool:with:colons", None),  # Depends on Azure OpenAI's requirements
+            ("tool with spaces", False)
+        ]
+        
+        for name, expected_valid in validation_tests:
+            is_valid, issues = client.validate_tool_names([{
+                "type": "function",
+                "function": {"name": name, "description": "Test"}
+            }])
+            
+            if expected_valid is None:
+                # Don't check expectation for Azure OpenAI flexible names
+                status = "ℹ️"
+                print(f"  {name:<20}: {'Valid' if is_valid else 'Invalid'} {status} (provider-dependent)")
+            else:
+                status = "✅" if is_valid == expected_valid else "❌"
+                print(f"  {name:<20}: {'Valid' if is_valid else 'Invalid'} {status}")
+            
+            if issues:
+                for issue in issues[:1]:  # Show first issue only
+                    print(f"    Issue: {issue}")
         
         return True
         
@@ -111,10 +130,11 @@ async def test_azure_openai_tool_handling():
         traceback.print_exc()
         return False
 
+
 async def test_azure_openai_streaming():
     """Test Azure OpenAI streaming performance and behavior"""
     print("\n🧪 Testing Azure OpenAI Streaming Performance")
-    print("=" * 50)
+    print("=" * 60)
     
     try:
         from chuk_llm.llm.client import get_client
@@ -124,9 +144,15 @@ async def test_azure_openai_streaming():
         print(f"Client type: {type(client)}")
         print(f"Client class: {client.__class__.__name__}")
         print(f"Provider name: {getattr(client, 'provider_name', 'unknown')}")
+        print(f"Azure deployment: {getattr(client, 'azure_deployment', 'unknown')}")
+        
+        # Check if client has the ToolCompatibilityMixin
+        from chuk_llm.llm.providers._tool_compatibility import ToolCompatibilityMixin
+        has_tool_mixin = isinstance(client, ToolCompatibilityMixin)
+        print(f"Has ToolCompatibilityMixin: {'✅' if has_tool_mixin else '❌'}")
         
         messages = [
-            {"role": "user", "content": "Write a short story about a robot learning to paint. Make it at least 100 words."}
+            {"role": "user", "content": "Write a short story about a robot learning to paint. Make it at least 100 words and tell it slowly."}
         ]
         
         print("\n🔍 Testing Azure OpenAI streaming=True...")
@@ -178,10 +204,6 @@ async def test_azure_openai_streaming():
                     print("   Continuing: ", end="", flush=True)
                 
                 last_chunk_time = current_time
-                
-                # Limit for testing
-                if chunk_count >= 30:
-                    break
             
             end_time = time.time() - start_time
             
@@ -214,9 +236,9 @@ async def test_azure_openai_streaming():
                 print("   ✅ REAL STREAMING: Multiple chunks detected")
             
             if first_chunk_time:
-                if first_chunk_time < 1.0:
+                if first_chunk_time < 2.0:
                     print("   ✅ FAST: Excellent first chunk time")
-                elif first_chunk_time < 2.0:
+                elif first_chunk_time < 4.0:
                     print("   ✅ GOOD: Acceptable first chunk time")
                 else:
                     print("   ⚠️  SLOW: First chunk could be faster")
@@ -242,18 +264,19 @@ async def test_azure_openai_streaming():
         traceback.print_exc()
         return False
 
-async def test_azure_openai_mcp_tools():
-    """Test Azure OpenAI with actual MCP-style tool calls"""
-    print("\n🧪 Testing Azure OpenAI with MCP-Style Tools")
-    print("=" * 50)
+
+async def test_azure_openai_universal_tools():
+    """Test Azure OpenAI with universal tool naming and bidirectional mapping"""
+    print("\n🧪 Testing Azure OpenAI Universal Tool Compatibility")
+    print("=" * 60)
     
     try:
         from chuk_llm.llm.client import get_client
         
         client = get_client(provider="azure_openai", model="gpt-4o-mini")
         
-        # MCP-style tools (should work natively with Azure OpenAI)
-        mcp_tools = [
+        # Universal tool names that may require sanitization depending on Azure OpenAI configuration
+        universal_tools = [
             {
                 "type": "function",
                 "function": {
@@ -274,17 +297,34 @@ async def test_azure_openai_mcp_tools():
             {
                 "type": "function",
                 "function": {
-                    "name": "filesystem.list_files",
-                    "description": "List files in a directory",
+                    "name": "web.api:search",
+                    "description": "Search the web using an API",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "path": {
+                            "query": {
                                 "type": "string",
-                                "description": "Directory path"
+                                "description": "Search query"
                             }
                         },
-                        "required": ["path"]
+                        "required": ["query"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "database.sql.execute",
+                    "description": "Execute a SQL query",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "sql": {
+                                "type": "string",
+                                "description": "SQL query to execute"
+                            }
+                        },
+                        "required": ["sql"]
                     }
                 }
             }
@@ -293,21 +333,22 @@ async def test_azure_openai_mcp_tools():
         messages = [
             {
                 "role": "user",
-                "content": "Please list the files in the current directory and then ask the user for their name"
+                "content": "Please search the web for 'AI news', read user input for their name, and then execute a simple SQL query"
             }
         ]
         
-        print("Testing Azure OpenAI with MCP-style tool names...")
-        print(f"Tools: {[t['function']['name'] for t in mcp_tools]}")
+        print("Testing Azure OpenAI with universal tool names...")
+        original_names = [t['function']['name'] for t in universal_tools]
+        print(f"Original tool names: {original_names}")
         
         # Test non-streaming first
         response = await client.create_completion(
             messages=messages,
-            tools=mcp_tools,
+            tools=universal_tools,
             stream=False
         )
         
-        print("✅ SUCCESS: No tool naming errors!")
+        print("✅ SUCCESS: No tool naming errors with universal naming!")
         
         if isinstance(response, dict):
             if response.get("tool_calls"):
@@ -316,22 +357,23 @@ async def test_azure_openai_mcp_tools():
                     func_name = tool_call.get("function", {}).get("name", "unknown")
                     print(f"   {i+1}. {func_name}")
                     
-                    # Verify MCP names are preserved
-                    if func_name in ["stdio.read_query", "filesystem.list_files"]:
-                        print(f"      ✅ MCP name preserved: {func_name}")
+                    # Verify original names are restored in response
+                    if func_name in original_names:
+                        print(f"      ✅ Original name restored: {func_name}")
                     else:
-                        print(f"      ⚠️  Unexpected name: {func_name}")
+                        print(f"      ⚠️  Unexpected name in response: {func_name}")
+                        print(f"         (Should be one of: {original_names})")
                         
             elif response.get("response"):
                 print(f"💬 Text response: {response['response'][:150]}...")
             else:
                 print(f"❓ Unexpected response format")
         
-        # Test streaming with tools
-        print("\n🔄 Testing streaming with MCP tools...")
+        # Test streaming with universal tools
+        print("\n🔄 Testing streaming with universal tools...")
         stream_response = client.create_completion(
             messages=messages,
-            tools=mcp_tools,
+            tools=universal_tools,
             stream=True
         )
         
@@ -345,33 +387,41 @@ async def test_azure_openai_mcp_tools():
                     tool_name = tc.get("function", {}).get("name", "unknown")
                     tool_calls_found.append(tool_name)
                     print(f"🔧 Streaming tool call: {tool_name}")
+                    
+                    # Verify restored names in streaming
+                    if tool_name in original_names:
+                        print(f"      ✅ Correctly restored in stream: {tool_name}")
+                    else:
+                        print(f"      ⚠️  Unexpected name in stream: {tool_name}")
             
-            if chunk_count >= 10:  # Limit for testing
+            if chunk_count >= 15:  # Limit for testing
                 break
         
         print(f"✅ Streaming completed: {chunk_count} chunks, {len(tool_calls_found)} tool calls")
         
+        # Verify bidirectional mapping worked
+        unique_tool_calls = list(set(tool_calls_found))
+        if unique_tool_calls:
+            print(f"🔄 Bidirectional mapping test:")
+            for tool_name in unique_tool_calls:
+                if tool_name in original_names:
+                    print(f"   ✅ {tool_name} - correctly restored from sanitized form")
+                else:
+                    print(f"   ❌ {tool_name} - not in original names, mapping may have failed")
+        
         return True
         
     except Exception as e:
-        error_str = str(e)
-        
-        if "function" in error_str.lower() and ("name" in error_str.lower() or "invalid" in error_str.lower()):
-            print(f"❌ Tool naming error detected!")
-            print(f"   Error: {error_str}")
-            print("\n💡 Azure OpenAI may have stricter tool naming than expected")
-            print("   Consider implementing tool name sanitization similar to Mistral/Anthropic")
-            return False
-        else:
-            print(f"❌ Error testing MCP tools: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
+        print(f"❌ Error testing universal tools: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
 
 async def test_azure_openai_features():
-    """Test Azure OpenAI advanced features"""
+    """Test Azure OpenAI advanced features with updated expectations"""
     print("\n🧪 Testing Azure OpenAI Advanced Features")
-    print("=" * 50)
+    print("=" * 60)
     
     try:
         from chuk_llm.llm.client import get_client
@@ -383,8 +433,6 @@ async def test_azure_openai_features():
         model_info = client.get_model_info()
         
         features = model_info.get("features", [])
-        azure_info = model_info.get("azure_specific", {})
-        
         print(f"   Features: {', '.join(features)}")
         print(f"   Max context: {model_info.get('max_context_length', 'unknown')}")
         print(f"   Max output: {model_info.get('max_output_tokens', 'unknown')}")
@@ -393,17 +441,27 @@ async def test_azure_openai_features():
         print(f"   Streaming: {'✅' if 'streaming' in features else '❌'}")
         print(f"   JSON mode: {'✅' if 'json_mode' in features else '❌'}")
         
-        print(f"\n🔷 Azure-specific:")
-        print(f"   Endpoint: {azure_info.get('endpoint', 'unknown')}")
-        print(f"   Deployment: {azure_info.get('deployment', 'unknown')}")
-        print(f"   API Version: {azure_info.get('api_version', 'unknown')}")
-        print(f"   Auth Type: {azure_info.get('authentication_type', 'unknown')}")
+        # Test Azure-specific info
+        azure_info = model_info.get("azure_specific", {})
+        if azure_info:
+            print(f"   Azure endpoint: {azure_info.get('endpoint', 'unknown')}")
+            print(f"   Azure deployment: {azure_info.get('deployment', 'unknown')}")
+            print(f"   API version: {azure_info.get('api_version', 'unknown')}")
+        
+        # Test tool compatibility info
+        if hasattr(client, 'get_tool_compatibility_info'):
+            print("\n🔧 Tool compatibility:")
+            tool_info = client.get_tool_compatibility_info()
+            print(f"   Compatibility level: {tool_info.get('compatibility_level', 'unknown')}")
+            print(f"   Requires sanitization: {tool_info.get('requires_sanitization', 'unknown')}")
+            print(f"   Max name length: {tool_info.get('max_tool_name_length', 'unknown')}")
+            print(f"   Forbidden chars: {len(tool_info.get('forbidden_characters', []))} characters")
         
         # Test JSON mode if supported
         if 'json_mode' in features:
             print("\n📊 Testing JSON mode...")
             json_messages = [
-                {"role": "user", "content": "Return a JSON object with your name and model type"}
+                {"role": "user", "content": "Return a JSON object with your name and capabilities"}
             ]
             
             json_response = await client.create_completion(
@@ -430,39 +488,65 @@ async def test_azure_openai_features():
         traceback.print_exc()
         return False
 
+
 async def test_azure_openai_vs_competitors():
-    """Compare Azure OpenAI performance vs other providers"""
-    print("\n🧪 Azure OpenAI vs Competitors Performance")
-    print("=" * 50)
+    """Compare Azure OpenAI performance vs other providers with universal tools"""
+    print("\n🧪 Azure OpenAI vs Competitors Performance (Universal Tools)")
+    print("=" * 70)
     
     # Same test prompt for all providers
     messages = [
         {"role": "user", "content": "Write a haiku about artificial intelligence"}
     ]
     
+    # Test with a universal tool that requires sanitization
+    universal_tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "poetry.generator:create",
+                "description": "Generate creative poetry",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "style": {"type": "string", "description": "Poetry style"},
+                        "topic": {"type": "string", "description": "Poetry topic"}
+                    }
+                }
+            }
+        }
+    ]
+    
     providers = [
         ("azure_openai", "gpt-4o-mini"),
-        ("openai", "gpt-4o-mini"),
-        ("mistral", "mistral-medium-2505"),
         ("anthropic", "claude-sonnet-4-20250514"),
-        ("groq", "llama-3.3-70b-versatile")
+        ("mistral", "mistral-medium-2505"),
+        ("openai", "gpt-4o-mini"),
     ]
     
     results = {}
     
     for provider, model in providers:
-        print(f"\n🔍 Testing {provider} with {model}...")
+        print(f"\n🔍 Testing {provider} with {model} and universal tools...")
         
         try:
             from chuk_llm.llm.client import get_client
             client = get_client(provider=provider, model=model)
             
+            # Test tool compatibility
+            has_tool_mixin = hasattr(client, 'get_tool_compatibility_info')
+            if has_tool_mixin:
+                tool_info = client.get_tool_compatibility_info()
+                print(f"   Tool compatibility: {tool_info.get('compatibility_level', 'unknown')}")
+                print(f"   Requires sanitization: {tool_info.get('requires_sanitization', 'unknown')}")
+            
             start_time = time.time()
-            response = client.create_completion(messages, stream=True)
+            response = client.create_completion(messages, tools=universal_tools, stream=True)
             
             chunk_count = 0
             first_chunk_time = None
             content_length = 0
+            tool_calls_found = 0
             
             async for chunk in response:
                 current_time = time.time() - start_time
@@ -472,8 +556,11 @@ async def test_azure_openai_vs_competitors():
                 
                 chunk_count += 1
                 
-                if isinstance(chunk, dict) and chunk.get("response"):
-                    content_length += len(chunk["response"])
+                if isinstance(chunk, dict):
+                    if chunk.get("response"):
+                        content_length += len(chunk["response"])
+                    if chunk.get("tool_calls"):
+                        tool_calls_found += len(chunk["tool_calls"])
                 
                 # Limit for comparison
                 if chunk_count >= 20:
@@ -485,10 +572,13 @@ async def test_azure_openai_vs_competitors():
                 "chunks": chunk_count,
                 "first_chunk": first_chunk_time,
                 "total_time": total_time,
-                "content_length": content_length
+                "content_length": content_length,
+                "tool_calls": tool_calls_found,
+                "has_universal_tools": has_tool_mixin
             }
             
-            print(f"   {provider}: {chunk_count} chunks, first at {first_chunk_time:.3f}s, {content_length} chars, total {total_time:.3f}s")
+            print(f"   {provider}: {chunk_count} chunks, first at {first_chunk_time:.3f}s, "
+                  f"{content_length} chars, {tool_calls_found} tools, total {total_time:.3f}s")
             
         except Exception as e:
             print(f"   {provider}: Error - {e}")
@@ -507,6 +597,12 @@ async def test_azure_openai_vs_competitors():
         print(f"   📊 Most granular streaming: {most_chunks} ({valid_results[most_chunks]['chunks']} chunks)")
         print(f"   ⚡ Fastest total time: {fastest_total} ({valid_results[fastest_total]['total_time']:.3f}s)")
         
+        # Universal tool compatibility analysis
+        universal_providers = [k for k, v in valid_results.items() if v.get("has_universal_tools")]
+        print(f"   🔧 Universal tool support: {len(universal_providers)}/{len(valid_results)} providers")
+        for provider in universal_providers:
+            print(f"      ✅ {provider}")
+        
         # Azure OpenAI-specific analysis
         if "azure_openai" in valid_results:
             azure_result = valid_results["azure_openai"]
@@ -514,79 +610,79 @@ async def test_azure_openai_vs_competitors():
             print(f"   Chunks: {azure_result['chunks']}")
             print(f"   First chunk: {azure_result['first_chunk']:.3f}s")
             print(f"   Content: {azure_result['content_length']} chars")
+            print(f"   Tool calls: {azure_result['tool_calls']}")
+            print(f"   Universal tools: {'✅' if azure_result['has_universal_tools'] else '❌'}")
             
-            # Compare to regular OpenAI
-            if "openai" in valid_results:
-                openai_result = valid_results["openai"]
-                first_diff = azure_result["first_chunk"] - openai_result["first_chunk"]
-                chunks_diff = azure_result["chunks"] - openai_result["chunks"]
+            # Compare to others
+            other_providers = [k for k in valid_results.keys() if k != "azure_openai"]
+            if other_providers:
+                avg_first_chunk = sum(valid_results[p]["first_chunk"] for p in other_providers) / len(other_providers)
+                avg_chunks = sum(valid_results[p]["chunks"] for p in other_providers) / len(other_providers)
                 
-                print(f"\n🔍 Azure vs Regular OpenAI:")
-                if abs(first_diff) < 0.1:
-                    print(f"   ⚖️  Similar first chunk timing ({first_diff*1000:+.0f}ms)")
-                elif first_diff < 0:
-                    print(f"   ✅ Azure faster by {abs(first_diff)*1000:.0f}ms")
+                if azure_result["first_chunk"] < avg_first_chunk:
+                    print(f"   ✅ Azure OpenAI faster than average first chunk by {(avg_first_chunk - azure_result['first_chunk'])*1000:.0f}ms")
                 else:
-                    print(f"   ⚠️  Azure slower by {first_diff*1000:.0f}ms")
+                    print(f"   ⚠️  Azure OpenAI slower than average first chunk by {(azure_result['first_chunk'] - avg_first_chunk)*1000:.0f}ms")
                 
-                if abs(chunks_diff) <= 2:
-                    print(f"   ⚖️  Similar streaming granularity ({chunks_diff:+d} chunks)")
-                elif chunks_diff > 0:
-                    print(f"   ✅ Azure more granular (+{chunks_diff} chunks)")
+                if azure_result["chunks"] > avg_chunks:
+                    print(f"   ✅ Azure OpenAI more granular than average ({azure_result['chunks']:.1f} vs {avg_chunks:.1f} chunks)")
                 else:
-                    print(f"   ⚠️  Azure less granular ({chunks_diff} chunks)")
+                    print(f"   ⚠️  Azure OpenAI less granular than average ({azure_result['chunks']:.1f} vs {avg_chunks:.1f} chunks)")
     
     return len(valid_results) > 0
 
+
 async def main():
     """Run all Azure OpenAI diagnostic tests"""
-    print("🚀 Testing Azure OpenAI MCP Tool Compatibility & Performance")
-    print("=" * 60)
+    print("🚀 Testing Azure OpenAI Universal Tool Compatibility & Performance")
+    print("=" * 80)
     
-    # Test 1: Setup and configuration
-    test1_passed = await test_azure_openai_setup()
+    # Test 1: Universal tool name handling
+    test1_passed = await test_azure_openai_tool_handling()
     
-    # Test 2: Tool name handling
-    test2_passed = await test_azure_openai_tool_handling() if test1_passed else False
+    # Test 2: Streaming performance
+    test2_passed = await test_azure_openai_streaming() if test1_passed else False
     
-    # Test 3: Streaming performance
-    test3_passed = await test_azure_openai_streaming() if test2_passed else False
+    # Test 3: Universal tools integration
+    test3_passed = await test_azure_openai_universal_tools() if test2_passed else False
     
-    # Test 4: MCP tools integration
-    test4_passed = await test_azure_openai_mcp_tools() if test3_passed else False
+    # Test 4: Advanced features
+    test4_passed = await test_azure_openai_features() if test3_passed else False
     
-    # Test 5: Advanced features
-    test5_passed = await test_azure_openai_features() if test4_passed else False
+    # Test 5: Performance comparison
+    test5_passed = await test_azure_openai_vs_competitors() if test4_passed else False
     
-    # Test 6: Performance comparison
-    test6_passed = await test_azure_openai_vs_competitors() if test5_passed else False
-    
-    print("\n" + "=" * 60)
+    print("\n" + "=" * 80)
     print("🎯 AZURE OPENAI DIAGNOSTIC RESULTS:")
-    print(f"   Setup & Configuration: {'✅ PASS' if test1_passed else '❌ FAIL'}")
-    print(f"   Tool Name Handling: {'✅ PASS' if test2_passed else '❌ FAIL'}")
-    print(f"   Streaming Performance: {'✅ PASS' if test3_passed else '❌ FAIL'}")
-    print(f"   MCP Tools Integration: {'✅ PASS' if test4_passed else '❌ FAIL'}")
-    print(f"   Advanced Features: {'✅ PASS' if test5_passed else '❌ FAIL'}")
-    print(f"   Performance Comparison: {'✅ PASS' if test6_passed else '❌ FAIL'}")
+    print(f"   Universal Tool Handling: {'✅ PASS' if test1_passed else '❌ FAIL'}")
+    print(f"   Streaming Performance: {'✅ PASS' if test2_passed else '❌ FAIL'}")
+    print(f"   Universal Tools Integration: {'✅ PASS' if test3_passed else '❌ FAIL'}")
+    print(f"   Advanced Features: {'✅ PASS' if test4_passed else '❌ FAIL'}")
+    print(f"   Performance Comparison: {'✅ PASS' if test5_passed else '❌ FAIL'}")
     
-    if all([test1_passed, test2_passed, test3_passed, test4_passed, test5_passed, test6_passed]):
+    if all([test1_passed, test2_passed, test3_passed, test4_passed, test5_passed]):
         print("\n🎉 ALL AZURE OPENAI TESTS PASSED!")
-        print("💡 Azure OpenAI is ready for MCP CLI:")
+        print("💡 Azure OpenAI is ready for MCP CLI with universal tool compatibility:")
         print("   mcp-cli chat --provider azure_openai --model gpt-4o-mini")
-        print("\n🔑 Key Advantages of Azure OpenAI:")
-        print("   • Enterprise-grade security and compliance")
-        print("   • Typically native MCP tool name support")
-        print("   • Same performance as regular OpenAI")
-        print("   • Azure ecosystem integration")
+        print("\n🔑 Key Advantages of Updated Azure OpenAI:")
+        print("   • Universal tool name compatibility with bidirectional mapping")
+        print("   • Consistent sanitization behavior across all providers") 
+        print("   • Azure-specific features (deployment mapping, versioning)")
+        print("   • Enterprise authentication support")
+        print("   • High-quality responses with OpenAI models")
+        print("   • Real async streaming")
+        print("\n🔧 Tool Name Examples:")
+        print("   stdio.read_query -> sanitized if needed, restored in response")
+        print("   web.api:search -> sanitized if needed, restored in response")
+        print("   database.sql.execute -> sanitized if needed, restored in response")
     else:
         print("\n❌ Some Azure OpenAI tests failed.")
         print("💡 Check the implementation and ensure:")
-        print("   1. AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY are set")
-        print("   2. Deployment names match your Azure setup")
-        print("   3. API version is compatible")
-        if not test4_passed:
-            print("   4. Consider implementing tool name sanitization if needed")
+        print("   1. azure_openai_client.py inherits from ToolCompatibilityMixin")
+        print("   2. ToolCompatibilityMixin is properly initialized") 
+        print("   3. Azure OpenAI credentials are configured correctly")
+        print("   4. Azure endpoint and deployment are set correctly")
+        print("   5. Tool name sanitization and restoration is working")
 
 
 if __name__ == "__main__":

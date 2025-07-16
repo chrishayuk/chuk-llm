@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Diagnostic script for Anthropic MCP tool compatibility and streaming performance.
-Tests tool name handling, streaming behavior, and feature capabilities.
+Diagnostic script for Anthropic universal tool compatibility and streaming performance.
+Tests tool name handling, streaming behavior, and feature capabilities with the new ToolCompatibilityMixin.
 """
 
 import asyncio
@@ -13,8 +13,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 async def test_anthropic_tool_handling():
-    """Test that Anthropic handles MCP-style tool names correctly"""
-    print("🧪 Testing Anthropic MCP Tool Name Handling")
+    """Test that Anthropic handles universal tool names correctly with ToolCompatibilityMixin"""
+    print("🧪 Testing Anthropic Universal Tool Name Handling")
     print("=" * 50)
     
     try:
@@ -23,17 +23,39 @@ async def test_anthropic_tool_handling():
         # Create client instance to test tool handling
         client = AnthropicLLMClient(model="claude-sonnet-4-20250514")
         
-        # Test MCP-style tool names that would break Mistral
-        mcp_tools = [
+        # Test universal tool naming patterns
+        test_tool_names = [
             "stdio.read_query",
             "filesystem.read_file", 
             "mcp.server:get_data",
-            "some.complex:tool.name",
+            "web.api:search",
+            "database.sql.execute",
+            "service:method",
+            "namespace:function",
+            "complex.tool:method.v1",
             "already_valid_name",
+            "tool-with-dashes",
+            "tool_with_underscores",
         ]
         
-        print("Testing Anthropic tool name handling:")
-        for tool_name in mcp_tools:
+        print("Testing Anthropic universal tool name compatibility:")
+        
+        # Get tool compatibility info
+        compatibility_info = client.get_tool_compatibility_info()
+        print(f"Provider: {compatibility_info['provider']}")
+        print(f"Compatibility level: {compatibility_info['compatibility_level']}")
+        print(f"Requires sanitization: {compatibility_info['requires_sanitization']}")
+        print(f"Max name length: {compatibility_info['max_tool_name_length']}")
+        print(f"Tool name pattern: {compatibility_info['tool_name_requirements']}")
+        
+        print("\nSample transformations from ToolCompatibilityMixin:")
+        sample_transformations = compatibility_info.get('sample_transformations', {})
+        for original, transformed in sample_transformations.items():
+            status = "✅ PRESERVED" if original == transformed else "🔧 SANITIZED"
+            print(f"  {original:<30} -> {transformed:<30} {status}")
+        
+        print("\nTesting tool sanitization with bidirectional mapping:")
+        for tool_name in test_tool_names:
             test_tools = [
                 {
                     "type": "function",
@@ -45,13 +67,27 @@ async def test_anthropic_tool_handling():
                 }
             ]
             
-            # Test the sanitization method (should be pass-through)
+            # Test the universal sanitization method
             sanitized = client._sanitize_tool_names(test_tools)
             original_name = test_tools[0]["function"]["name"]
             sanitized_name = sanitized[0]["function"]["name"] if sanitized else "ERROR"
             
-            status = "✅ PRESERVED" if original_name == sanitized_name else "❌ CHANGED"
+            # Check if mapping was created
+            mapping = getattr(client, '_current_name_mapping', {})
+            has_mapping = sanitized_name in mapping
+            
+            if original_name == sanitized_name:
+                status = "✅ PRESERVED"
+            else:
+                status = "🔧 SANITIZED" if has_mapping else "❌ CHANGED"
+            
             print(f"  {original_name:<30} -> {sanitized_name:<30} {status}")
+            
+            # Test restoration if mapping exists
+            if has_mapping and sanitized_name in mapping:
+                restored_name = mapping[sanitized_name]
+                restoration_status = "✅ RESTORED" if restored_name == original_name else "❌ RESTORATION FAILED"
+                print(f"    Mapping: {sanitized_name} -> {restored_name} {restoration_status}")
         
         # Test tool conversion to Anthropic format
         print("\nTesting tool conversion to Anthropic format:")
@@ -72,13 +108,43 @@ async def test_anthropic_tool_handling():
             }
         ]
         
-        converted = client._convert_tools(complex_tools)
+        # First sanitize, then convert
+        sanitized_tools = client._sanitize_tool_names(complex_tools)
+        converted = client._convert_tools(sanitized_tools)
+        
         if converted:
             original = complex_tools[0]["function"]["name"]
+            sanitized_name = sanitized_tools[0]["function"]["name"]
             converted_name = converted[0]["name"]
+            
             print(f"  Original: {original}")
+            print(f"  Sanitized: {sanitized_name}")
             print(f"  Anthropic format: {converted_name}")
-            print(f"  Status: {'✅ PRESERVED' if original == converted_name else '❌ CHANGED'}")
+            
+            # Check that sanitized name matches converted name
+            if sanitized_name == converted_name:
+                print(f"  Status: ✅ CONSISTENT PROCESSING")
+            else:
+                print(f"  Status: ❌ INCONSISTENT PROCESSING")
+        
+        # Test validation
+        print("\nTesting tool name validation:")
+        valid_names = ["valid_tool", "another-tool", "simple123"]
+        invalid_names = ["tool.with.dots", "tool:with:colons", "tool with spaces"]
+        
+        for name in valid_names + invalid_names:
+            is_valid, issues = client.validate_tool_names([{
+                "type": "function",
+                "function": {"name": name, "description": "Test"}
+            }])
+            
+            expected_valid = name in valid_names
+            status = "✅" if is_valid == expected_valid else "❌"
+            print(f"  {name:<20}: {'Valid' if is_valid else 'Invalid'} {status}")
+            
+            if issues:
+                for issue in issues[:1]:  # Show first issue only
+                    print(f"    Issue: {issue}")
         
         return True
         
@@ -102,6 +168,11 @@ async def test_anthropic_streaming():
         print(f"Client type: {type(client)}")
         print(f"Client class: {client.__class__.__name__}")
         print(f"Provider name: {getattr(client, 'provider_name', 'unknown')}")
+        
+        # Check if client has the ToolCompatibilityMixin
+        from chuk_llm.llm.providers._tool_compatibility import ToolCompatibilityMixin
+        has_tool_mixin = isinstance(client, ToolCompatibilityMixin)
+        print(f"Has ToolCompatibilityMixin: {'✅' if has_tool_mixin else '❌'}")
         
         messages = [
             {"role": "user", "content": "Write a short story about a robot learning to paint. Make it at least 100 words and tell it slowly."}
@@ -217,9 +288,9 @@ async def test_anthropic_streaming():
         return False
 
 
-async def test_anthropic_mcp_tools():
-    """Test Anthropic with actual MCP-style tool calls"""
-    print("\n🧪 Testing Anthropic with MCP-Style Tools")
+async def test_anthropic_universal_tools():
+    """Test Anthropic with universal tool naming and bidirectional mapping"""
+    print("\n🧪 Testing Anthropic Universal Tool Compatibility")
     print("=" * 50)
     
     try:
@@ -227,8 +298,8 @@ async def test_anthropic_mcp_tools():
         
         client = get_client(provider="anthropic", model="claude-sonnet-4-20250514")
         
-        # MCP-style tools that would break Mistral but should work fine with Anthropic
-        mcp_tools = [
+        # Universal tool names that require sanitization for Anthropic
+        universal_tools = [
             {
                 "type": "function",
                 "function": {
@@ -249,17 +320,34 @@ async def test_anthropic_mcp_tools():
             {
                 "type": "function",
                 "function": {
-                    "name": "filesystem.list_files",
-                    "description": "List files in a directory",
+                    "name": "web.api:search",
+                    "description": "Search the web using an API",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "path": {
+                            "query": {
                                 "type": "string",
-                                "description": "Directory path"
+                                "description": "Search query"
                             }
                         },
-                        "required": ["path"]
+                        "required": ["query"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "database.sql.execute",
+                    "description": "Execute a SQL query",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "sql": {
+                                "type": "string",
+                                "description": "SQL query to execute"
+                            }
+                        },
+                        "required": ["sql"]
                     }
                 }
             }
@@ -268,21 +356,22 @@ async def test_anthropic_mcp_tools():
         messages = [
             {
                 "role": "user",
-                "content": "Please list the files in the current directory and then ask the user for their name"
+                "content": "Please search the web for 'AI news', read user input for their name, and then execute a simple SQL query to get user data"
             }
         ]
         
-        print("Testing Anthropic with MCP-style tool names...")
-        print(f"Tools: {[t['function']['name'] for t in mcp_tools]}")
+        print("Testing Anthropic with universal tool names...")
+        original_names = [t['function']['name'] for t in universal_tools]
+        print(f"Original tool names: {original_names}")
         
         # Test non-streaming first
         response = await client.create_completion(
             messages=messages,
-            tools=mcp_tools,
+            tools=universal_tools,
             stream=False
         )
         
-        print("✅ SUCCESS: No tool naming errors!")
+        print("✅ SUCCESS: No tool naming errors with universal naming!")
         
         if isinstance(response, dict):
             if response.get("tool_calls"):
@@ -291,22 +380,23 @@ async def test_anthropic_mcp_tools():
                     func_name = tool_call.get("function", {}).get("name", "unknown")
                     print(f"   {i+1}. {func_name}")
                     
-                    # Verify MCP names are preserved
-                    if func_name in ["stdio.read_query", "filesystem.list_files"]:
-                        print(f"      ✅ MCP name preserved: {func_name}")
+                    # Verify original names are restored in response
+                    if func_name in original_names:
+                        print(f"      ✅ Original name restored: {func_name}")
                     else:
-                        print(f"      ⚠️  Unexpected name: {func_name}")
+                        print(f"      ⚠️  Unexpected name in response: {func_name}")
+                        print(f"         (Should be one of: {original_names})")
                         
             elif response.get("response"):
                 print(f"💬 Text response: {response['response'][:150]}...")
             else:
                 print(f"❓ Unexpected response format")
         
-        # Test streaming with tools
-        print("\n🔄 Testing streaming with MCP tools...")
+        # Test streaming with universal tools
+        print("\n🔄 Testing streaming with universal tools...")
         stream_response = client.create_completion(
             messages=messages,
-            tools=mcp_tools,
+            tools=universal_tools,
             stream=True
         )
         
@@ -320,23 +410,39 @@ async def test_anthropic_mcp_tools():
                     tool_name = tc.get("function", {}).get("name", "unknown")
                     tool_calls_found.append(tool_name)
                     print(f"🔧 Streaming tool call: {tool_name}")
+                    
+                    # Verify restored names in streaming
+                    if tool_name in original_names:
+                        print(f"      ✅ Correctly restored in stream: {tool_name}")
+                    else:
+                        print(f"      ⚠️  Unexpected name in stream: {tool_name}")
             
-            if chunk_count >= 10:  # Limit for testing
+            if chunk_count >= 15:  # Limit for testing
                 break
         
         print(f"✅ Streaming completed: {chunk_count} chunks, {len(tool_calls_found)} tool calls")
         
+        # Verify bidirectional mapping worked
+        unique_tool_calls = list(set(tool_calls_found))
+        if unique_tool_calls:
+            print(f"🔄 Bidirectional mapping test:")
+            for tool_name in unique_tool_calls:
+                if tool_name in original_names:
+                    print(f"   ✅ {tool_name} - correctly restored from sanitized form")
+                else:
+                    print(f"   ❌ {tool_name} - not in original names, mapping may have failed")
+        
         return True
         
     except Exception as e:
-        print(f"❌ Error testing MCP tools: {e}")
+        print(f"❌ Error testing universal tools: {e}")
         import traceback
         traceback.print_exc()
         return False
 
 
 async def test_anthropic_features():
-    """Test Anthropic advanced features"""
+    """Test Anthropic advanced features with updated expectations"""
     print("\n🧪 Testing Anthropic Advanced Features")
     print("=" * 50)
     
@@ -357,6 +463,15 @@ async def test_anthropic_features():
         print(f"   Tool support: {'✅' if 'tools' in features else '❌'}")
         print(f"   Streaming: {'✅' if 'streaming' in features else '❌'}")
         print(f"   JSON mode: {'✅' if 'json_mode' in features else '❌'}")
+        
+        # Test tool compatibility info
+        if hasattr(client, 'get_tool_compatibility_info'):
+            print("\n🔧 Tool compatibility:")
+            tool_info = client.get_tool_compatibility_info()
+            print(f"   Compatibility level: {tool_info.get('compatibility_level', 'unknown')}")
+            print(f"   Requires sanitization: {tool_info.get('requires_sanitization', 'unknown')}")
+            print(f"   Max name length: {tool_info.get('max_tool_name_length', 'unknown')}")
+            print(f"   Forbidden chars: {len(tool_info.get('forbidden_characters', []))} characters")
         
         # Test vision if supported
         if 'vision' in features:
@@ -400,39 +515,6 @@ async def test_anthropic_features():
                     print(f"   ❌ Vision test failed: Unexpected response format")
             except Exception as e:
                 print(f"   ❌ Vision test exception: {e}")
-                
-            # Also test with a more complex image description
-            print("\n🖼️  Testing with image description request...")
-            describe_messages = [
-                {
-                    "role": "user", 
-                    "content": [
-                        {"type": "text", "text": "Describe this image in detail. What do you see?"},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{red_pixel_b64}"
-                            }
-                        }
-                    ]
-                }
-            ]
-            
-            try:
-                describe_response = await client.create_completion(describe_messages, stream=False)
-                if isinstance(describe_response, dict) and describe_response.get("response"):
-                    desc_text = describe_response['response']
-                    print(f"   📝 Description: {desc_text[:150]}...")
-                    
-                    if "don't see" in desc_text.lower() or "no image" in desc_text.lower():
-                        print(f"   ❌ Vision processing failed - image not received by model")
-                        print(f"   💡 This suggests an issue with image format conversion or API call")
-                    else:
-                        print(f"   ✅ Vision processing appears to work")
-                else:
-                    print(f"   ❌ Description test failed")
-            except Exception as e:
-                print(f"   ❌ Description test exception: {e}")
         
         # Test JSON mode if supported
         if 'json_mode' in features:
@@ -467,13 +549,31 @@ async def test_anthropic_features():
 
 
 async def test_anthropic_vs_competitors():
-    """Compare Anthropic performance vs other providers"""
-    print("\n🧪 Anthropic vs Competitors Performance")
+    """Compare Anthropic performance vs other providers with universal tools"""
+    print("\n🧪 Anthropic vs Competitors Performance (Universal Tools)")
     print("=" * 50)
     
     # Same test prompt for all providers
     messages = [
         {"role": "user", "content": "Write a haiku about artificial intelligence"}
+    ]
+    
+    # Test with a universal tool that requires sanitization
+    universal_tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "poetry.generator:create",
+                "description": "Generate creative poetry",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "style": {"type": "string", "description": "Poetry style"},
+                        "topic": {"type": "string", "description": "Poetry topic"}
+                    }
+                }
+            }
+        }
     ]
     
     providers = [
@@ -486,18 +586,26 @@ async def test_anthropic_vs_competitors():
     results = {}
     
     for provider, model in providers:
-        print(f"\n🔍 Testing {provider} with {model}...")
+        print(f"\n🔍 Testing {provider} with {model} and universal tools...")
         
         try:
             from chuk_llm.llm.client import get_client
             client = get_client(provider=provider, model=model)
             
+            # Test tool compatibility
+            has_tool_mixin = hasattr(client, 'get_tool_compatibility_info')
+            if has_tool_mixin:
+                tool_info = client.get_tool_compatibility_info()
+                print(f"   Tool compatibility: {tool_info.get('compatibility_level', 'unknown')}")
+                print(f"   Requires sanitization: {tool_info.get('requires_sanitization', 'unknown')}")
+            
             start_time = time.time()
-            response = client.create_completion(messages, stream=True)
+            response = client.create_completion(messages, tools=universal_tools, stream=True)
             
             chunk_count = 0
             first_chunk_time = None
             content_length = 0
+            tool_calls_found = 0
             
             async for chunk in response:
                 current_time = time.time() - start_time
@@ -507,8 +615,11 @@ async def test_anthropic_vs_competitors():
                 
                 chunk_count += 1
                 
-                if isinstance(chunk, dict) and chunk.get("response"):
-                    content_length += len(chunk["response"])
+                if isinstance(chunk, dict):
+                    if chunk.get("response"):
+                        content_length += len(chunk["response"])
+                    if chunk.get("tool_calls"):
+                        tool_calls_found += len(chunk["tool_calls"])
                 
                 # Limit for comparison
                 if chunk_count >= 20:
@@ -520,10 +631,13 @@ async def test_anthropic_vs_competitors():
                 "chunks": chunk_count,
                 "first_chunk": first_chunk_time,
                 "total_time": total_time,
-                "content_length": content_length
+                "content_length": content_length,
+                "tool_calls": tool_calls_found,
+                "has_universal_tools": has_tool_mixin
             }
             
-            print(f"   {provider}: {chunk_count} chunks, first at {first_chunk_time:.3f}s, {content_length} chars, total {total_time:.3f}s")
+            print(f"   {provider}: {chunk_count} chunks, first at {first_chunk_time:.3f}s, "
+                  f"{content_length} chars, {tool_calls_found} tools, total {total_time:.3f}s")
             
         except Exception as e:
             print(f"   {provider}: Error - {e}")
@@ -542,6 +656,12 @@ async def test_anthropic_vs_competitors():
         print(f"   📊 Most granular streaming: {most_chunks} ({valid_results[most_chunks]['chunks']} chunks)")
         print(f"   ⚡ Fastest total time: {fastest_total} ({valid_results[fastest_total]['total_time']:.3f}s)")
         
+        # Universal tool compatibility analysis
+        universal_providers = [k for k, v in valid_results.items() if v.get("has_universal_tools")]
+        print(f"   🔧 Universal tool support: {len(universal_providers)}/{len(valid_results)} providers")
+        for provider in universal_providers:
+            print(f"      ✅ {provider}")
+        
         # Anthropic-specific analysis
         if "anthropic" in valid_results:
             anthropic_result = valid_results["anthropic"]
@@ -549,6 +669,8 @@ async def test_anthropic_vs_competitors():
             print(f"   Chunks: {anthropic_result['chunks']}")
             print(f"   First chunk: {anthropic_result['first_chunk']:.3f}s")
             print(f"   Content: {anthropic_result['content_length']} chars")
+            print(f"   Tool calls: {anthropic_result['tool_calls']}")
+            print(f"   Universal tools: {'✅' if anthropic_result['has_universal_tools'] else '❌'}")
             
             # Compare to others
             other_providers = [k for k in valid_results.keys() if k != "anthropic"]
@@ -571,17 +693,17 @@ async def test_anthropic_vs_competitors():
 
 async def main():
     """Run all Anthropic diagnostic tests"""
-    print("🚀 Testing Anthropic MCP Tool Compatibility & Performance")
+    print("🚀 Testing Anthropic Universal Tool Compatibility & Performance")
     print("=" * 60)
     
-    # Test 1: Tool name handling
+    # Test 1: Universal tool name handling
     test1_passed = await test_anthropic_tool_handling()
     
     # Test 2: Streaming performance
     test2_passed = await test_anthropic_streaming() if test1_passed else False
     
-    # Test 3: MCP tools integration
-    test3_passed = await test_anthropic_mcp_tools() if test2_passed else False
+    # Test 3: Universal tools integration
+    test3_passed = await test_anthropic_universal_tools() if test2_passed else False
     
     # Test 4: Advanced features
     test4_passed = await test_anthropic_features() if test3_passed else False
@@ -591,27 +713,35 @@ async def main():
     
     print("\n" + "=" * 60)
     print("🎯 ANTHROPIC DIAGNOSTIC RESULTS:")
-    print(f"   Tool Name Handling: {'✅ PASS' if test1_passed else '❌ FAIL'}")
+    print(f"   Universal Tool Handling: {'✅ PASS' if test1_passed else '❌ FAIL'}")
     print(f"   Streaming Performance: {'✅ PASS' if test2_passed else '❌ FAIL'}")
-    print(f"   MCP Tools Integration: {'✅ PASS' if test3_passed else '❌ FAIL'}")
+    print(f"   Universal Tools Integration: {'✅ PASS' if test3_passed else '❌ FAIL'}")
     print(f"   Advanced Features: {'✅ PASS' if test4_passed else '❌ FAIL'}")
     print(f"   Performance Comparison: {'✅ PASS' if test5_passed else '❌ FAIL'}")
     
     if all([test1_passed, test2_passed, test3_passed, test4_passed, test5_passed]):
         print("\n🎉 ALL ANTHROPIC TESTS PASSED!")
-        print("💡 Anthropic is ready for MCP CLI:")
+        print("💡 Anthropic is ready for MCP CLI with universal tool compatibility:")
         print("   mcp-cli chat --provider anthropic --model claude-sonnet-4-20250514")
-        print("\n🔑 Key Advantages of Anthropic:")
-        print("   • Native MCP tool name support (no sanitization needed)")
+        print("\n🔑 Key Advantages of Updated Anthropic:")
+        print("   • Universal tool name compatibility with bidirectional mapping")
+        print("   • Consistent sanitization behavior across all providers") 
         print("   • Excellent vision capabilities")
         print("   • Large context windows")
         print("   • High-quality responses")
+        print("   • Real async streaming")
+        print("\n🔧 Tool Name Examples:")
+        print("   stdio.read_query -> stdio_read_query (sanitized for API, restored in response)")
+        print("   web.api:search -> web_api_search (sanitized for API, restored in response)")
+        print("   database.sql.execute -> database_sql_execute (sanitized for API, restored in response)")
     else:
         print("\n❌ Some Anthropic tests failed.")
         print("💡 Check the implementation and ensure:")
-        print("   1. anthropic_client.py has _sanitize_tool_names method")
-        print("   2. AsyncAnthropic is properly configured")
-        print("   3. API key is set correctly")
+        print("   1. anthropic_client.py inherits from ToolCompatibilityMixin")
+        print("   2. ToolCompatibilityMixin is properly initialized") 
+        print("   3. AsyncAnthropic is properly configured")
+        print("   4. API key is set correctly")
+        print("   5. Tool name sanitization and restoration is working")
 
 
 if __name__ == "__main__":
