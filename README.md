@@ -52,6 +52,11 @@ claude_response = ask_claude_sync("Write a Python function")
 groq_response = ask_groq_sync("What's the weather like?")
 watsonx_response = ask_watsonx_sync("Write enterprise Python code")
 
+# ✨ NEW: Dynamic convenience functions for discovered models
+from chuk_llm import ask_ollama_llama3_2_sync, ask_ollama_gemma3_sync, ask_ollama_qwen3_sync
+local_response = ask_ollama_llama3_2_sync("Write Python code")
+gemma_response = ask_ollama_gemma3_sync("Explain machine learning")
+
 # Configure once, use everywhere
 configure(provider="azure_openai", temperature=0.7)
 response = ask_sync("Write a creative story opening")
@@ -74,6 +79,12 @@ chuk-llm ask_claude "Explain quantum computing"
 chuk-llm ask_gpt "Write a haiku about code"
 chuk-llm ask_azure "Deploy models to Azure"
 
+# ✨ NEW: Convenience functions for discovered models
+chuk-llm ask_ollama_gemma3 "Hello world"
+chuk-llm ask_ollama_mistral_small_latest "Tell me a joke"
+chuk-llm ask_ollama_qwen3_latest "Explain Python"
+chuk-llm stream_ollama_llama3_2 "Write a long explanation"
+
 # General ask command with provider selection
 chuk-llm ask "What is machine learning?" --provider azure_openai --model gpt-4o-mini
 
@@ -84,22 +95,24 @@ chuk-llm ask "List 3 Python libraries" --json --provider azure_openai
 chuk-llm providers              # Show all available providers
 chuk-llm models azure_openai    # Show models for Azure OpenAI
 chuk-llm test azure_openai      # Test Azure connection
-chuk-llm discover ollama        # Discover new Ollama models
+chuk-llm discover ollama        # Discover new Ollama models ✨ NEW
 
 # Configuration and diagnostics
 chuk-llm config                 # Show current configuration
-chuk-llm functions              # List all auto-generated functions
+chuk-llm functions              # List all auto-generated functions ✨ NEW
 chuk-llm aliases                # Show available global aliases
 chuk-llm help                   # Comprehensive help
 
 # Use with uvx for zero-install usage
 uvx chuk-llm ask_azure "What is Azure OpenAI?"
+uvx chuk-llm ask_ollama_gemma3 "Hello"  # ✨ NEW
 uvx chuk-llm providers
 ```
 
 #### CLI Features
 
 - **🎯 Global Aliases**: Quick commands like `ask_granite`, `ask_claude`, `ask_gpt`, `ask_azure`
+- **✨ Dynamic Convenience Functions**: Auto-generated functions like `ask_ollama_gemma3`, `ask_ollama_mistral_small_latest`
 - **🌊 Real-time Streaming**: See responses as they're generated
 - **🔧 Provider Management**: Test, discover, and configure providers
 - **📊 Rich Output**: Beautiful tables and formatting (with `[cli]` extra)
@@ -134,9 +147,14 @@ async def main():
     groq_response = await ask_groq("What's the weather like?")
     watsonx_response = await ask_watsonx("Generate enterprise documentation")
     
+    # ✨ NEW: Dynamic async functions for discovered models
+    from chuk_llm import ask_ollama_llama3_2, ask_ollama_gemma3, stream_ollama_qwen3
+    local_response = await ask_ollama_llama3_2("Write Python code")
+    gemma_response = await ask_ollama_gemma3("Explain AI")
+    
     # Real-time streaming (token by token)
     print("Streaming: ", end="", flush=True)
-    async for chunk in stream("Write a haiku about coding"):
+    async for chunk in stream_ollama_qwen3("Write a haiku about coding"):
         print(chunk, end="", flush=True)
     
     # Conversations with memory
@@ -155,6 +173,83 @@ async def main():
     # 3-7x faster than sequential!
 
 asyncio.run(main())
+```
+
+### 🔍 Dynamic Model Discovery for Ollama - ✨ ENHANCED!
+
+ChukLLM automatically discovers and generates functions for Ollama models in real-time. **NEW**: Now with seamless CLI integration!
+
+```python
+# Start Ollama with some models
+# ollama pull llama3.2
+# ollama pull qwen2.5:14b
+# ollama pull deepseek-coder:6.7b
+# ollama pull mistral-small:latest
+
+# ChukLLM automatically discovers them and generates functions!
+from chuk_llm import (
+    ask_ollama_llama3_2_sync,          # Auto-generated!
+    ask_ollama_qwen2_5_14b_sync,       # Auto-generated!
+    ask_ollama_deepseek_coder_6_7b_sync, # Auto-generated!
+    ask_ollama_mistral_small_latest_sync  # Auto-generated!
+)
+
+# Use immediately without any configuration
+response = ask_ollama_llama3_2_sync("Write a Python function to sort a list")
+
+# Trigger discovery manually to refresh available models
+from chuk_llm.api.providers import trigger_ollama_discovery_and_refresh
+new_functions = trigger_ollama_discovery_and_refresh()
+print(f"Discovered {len(new_functions)} new functions!")
+
+# ✨ NEW: CLI discovery with instant function availability
+# chuk-llm discover ollama
+# chuk-llm ask_ollama_mistral_small_latest "Hello"  # Works immediately!
+# chuk-llm functions  # See all available functions
+```
+
+#### Discovery Features
+
+- **🔍 Real-time Detection**: Automatically finds new Ollama models as they're pulled
+- **⚡ Instant Functions**: Generates `ask_*` and `stream_*` functions immediately
+- **🖥️ CLI Integration**: New models work instantly in CLI with convenience syntax
+- **🧠 Smart Caching**: Remembers discovered models between sessions
+- **📊 Environment Controls**: Fine-grained control over discovery behavior
+- **🔄 Live Updates**: Refreshes available models without restart
+
+#### Discovery Environment Controls
+
+```bash
+# Enable/disable discovery globally
+export CHUK_LLM_DISCOVERY_ENABLED=true
+
+# Provider-specific discovery control
+export CHUK_LLM_OLLAMA_DISCOVERY=true
+export CHUK_LLM_AUTO_DISCOVER=true
+
+# Performance tuning
+export CHUK_LLM_DISCOVERY_TIMEOUT=5
+export CHUK_LLM_DISCOVERY_CACHE_TIMEOUT=300
+```
+
+### Discovery Integration Examples
+
+```python
+# Example: Pull a new model and use immediately
+# Terminal 1: ollama pull phi3:latest
+# Terminal 2: Python code (no restart needed!)
+
+from chuk_llm.api.providers import trigger_ollama_discovery_and_refresh
+
+# Refresh to pick up new model
+trigger_ollama_discovery_and_refresh()
+
+# New function is now available!
+from chuk_llm import ask_ollama_phi3_latest_sync
+response = ask_ollama_phi3_latest_sync("Explain quantum computing")
+
+# Or use via CLI immediately:
+# chuk-llm ask_ollama_phi3_latest "Explain quantum computing"
 ```
 
 ### 🧠 Intelligent System Prompt Generation - NEW!
@@ -218,36 +313,6 @@ response = ask_groq_sync("Explain quantum physics", tools=tools)
 from chuk_llm import ask_watsonx_sync
 response = ask_watsonx_sync("Explain quantum physics", tools=tools)
 # System prompt: "You are an enterprise AI assistant with function calling capabilities. Provide professional, accurate responses..."
-```
-
-### 🔍 Dynamic Model Discovery for Ollama - NEW!
-
-ChukLLM automatically discovers and generates functions for Ollama models in real-time:
-
-```python
-# Start Ollama with some models
-# ollama pull llama3.2
-# ollama pull qwen2.5:14b
-# ollama pull deepseek-coder:6.7b
-
-# ChukLLM automatically discovers them and generates functions!
-from chuk_llm import (
-    ask_ollama_llama3_2_sync,          # Auto-generated!
-    ask_ollama_qwen2_5_14b_sync,       # Auto-generated!
-    ask_ollama_deepseek_coder_6_7b_sync # Auto-generated!
-)
-
-# Use immediately without any configuration
-response = ask_ollama_llama3_2_sync("Write a Python function to sort a list")
-
-# Trigger discovery manually to refresh available models
-from chuk_llm.api.providers import trigger_ollama_discovery_and_refresh
-new_functions = trigger_ollama_discovery_and_refresh()
-print(f"Discovered {len(new_functions)} new functions!")
-
-# CLI discovery
-# chuk-llm discover ollama
-# chuk-llm functions
 ```
 
 ### 🎯 Automatic Session Tracking
@@ -314,24 +379,34 @@ async with conversation(resume_from=conversation_id) as chat:
     # AI remembers your background!
 ```
 
-### 103+ Auto-Generated Functions
+### 150+ Auto-Generated Functions ✨ EXPANDED
 
-ChukLLM automatically creates functions for every provider and model, including dynamically discovered ones:
+ChukLLM automatically creates functions for every provider and model, **including dynamically discovered ones**:
 
 ```python
 # Base provider functions
 from chuk_llm import ask_openai, ask_azure_openai, ask_anthropic, ask_groq, ask_ollama, ask_watsonx
 
 # Model-specific functions (auto-generated from config + discovery)
-from chuk_llm import ask_openai_gpt4o, ask_azure_openai_gpt4o, ask_claude_sonnet, ask_ollama_llama3_2, ask_watsonx_granite
+from chuk_llm import ask_openai_gpt4o, ask_azure_openai_gpt4o, ask_claude_sonnet, ask_watsonx_granite
+
+# ✨ NEW: Dynamically discovered functions (auto-generated from Ollama)
+from chuk_llm import (
+    ask_ollama_llama3_2,              # Discovered from ollama pull llama3.2
+    ask_ollama_mistral_small_latest,  # Discovered from ollama pull mistral-small:latest
+    ask_ollama_gemma3,                # Discovered from ollama pull gemma3
+    ask_ollama_qwen3_latest,          # Discovered from ollama pull qwen3:latest
+    stream_ollama_phi3,               # Stream version auto-generated too!
+)
 
 # All with sync, async, and streaming variants!
 from chuk_llm import (
-    ask_openai_sync,          # Synchronous
-    ask_azure_openai_sync,    # Azure OpenAI sync
-    stream_anthropic,         # Async streaming  
-    ask_groq_sync,           # Sync version
-    ask_ollama_llama3_2_sync # Auto-discovered local model
+    ask_openai_sync,                  # Synchronous
+    ask_azure_openai_sync,            # Azure OpenAI sync
+    stream_anthropic,                 # Async streaming  
+    ask_groq_sync,                    # Sync version
+    ask_ollama_llama3_2_sync,         # Auto-discovered local model (sync)
+    stream_ollama_mistral_small_latest # Auto-discovered streaming function
 )
 ```
 
@@ -367,14 +442,14 @@ asyncio.run(performance_demo())
 
 ## 🌟 Why ChukLLM?
 
-✅ **103+ Auto-Generated Functions** - Every provider & model gets functions  
+✅ **150+ Auto-Generated Functions** - Every provider & model + discovered models  
 ✅ **3-7x Performance Boost** - Concurrent requests vs sequential  
 ✅ **Real-time Streaming** - Token-by-token output as it's generated  
 ✅ **Memory Management** - Stateful conversations with context  
 ✅ **Automatic Session Tracking** - Zero-config usage analytics & cost monitoring  
-✅ **Dynamic Model Discovery** - Automatically detect and generate functions for new models  
+✅ **✨ Dynamic Model Discovery** - Automatically detect and generate functions for new models  
 ✅ **Intelligent System Prompts** - Provider-optimized prompts with tool integration  
-✅ **Powerful CLI** - Terminal access with streaming and discovery  
+✅ **✨ Enhanced CLI** - Terminal access with streaming, discovery, and convenience functions  
 ✅ **Production Ready** - Error handling, retries, connection pooling  
 ✅ **Developer Friendly** - Simple sync for scripts, powerful async for apps  
 
@@ -447,7 +522,7 @@ All major LLM providers are included by default. Optional dependencies are only 
 # ✅ Google Gemini (2.0 Flash, 1.5 Pro)
 # ✅ Groq (Llama models with ultra-fast inference)
 # ✅ Perplexity (Real-time web search)
-# ✅ Ollama (Local models with dynamic discovery)
+# ✅ Ollama (Local models with dynamic discovery) ✨ ENHANCED
 # ✅ IBM watsonx & Granite (Enterprise models)
 # ✅ Mistral AI
 ```
@@ -461,7 +536,7 @@ All major LLM providers are included by default. Optional dependencies are only 
 - **Google Gemini** - Gemini 2.0 Flash, Gemini 1.5 Pro  
 - **Groq** - Lightning-fast inference with Llama models
 - **Perplexity** - Real-time web search with Sonar models
-- **Ollama** - Local model deployment with dynamic discovery
+- **Ollama** - Local model deployment with **✨ dynamic discovery and CLI integration**
 - **IBM Watson** - Enterprise Granite models with SOC2 compliance
 - **Mistral AI** - Efficient European LLM models
 
@@ -478,8 +553,8 @@ All major LLM providers are included by default. Optional dependencies are only 
 
 ### Advanced Features
 - **🧠 Intelligent System Prompts** - Provider-optimized prompt generation
-- **🔍 Dynamic Model Discovery** - Automatic detection of new models (Ollama, HuggingFace, etc.)
-- **🖥️ Powerful CLI** - Terminal interface with streaming and rich formatting
+- **✨ Dynamic Model Discovery** - Automatic detection of new models with seamless integration
+- **🖥️ Enhanced CLI** - Terminal interface with streaming, discovery, and convenience functions
 - **Vision Support** - Image analysis across compatible providers
 - **JSON Mode** - Structured output generation
 - **Real-time Web Search** - Live information retrieval with citations
@@ -497,13 +572,17 @@ All major LLM providers are included by default. Optional dependencies are only 
 - **📊 Built-in Utilities** - Summarize, extract key points, get statistics
 - **🎯 Stateless Context** - Add context to one-off questions without state
 
-### Dynamic Discovery Features
+### ✨ Enhanced Dynamic Discovery Features
 - **🔍 Real-time Model Detection** - Automatically discover new Ollama models
 - **⚡ Function Generation** - Create provider functions on-demand
 - **🧠 Capability Inference** - Automatically detect model features and limitations
 - **📦 Universal Discovery** - Support for multiple discovery sources (Ollama, HuggingFace, etc.)
 - **🔄 Cache Management** - Intelligent caching with automatic refresh
 - **📊 Discovery Analytics** - Statistics and insights about discovered models
+- **🖥️ CLI Integration** - Discovered models work instantly in CLI with convenience syntax
+- **🎯 Environment Controls** - Fine-grained control over discovery behavior
+- **⚡ Live Updates** - Refresh available models without restart
+- **🔧 Provider Integration** - Discovered models work with all chuk_llm APIs
 
 ## 🖥️ CLI Guide
 
@@ -517,6 +596,12 @@ chuk-llm ask_gpt "Write a haiku about programming"
 chuk-llm ask_azure "Deploy models to Azure"
 chuk-llm ask_llama "What is machine learning?"
 
+# ✨ NEW: Convenience functions for discovered models
+chuk-llm ask_ollama_gemma3 "Hello world"
+chuk-llm ask_ollama_mistral_small_latest "Tell me a joke"
+chuk-llm ask_ollama_qwen3_latest "Explain Python"
+chuk-llm stream_ollama_llama3_2 "Write a long explanation"
+
 # General ask with provider selection
 chuk-llm ask "Your question" --provider azure_openai --model gpt-4o-mini
 
@@ -524,22 +609,25 @@ chuk-llm ask "Your question" --provider azure_openai --model gpt-4o-mini
 chuk-llm ask "List 3 Python libraries" --json --provider azure_openai
 ```
 
-### Provider Management
+### Discovery and Provider Management
 
 ```bash
 # List all available providers
 chuk-llm providers
 
-# Show models for a specific provider
+# Show models for a specific provider (includes discovered models)
 chuk-llm models azure_openai
-chuk-llm models anthropic
+chuk-llm models ollama
 
 # Test provider connection
 chuk-llm test azure_openai
 chuk-llm test ollama
 
-# Discover new models (especially useful for Ollama)
+# ✨ NEW: Discover new models (especially useful for Ollama)
 chuk-llm discover ollama
+
+# ✨ NEW: List all available functions (includes discovered ones)
+chuk-llm functions
 ```
 
 ### Configuration and Diagnostics
@@ -548,7 +636,7 @@ chuk-llm discover ollama
 # Show current configuration
 chuk-llm config
 
-# List all auto-generated functions
+# ✨ NEW: List all auto-generated functions (updates with discovery)
 chuk-llm functions
 
 # Show global aliases
@@ -563,6 +651,7 @@ chuk-llm help
 ```bash
 # Verbose mode (show provider details)
 chuk-llm ask_claude "Hello" --verbose
+chuk-llm ask_ollama_gemma3 "Hello" --verbose  # ✨ NEW
 
 # Quiet mode (minimal output)
 chuk-llm providers --quiet
@@ -576,14 +665,16 @@ chuk-llm ask "Question" --provider azure_openai --no-stream
 ```bash
 # Use without installing globally
 uvx chuk-llm ask_azure "What is Azure OpenAI?"
+uvx chuk-llm ask_ollama_gemma3 "Hello"  # ✨ NEW
 uvx chuk-llm providers
-uvx chuk-llm discover ollama
+uvx chuk-llm discover ollama  # ✨ NEW
 uvx chuk-llm test azure_openai
 ```
 
-### CLI Features
+### ✨ Enhanced CLI Features
 
 - **🎯 Global Aliases**: Pre-configured shortcuts for popular models
+- **⚡ Dynamic Convenience Functions**: Auto-generated functions like `ask_ollama_gemma3`
 - **🌊 Real-time Streaming**: See responses as they're generated
 - **🔧 Provider Testing**: Verify connections and configurations
 - **🔍 Model Discovery**: Find and use new Ollama models instantly
@@ -591,6 +682,7 @@ uvx chuk-llm test azure_openai
 - **⚡ Fast Feedback**: Quick responses and error reporting
 - **🎨 Output Control**: Verbose, quiet, and no-stream modes
 - **🔄 Function Listing**: See all available auto-generated functions
+- **🎯 Smart Error Messages**: Helpful suggestions when functions don't exist
 
 ## 🚀 Quick Start
 
@@ -608,12 +700,16 @@ response = ask_sync("Tell me a joke")
 print(response)
 
 # Provider-specific functions (including auto-discovered Ollama models)
-from chuk_llm import ask_openai_sync, ask_azure_openai_sync, ask_claude_sync, ask_ollama_llama3_2_sync, ask_watsonx_sync
+from chuk_llm import (
+    ask_openai_sync, ask_azure_openai_sync, ask_claude_sync, ask_watsonx_sync,
+    ask_ollama_llama3_2_sync, ask_ollama_gemma3_sync  # ✨ Auto-discovered!
+)
 openai_joke = ask_openai_sync("Tell me a dad joke")
 azure_explanation = ask_azure_openai_sync("Explain Azure security features")
 claude_explanation = ask_claude_sync("Explain quantum computing")
 local_response = ask_ollama_llama3_2_sync("Write Python code to read a CSV")
 enterprise_response = ask_watsonx_sync("Generate enterprise security documentation")
+gemma_response = ask_ollama_gemma3_sync("Explain machine learning")  # ✨ Auto-discovered!
 ```
 
 ### Async Usage
@@ -626,9 +722,13 @@ async def main():
     # Basic async call
     response = await ask("Hello!")
     
+    # ✨ NEW: Dynamic async functions for discovered models
+    from chuk_llm import ask_ollama_gemma3, stream_ollama_qwen3
+    gemma_response = await ask_ollama_gemma3("Explain AI")
+    
     # Real-time streaming
     print("Streaming: ", end="", flush=True)
-    async for chunk in stream("Write a haiku about coding"):
+    async for chunk in stream_ollama_qwen3("Write a haiku about coding"):
         print(chunk, end="", flush=True)
     
     # Conversations with memory
@@ -722,8 +822,12 @@ export CHUK_LLM_DISABLE_SESSIONS="false"  # Set to "true" to disable
 export SESSION_PROVIDER="memory"  # or "redis"
 export SESSION_REDIS_URL="redis://localhost:6379/0"
 
-# Discovery settings
-export CHUK_LLM_DISCOVERY_CACHE_TIMEOUT="300"  # Cache timeout in seconds
+# ✨ NEW: Discovery settings
+export CHUK_LLM_DISCOVERY_ENABLED="true"       # Enable discovery globally
+export CHUK_LLM_OLLAMA_DISCOVERY="true"        # Enable Ollama discovery
+export CHUK_LLM_AUTO_DISCOVER="true"           # Enable auto-discovery
+export CHUK_LLM_DISCOVERY_TIMEOUT="5"          # Discovery timeout (seconds)
+export CHUK_LLM_DISCOVERY_CACHE_TIMEOUT="300"  # Cache timeout (seconds)
 ```
 
 ### Simple API Configuration
@@ -851,7 +955,7 @@ import chuk_llm
 # Discover available providers and models (including discovered ones)
 chuk_llm.show_providers()
 
-# See all auto-generated functions (updates with discovery)
+# ✨ NEW: See all auto-generated functions (updates with discovery)
 chuk_llm.show_functions()
 
 # Get comprehensive diagnostics (including session info)
@@ -862,10 +966,15 @@ from chuk_llm import test_connection_sync
 result = test_connection_sync("azure_openai")
 print(f"✅ {result['provider']}: {result['duration']:.2f}s")
 
-# Trigger Ollama discovery and see new functions
+# ✨ NEW: Trigger Ollama discovery and see new functions
 from chuk_llm.api.providers import trigger_ollama_discovery_and_refresh
 new_functions = trigger_ollama_discovery_and_refresh()
 print(f"🔍 Generated {len(new_functions)} new Ollama functions")
+
+# ✨ NEW: Environment controls for discovery
+from chuk_llm.api.providers import disable_discovery, enable_discovery
+disable_discovery("ollama")  # Disable Ollama discovery
+enable_discovery("ollama")   # Re-enable Ollama discovery
 ```
 
 ## 🌐 Provider Models
@@ -913,6 +1022,51 @@ ask_azure_openai_gpt35()     # → Your gpt-3.5-turbo deployment
 - **Llama 3.1** - llama-3.1-70b-versatile, llama-3.1-8b-instant
 - **Mixtral** - mixtral-8x7b-32768
 
+### ✨ Ollama (Local Models with Dynamic Discovery)
+Ollama provides local model deployment with **automatic discovery and function generation**:
+
+#### Static Models (Configured)
+- **llama3.3** - Latest Llama 3.3 model
+- **qwen3** - Qwen 3 series
+- **granite3.3** - IBM Granite 3.3
+- **mistral** - Mistral base model
+- **gemma3** - Google Gemma 3
+- **phi3** - Microsoft Phi-3
+- **codellama** - Code-specialized Llama
+
+#### ✨ Dynamic Discovery Examples
+When you pull new models, ChukLLM automatically discovers them:
+
+```bash
+# Pull new models in Ollama
+ollama pull llama3.2
+ollama pull mistral-small:latest
+ollama pull qwen2.5:14b
+ollama pull deepseek-coder:6.7b
+ollama pull phi3:latest
+```
+
+ChukLLM automatically generates functions:
+```python
+# These functions are auto-generated after discovery:
+ask_ollama_llama3_2_sync()
+ask_ollama_mistral_small_latest_sync()
+ask_ollama_qwen2_5_14b_sync()
+ask_ollama_deepseek_coder_6_7b_sync()
+ask_ollama_phi3_latest_sync()
+
+# And CLI commands work immediately:
+# chuk-llm ask_ollama_llama3_2 "Hello"
+# chuk-llm ask_ollama_mistral_small_latest "Write code"
+```
+
+#### Discovery Features
+- **🔍 Real-time Detection**: Automatically finds new models as they're pulled
+- **⚡ Instant Generation**: Creates functions immediately without restart
+- **🖥️ CLI Integration**: New models work instantly in CLI
+- **🧠 Smart Naming**: Converts model names to valid function names
+- **🔄 Live Updates**: Refreshes available models without configuration changes
+
 ### IBM watsonx & Granite 🏢
 IBM's enterprise-grade AI models optimized for business applications with 131K context length:
 
@@ -944,4 +1098,5 @@ ChukLLM provides convenient aliases for IBM watsonx models:
 ask_watsonx_granite()  # → ibm/granite-3-3-8b-instruct
 ask_watsonx_vision()   # → ibm/granite-vision-3-2-2b-instruct  
 ask_watsonx_llama4()   # → meta-llama/llama-4-maverick-17b-128e-instruct-fp8
-ask_watsonx_mistral()  # → mistralai/mistr
+ask_watsonx_mistral()  # → mistralai/mistral-large-2
+```
