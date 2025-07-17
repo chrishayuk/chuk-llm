@@ -1,4 +1,4 @@
-# chuk_llm/llm/providers/groq_client.py - FIXED WITH ENHANCED CONTENT EXTRACTION
+# chuk_llm/llm/providers/groq_client.py - FIXED VERSION FOR STREAMING DUPLICATION
 """
 Groq chat-completion adapter with unified configuration integration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -6,10 +6,11 @@ Enhanced wrapper around `groq` SDK that gets all capabilities from
 unified YAML configuration and includes universal tool name compatibility.
 
 CRITICAL FIXES:
-1. Enhanced content extraction that properly handles tool-only responses
-2. Reduced noisy warnings for normal tool-calling behavior
-3. Better logging for successful tool extraction
-4. Improved error handling and debugging information
+1. FIXED tool call duplication in streaming by tracking yielded signatures
+2. Enhanced content extraction that properly handles tool-only responses
+3. Reduced noisy warnings for normal tool-calling behavior
+4. Better logging for successful tool extraction
+5. Improved error handling and debugging information
 """
 from __future__ import annotations
 
@@ -34,6 +35,9 @@ class GroqAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
     """
     Configuration-aware adapter around `groq` SDK that gets all capabilities
     from YAML configuration and includes universal tool name compatibility.
+    
+    CRITICAL FIX: Eliminates tool call duplication in streaming by tracking
+    what has already been yielded and avoiding duplicate tool calls.
     
     Uses universal tool name compatibility system to handle any naming convention:
     - stdio.read_query -> stdio_read_query (if needed)
@@ -90,6 +94,7 @@ class GroqAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
                     "openai_compatible": True,
                     "function_calling_notes": "May require retry fallbacks for complex tool schemas",
                     "model_family": self._detect_model_family(),
+                    "duplication_fix": "enabled",  # NEW: Indicates duplication fix is active
                 },
                 # Universal tool compatibility info
                 **tool_compatibility,
@@ -442,6 +447,9 @@ class GroqAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
         """
         Configuration-aware completion with universal tool name compatibility.
         
+        CRITICAL FIX: Now properly handles tool call duplication in streaming
+        by tracking what has been yielded and preventing duplicate emissions.
+        
         Uses universal tool name compatibility system to handle any naming convention:
         - stdio.read_query -> stdio_read_query (sanitized and restored)
         - web.api:search -> web_api_search (sanitized and restored)
@@ -478,7 +486,10 @@ class GroqAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
         **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Real streaming using AsyncGroq with universal tool name restoration.
+        CRITICAL FIX: Real streaming using AsyncGroq with FIXED tool call duplication prevention.
+        
+        The key fix: Track tool call signatures that have been yielded to prevent
+        emitting the same tool call multiple times across different chunks.
         """
         try:
             log.debug(f"Starting Groq streaming for model: {self.model}")
@@ -499,54 +510,149 @@ class GroqAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
                 **kwargs
             )
             
+            # CRITICAL FIX: Tool call accumulation WITH duplication prevention
+            accumulated_tool_calls = {}  # {index: {id, name, arguments}}
+            yielded_tool_signatures = set()  # Track what we've already yielded
             chunk_count = 0
-            # Yield chunks immediately as they arrive from Groq
+            total_content = ""
+            
+            # Stream processing with accumulation and duplication prevention
             async for chunk in response_stream:
                 chunk_count += 1
                 
-                if chunk.choices and chunk.choices[0].delta:
-                    delta = chunk.choices[0].delta
-                    
-                    # Extract content and tool calls
-                    content = delta.content or ""
-                    tool_calls = []
-                    
-                    # Handle tool calls with universal name restoration
-                    if hasattr(delta, "tool_calls") and delta.tool_calls:
-                        for tc in delta.tool_calls:
-                            try:
-                                if hasattr(tc, 'function') and tc.function:
-                                    tool_calls.append({
-                                        "id": getattr(tc, 'id', f"call_{uuid.uuid4().hex[:8]}"),
-                                        "type": "function",
-                                        "function": {
-                                            "name": getattr(tc.function, 'name', ''),
-                                            "arguments": getattr(tc.function, 'arguments', '') or ""
+                content = ""
+                new_complete_tools = []  # Only NEW complete tools for this chunk
+                
+                try:
+                    if chunk.choices and chunk.choices[0].delta:
+                        delta = chunk.choices[0].delta
+                        
+                        # Handle content
+                        if delta.content:
+                            content = str(delta.content)
+                            total_content += content
+                        
+                        # CRITICAL FIX: Handle tool calls with proper accumulation
+                        if hasattr(delta, "tool_calls") and delta.tool_calls:
+                            for tc in delta.tool_calls:
+                                try:
+                                    # Get tool call index (Groq uses same pattern as OpenAI)
+                                    tc_index = getattr(tc, 'index', 0)
+                                    
+                                    # Initialize accumulator for this tool call if needed
+                                    if tc_index not in accumulated_tool_calls:
+                                        accumulated_tool_calls[tc_index] = {
+                                            "id": getattr(tc, 'id', f"call_{uuid.uuid4().hex[:8]}"),
+                                            "name": "",
+                                            "arguments": ""
                                         }
-                                    })
-                            except Exception as e:
-                                log.debug(f"Error processing Groq streaming tool call: {e}")
-                                continue
-                    
-                    # Create result
-                    result = {
-                        "response": content,
-                        "tool_calls": tool_calls,
-                    }
-                    
-                    # CRITICAL: Restore tool names using universal restoration
-                    if name_mapping and tool_calls:
-                        result = self._restore_tool_names_in_response(result, name_mapping)
-                    
-                    # Only yield if we have actual content or tool calls
-                    if content or tool_calls:
-                        yield result
+                                    
+                                    # Accumulate function data
+                                    if hasattr(tc, 'function') and tc.function:
+                                        if hasattr(tc.function, 'name') and tc.function.name:
+                                            accumulated_tool_calls[tc_index]["name"] += tc.function.name
+                                        
+                                        if hasattr(tc.function, 'arguments') and tc.function.arguments:
+                                            accumulated_tool_calls[tc_index]["arguments"] += tc.function.arguments
+                                        
+                                        # Update ID if provided in this chunk
+                                        if hasattr(tc, 'id') and tc.id:
+                                            accumulated_tool_calls[tc_index]["id"] = tc.id
+                                
+                                except Exception as e:
+                                    log.debug(f"Error processing Groq streaming tool call chunk: {e}")
+                                    continue
+                
+                except Exception as chunk_error:
+                    log.warning(f"Error processing Groq chunk {chunk_count}: {chunk_error}")
+                    content = ""
+                
+                # CRITICAL FIX: Only yield NEW complete tool calls that haven't been yielded before
+                for tc_index, tc_data in accumulated_tool_calls.items():
+                    if tc_data["name"] and tc_data["arguments"]:
+                        # Create unique signature for this tool call
+                        tool_signature = f"{tc_data['name']}:{tc_data['arguments']}"
+                        
+                        # CRITICAL FIX: Only yield if we haven't yielded this exact tool call before
+                        if tool_signature not in yielded_tool_signatures:
+                            # Try to parse arguments to ensure they're complete JSON
+                            try:
+                                parsed_args = json.loads(tc_data["arguments"])
+                                new_complete_tools.append({
+                                    "id": tc_data["id"],
+                                    "type": "function",
+                                    "function": {
+                                        "name": tc_data["name"],
+                                        "arguments": json.dumps(parsed_args)  # Re-serialize for consistency
+                                    }
+                                })
+                                
+                                # Mark this tool call as yielded
+                                yielded_tool_signatures.add(tool_signature)
+                                log.debug(f"[Groq] Yielding NEW tool call: {tc_data['name']}")
+                                
+                            except json.JSONDecodeError:
+                                # Arguments incomplete, wait for more chunks
+                                pass
+                        else:
+                            log.debug(f"[Groq] Skipping duplicate tool call: {tc_data['name']}")
+
+                result = {
+                    "response": content,
+                    "tool_calls": new_complete_tools,  # Only NEW tools, no duplicates
+                }
+                
+                # CRITICAL: Restore tool names using universal restoration
+                if name_mapping and new_complete_tools:
+                    result = self._restore_tool_names_in_response(result, name_mapping)
+                
+                # IMPROVED: Yield content chunks immediately, but only yield NEW tool calls
+                if content or new_complete_tools:
+                    yield result
                 
                 # Allow other async tasks to run periodically
                 if chunk_count % 10 == 0:
                     await asyncio.sleep(0)
             
-            log.debug(f"Groq streaming completed with {chunk_count} chunks")
+            # FINAL CHECK: Ensure no incomplete tool calls are left (but avoid duplicates)
+            final_new_tools = []
+            for tc_index, tc_data in accumulated_tool_calls.items():
+                if tc_data["name"] and tc_data["arguments"]:
+                    tool_signature = f"{tc_data['name']}:{tc_data['arguments']}"
+                    
+                    # Only include if not already yielded
+                    if tool_signature not in yielded_tool_signatures:
+                        # Try to parse arguments one final time
+                        try:
+                            parsed_args = json.loads(tc_data["arguments"])
+                            final_args = json.dumps(parsed_args)
+                        except json.JSONDecodeError:
+                            final_args = tc_data["arguments"] or "{}"
+                        
+                        final_new_tools.append({
+                            "id": tc_data["id"],
+                            "type": "function", 
+                            "function": {
+                                "name": tc_data["name"],
+                                "arguments": final_args
+                            }
+                        })
+                        
+                        yielded_tool_signatures.add(tool_signature)
+            
+            if final_new_tools:
+                final_result = {
+                    "response": "",
+                    "tool_calls": final_new_tools,
+                }
+                
+                if name_mapping:
+                    final_result = self._restore_tool_names_in_response(final_result, name_mapping)
+                
+                yield final_result
+            
+            log.debug(f"Groq streaming completed with {chunk_count} chunks, "
+                    f"{len(total_content)} total characters, {len(yielded_tool_signatures)} unique tool calls yielded")
         
         except Exception as e:
             error_str = str(e)
@@ -601,7 +707,7 @@ class GroqAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
                     "tool_calls": [],
                     "error": True
                 }
-
+                
     async def _regular_completion(
         self,
         messages: List[Dict[str, Any]],

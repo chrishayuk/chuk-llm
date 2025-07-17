@@ -1,4 +1,4 @@
-# chuk_llm/llm/providers/mistral_client.py
+# chuk_llm/llm/providers/mistral_client.py - FIXED VERSION WITH DUPLICATION PREVENTION
 
 """
 Mistral Le Plateforme chat-completion adapter with unified configuration integration
@@ -12,6 +12,7 @@ Features
 * Vision capabilities for supported models
 * Function calling support for compatible models
 * Universal tool name compatibility with bidirectional mapping
+* CRITICAL FIX: Tool call duplication prevention in streaming
 """
 from __future__ import annotations
 
@@ -44,6 +45,9 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
     
     Gets all capabilities from unified YAML configuration instead of
     hardcoded model patterns for better maintainability.
+    
+    CRITICAL FIX: Now includes tool call duplication prevention using the same
+    pattern that was successfully implemented for Groq.
     
     Uses universal tool name compatibility system to handle any naming convention:
     - stdio.read_query -> stdio_read_query
@@ -95,6 +99,7 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                                                    for pattern in ["codestral", "devstral"]),
                     "is_multilingual": "saba" in self.model.lower(),
                     "is_edge_model": "ministral" in self.model.lower(),
+                    "duplication_fix": "enabled",  # NEW: Indicates duplication fix is active
                 },
                 # Universal tool compatibility info
                 **tool_compatibility,
@@ -342,6 +347,9 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
         """
         Configuration-aware completion with Mistral API and universal tool name compatibility.
         
+        CRITICAL FIX: Now includes tool call duplication prevention using the same
+        successful pattern from Groq.
+        
         Args:
             messages: ChatML-style messages
             tools: Tool definitions (any naming convention supported)
@@ -391,7 +399,11 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
         name_mapping: Dict[str, str] = None
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Real streaming using Mistral's async streaming API with tool name restoration.
+        CRITICAL FIX: Real streaming using Mistral's async streaming API with 
+        tool call duplication prevention.
+        
+        Uses the same successful pattern from Groq: track yielded tool call signatures
+        to prevent emitting the same tool call multiple times across different chunks.
         """
         try:
             log.debug(f"Starting Mistral streaming for model: {self.model}")
@@ -399,60 +411,157 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
             # Use Mistral's streaming endpoint
             stream = self.client.chat.stream(**request_params)
             
+            # CRITICAL FIX: Tool call accumulation WITH duplication prevention
+            accumulated_tool_calls = {}  # {index: {id, name, arguments}}
+            yielded_tool_signatures = set()  # Track what we've already yielded (SAME AS GROQ FIX)
             chunk_count = 0
+            total_content = ""
             
             # Process streaming response
             for chunk in stream:
                 chunk_count += 1
                 
-                if hasattr(chunk, 'data') and hasattr(chunk.data, 'choices'):
-                    choices = chunk.data.choices
-                    if choices:
-                        choice = choices[0]
-                        
-                        # Extract content from delta
-                        content = ""
-                        tool_calls = []
-                        
-                        if hasattr(choice, 'delta'):
-                            delta = choice.delta
+                content = ""
+                new_complete_tools = []  # Only NEW complete tools for this chunk
+                
+                try:
+                    if hasattr(chunk, 'data') and hasattr(chunk.data, 'choices'):
+                        choices = chunk.data.choices
+                        if choices:
+                            choice = choices[0]
                             
-                            # Get content
-                            if hasattr(delta, 'content') and delta.content:
-                                content = delta.content
-                            
-                            # Get tool calls (only if tools are supported)
-                            if (hasattr(delta, 'tool_calls') and delta.tool_calls and 
-                                self.supports_feature("tools")):
-                                for tc in delta.tool_calls:
-                                    tool_calls.append({
-                                        "id": getattr(tc, 'id', f"call_{uuid.uuid4().hex[:8]}"),
-                                        "type": getattr(tc, 'type', 'function'),
-                                        "function": {
-                                            "name": getattr(tc.function, 'name', ''),
-                                            "arguments": getattr(tc.function, 'arguments', '')
-                                        }
-                                    })
+                            if hasattr(choice, 'delta'):
+                                delta = choice.delta
+                                
+                                # Handle content
+                                if hasattr(delta, 'content') and delta.content:
+                                    content = delta.content
+                                    total_content += content
+                                
+                                # CRITICAL FIX: Handle tool calls with proper accumulation
+                                if (hasattr(delta, 'tool_calls') and delta.tool_calls and 
+                                    self.supports_feature("tools")):
+                                    
+                                    for tc in delta.tool_calls:
+                                        try:
+                                            # Get tool call index (Mistral may use index for accumulation)
+                                            tc_index = getattr(tc, 'index', 0)
+                                            
+                                            # Initialize accumulator for this tool call if needed
+                                            if tc_index not in accumulated_tool_calls:
+                                                accumulated_tool_calls[tc_index] = {
+                                                    "id": getattr(tc, 'id', f"call_{uuid.uuid4().hex[:8]}"),
+                                                    "name": "",
+                                                    "arguments": ""
+                                                }
+                                            
+                                            # Accumulate function data
+                                            if hasattr(tc, 'function') and tc.function:
+                                                if hasattr(tc.function, 'name') and tc.function.name:
+                                                    accumulated_tool_calls[tc_index]["name"] += tc.function.name
+                                                
+                                                if hasattr(tc.function, 'arguments') and tc.function.arguments:
+                                                    accumulated_tool_calls[tc_index]["arguments"] += tc.function.arguments
+                                                
+                                                # Update ID if provided in this chunk
+                                                if hasattr(tc, 'id') and tc.id:
+                                                    accumulated_tool_calls[tc_index]["id"] = tc.id
+                                        
+                                        except Exception as e:
+                                            log.debug(f"Error processing Mistral streaming tool call chunk: {e}")
+                                            continue
+                
+                except Exception as chunk_error:
+                    log.warning(f"Error processing Mistral chunk {chunk_count}: {chunk_error}")
+                    content = ""
+                
+                # CRITICAL FIX: Only yield NEW complete tool calls that haven't been yielded before
+                for tc_index, tc_data in accumulated_tool_calls.items():
+                    if tc_data["name"] and tc_data["arguments"]:
+                        # Create unique signature for this tool call (SAME AS GROQ FIX)
+                        tool_signature = f"{tc_data['name']}:{tc_data['arguments']}"
                         
-                        # Create chunk response
-                        chunk_response = {
-                            "response": content,
-                            "tool_calls": tool_calls
-                        }
-                        
-                        # Restore tool names using universal restoration
-                        if name_mapping and tool_calls:
-                            chunk_response = self._restore_tool_names_in_response(chunk_response, name_mapping)
-                        
-                        # Yield chunk if it has content
-                        if content or tool_calls:
-                            yield chunk_response
+                        # CRITICAL FIX: Only yield if we haven't yielded this exact tool call before
+                        if tool_signature not in yielded_tool_signatures:
+                            # Try to parse arguments to ensure they're complete JSON
+                            try:
+                                parsed_args = json.loads(tc_data["arguments"])
+                                new_complete_tools.append({
+                                    "id": tc_data["id"],
+                                    "type": "function",
+                                    "function": {
+                                        "name": tc_data["name"],
+                                        "arguments": json.dumps(parsed_args)  # Re-serialize for consistency
+                                    }
+                                })
+                                
+                                # Mark this tool call as yielded
+                                yielded_tool_signatures.add(tool_signature)
+                                log.debug(f"[Mistral] Yielding NEW tool call: {tc_data['name']}")
+                                
+                            except json.JSONDecodeError:
+                                # Arguments incomplete, wait for more chunks
+                                pass
+                        else:
+                            log.debug(f"[Mistral] Skipping duplicate tool call: {tc_data['name']}")
+                
+                # Create chunk response
+                chunk_response = {
+                    "response": content,
+                    "tool_calls": new_complete_tools  # Only NEW tools, no duplicates
+                }
+                
+                # CRITICAL: Restore tool names using universal restoration
+                if name_mapping and new_complete_tools:
+                    chunk_response = self._restore_tool_names_in_response(chunk_response, name_mapping)
+                
+                # IMPROVED: Yield content chunks immediately, but only yield NEW tool calls
+                if content or new_complete_tools:
+                    yield chunk_response
                 
                 # Allow other async tasks to run
                 if chunk_count % 10 == 0:
                     await asyncio.sleep(0)
             
-            log.debug(f"Mistral streaming completed with {chunk_count} chunks")
+            # FINAL CHECK: Ensure no incomplete tool calls are left (but avoid duplicates)
+            final_new_tools = []
+            for tc_index, tc_data in accumulated_tool_calls.items():
+                if tc_data["name"] and tc_data["arguments"]:
+                    tool_signature = f"{tc_data['name']}:{tc_data['arguments']}"
+                    
+                    # Only include if not already yielded
+                    if tool_signature not in yielded_tool_signatures:
+                        # Try to parse arguments one final time
+                        try:
+                            parsed_args = json.loads(tc_data["arguments"])
+                            final_args = json.dumps(parsed_args)
+                        except json.JSONDecodeError:
+                            final_args = tc_data["arguments"] or "{}"
+                        
+                        final_new_tools.append({
+                            "id": tc_data["id"],
+                            "type": "function", 
+                            "function": {
+                                "name": tc_data["name"],
+                                "arguments": final_args
+                            }
+                        })
+                        
+                        yielded_tool_signatures.add(tool_signature)
+            
+            if final_new_tools:
+                final_result = {
+                    "response": "",
+                    "tool_calls": final_new_tools,
+                }
+                
+                if name_mapping:
+                    final_result = self._restore_tool_names_in_response(final_result, name_mapping)
+                
+                yield final_result
+            
+            log.debug(f"Mistral streaming completed with {chunk_count} chunks, "
+                    f"{len(total_content)} total characters, {len(yielded_tool_signatures)} unique tool calls yielded")
         
         except Exception as e:
             log.error(f"Error in Mistral streaming: {e}")

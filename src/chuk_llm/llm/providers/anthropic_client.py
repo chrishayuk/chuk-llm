@@ -519,7 +519,7 @@ class AnthropicLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenA
         name_mapping: Dict[str, str] = None
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Real streaming using AsyncAnthropic with configuration-aware vision processing.
+        Real streaming using AsyncAnthropic with FIXED tool call accumulation.
         Restores original tool names using universal restoration.
         """
         try:
@@ -547,6 +547,9 @@ class AnthropicLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenA
 
             log.debug("Claude streaming payload keys: %s", list(base_payload.keys()))
             
+            # CRITICAL FIX: Track tool calls across streaming events
+            accumulated_tool_calls = {}  # {tool_id: {name, input_json_parts, complete}}
+            
             # Use async client for real streaming
             async with self.async_client.messages.stream(
                 **base_payload
@@ -561,33 +564,150 @@ class AnthropicLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenA
                                 "response": event.delta.text,
                                 "tool_calls": []
                             }
+                        
+                        # CRITICAL FIX: Handle streaming tool input (input_json_delta)
+                        elif hasattr(event, 'delta') and hasattr(event.delta, 'type'):
+                            if event.delta.type == 'input_json_delta':
+                                # Get the content block index to identify which tool call this belongs to
+                                content_index = getattr(event, 'index', 0)
+                                
+                                # Find the tool call by index (assuming tools are processed in order)
+                                tool_id = None
+                                for tid, tool_data in accumulated_tool_calls.items():
+                                    if tool_data.get('content_index') == content_index:
+                                        tool_id = tid
+                                        break
+                                
+                                if tool_id and hasattr(event.delta, 'partial_json'):
+                                    # Accumulate JSON input parts
+                                    if 'input_json_parts' not in accumulated_tool_calls[tool_id]:
+                                        accumulated_tool_calls[tool_id]['input_json_parts'] = []
+                                    accumulated_tool_calls[tool_id]['input_json_parts'].append(event.delta.partial_json)
                     
-                    # Tool use events (restore original tool names using universal restoration)
+                    # CRITICAL FIX: Enhanced tool use event handling
                     elif hasattr(event, 'type') and event.type == 'content_block_start':
                         if hasattr(event, 'content_block') and event.content_block.type == 'tool_use':
-                            tool_call = {
-                                "id": event.content_block.id,
-                                "type": "function",
-                                "function": {
-                                    "name": event.content_block.name,  # This will be sanitized name
-                                    "arguments": json.dumps(getattr(event.content_block, 'input', {}))
+                            tool_id = event.content_block.id
+                            content_index = getattr(event, 'index', 0)
+                            
+                            # Initialize tool call tracking
+                            accumulated_tool_calls[tool_id] = {
+                                "name": event.content_block.name,
+                                "input": getattr(event.content_block, 'input', {}),
+                                "input_json_parts": [],
+                                "content_index": content_index,
+                                "complete": False
+                            }
+                            
+                            # If tool already has complete input, yield immediately
+                            if accumulated_tool_calls[tool_id]["input"]:
+                                tool_call = {
+                                    "id": tool_id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": event.content_block.name,
+                                        "arguments": json.dumps(accumulated_tool_calls[tool_id]["input"])
+                                    }
                                 }
-                            }
-                            
-                            # Create response with tool call
-                            chunk_response = {
-                                "response": "",
-                                "tool_calls": [tool_call]
-                            }
-                            
-                            # Restore original tool names using universal restoration
-                            if name_mapping:
-                                chunk_response = self._restore_tool_names_in_response(
-                                    chunk_response, 
-                                    name_mapping
-                                )
-                            
-                            yield chunk_response
+                                
+                                # Create response with tool call
+                                chunk_response = {
+                                    "response": "",
+                                    "tool_calls": [tool_call]
+                                }
+                                
+                                # Restore original tool names using universal restoration
+                                if name_mapping:
+                                    chunk_response = self._restore_tool_names_in_response(
+                                        chunk_response, 
+                                        name_mapping
+                                    )
+                                
+                                accumulated_tool_calls[tool_id]["complete"] = True
+                                yield chunk_response
+                    
+                    # CRITICAL FIX: Handle tool call completion
+                    elif hasattr(event, 'type') and event.type == 'content_block_stop':
+                        content_index = getattr(event, 'index', 0)
+                        
+                        # Find and finalize tool call by content index
+                        for tool_id, tool_data in accumulated_tool_calls.items():
+                            if (tool_data.get('content_index') == content_index and 
+                                not tool_data.get('complete')):
+                                
+                                # Reconstruct complete JSON from parts
+                                final_input = tool_data.get("input", {})
+                                if tool_data.get("input_json_parts"):
+                                    try:
+                                        # Combine all JSON parts
+                                        complete_json = "".join(tool_data["input_json_parts"])
+                                        final_input = json.loads(complete_json)
+                                    except json.JSONDecodeError:
+                                        # Fallback to original input if JSON parsing fails
+                                        log.warning(f"Failed to parse streaming JSON for tool {tool_id}")
+                                        final_input = tool_data.get("input", {})
+                                
+                                tool_call = {
+                                    "id": tool_id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": tool_data["name"],
+                                        "arguments": json.dumps(final_input)
+                                    }
+                                }
+                                
+                                # Create response with tool call
+                                chunk_response = {
+                                    "response": "",
+                                    "tool_calls": [tool_call]
+                                }
+                                
+                                # Restore original tool names using universal restoration
+                                if name_mapping:
+                                    chunk_response = self._restore_tool_names_in_response(
+                                        chunk_response, 
+                                        name_mapping
+                                    )
+                                
+                                tool_data["complete"] = True
+                                yield chunk_response
+                                break
+            
+            # FINAL FIX: Ensure any incomplete tool calls are yielded at the end
+            incomplete_tools = []
+            for tool_id, tool_data in accumulated_tool_calls.items():
+                if not tool_data.get("complete"):
+                    # Reconstruct final input
+                    final_input = tool_data.get("input", {})
+                    if tool_data.get("input_json_parts"):
+                        try:
+                            complete_json = "".join(tool_data["input_json_parts"])
+                            final_input = json.loads(complete_json)
+                        except json.JSONDecodeError:
+                            final_input = tool_data.get("input", {})
+                    
+                    incomplete_tools.append({
+                        "id": tool_id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_data["name"],
+                            "arguments": json.dumps(final_input)
+                        }
+                    })
+            
+            if incomplete_tools:
+                final_response = {
+                    "response": "",
+                    "tool_calls": incomplete_tools
+                }
+                
+                if name_mapping:
+                    final_response = self._restore_tool_names_in_response(
+                        final_response, 
+                        name_mapping
+                    )
+                
+                yield final_response
         
         except Exception as e:
             log.error(f"Error in Anthropic streaming: {e}")
@@ -602,7 +722,7 @@ class AnthropicLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenA
                 "tool_calls": [],
                 "error": True
             }
-
+            
     async def _regular_completion_async(
         self, 
         system: Optional[str],

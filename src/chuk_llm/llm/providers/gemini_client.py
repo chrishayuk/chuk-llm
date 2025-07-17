@@ -891,7 +891,9 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
         filtered_params: Dict[str, Any],
         name_mapping: Dict[str, str] = None
     ) -> AsyncIterator[Dict[str, Any]]:
-        """Real streaming using Gemini client with SAFE response parsing and tool name restoration."""
+        """
+        Real streaming using Gemini client with FIXED tool call duplication.
+        """
         
         # Handle system message and JSON instruction
         system_from_messages, contents = await self._split_for_gemini_async(messages)
@@ -945,7 +947,10 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
 
         log.debug("Gemini streaming payload keys: %s", list(base_payload.keys()))
         
+        # CRITICAL FIX: Enhanced tool call tracking to prevent duplication
         accumulated_response = ""
+        yielded_tool_signatures = set()  # Track what tool calls we've already yielded
+        chunk_count = 0
         
         try:
             # Streaming with SAFE parsing and universal tool name restoration
@@ -953,34 +958,107 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
                 stream = await self.client.aio.models.generate_content_stream(**base_payload)
             
             async for chunk in stream:
+                chunk_count += 1
+                
                 with UltimateSuppression():
-                    # CRITICAL: Use safe parsing with universal tool name restoration
-                    chunk_result = _safe_parse_gemini_response(chunk)
-                    chunk_text = chunk_result["response"]
-                    tool_calls = chunk_result["tool_calls"]
-                    
-                    # Restore tool names using universal restoration
-                    if tool_calls and name_mapping:
-                        chunk_result = self._restore_tool_names_in_response(chunk_result, name_mapping)
-                        tool_calls = chunk_result["tool_calls"]
-                
-                # Handle text content with deduplication
-                if chunk_text:
-                    if not accumulated_response or not chunk_text.startswith(accumulated_response):
-                        new_content = chunk_text[len(accumulated_response):] if chunk_text.startswith(accumulated_response) else chunk_text
-                        if new_content:
-                            accumulated_response += new_content
-                            yield {
-                                "response": new_content,
-                                "tool_calls": []
+                    try:
+                        # Enhanced chunk processing for tool calls
+                        chunk_text = ""
+                        new_tool_calls = []  # Only NEW tool calls for this chunk
+                        
+                        # Parse chunk using safe method
+                        if hasattr(chunk, 'candidates') and chunk.candidates:
+                            candidate = chunk.candidates[0]
+                            
+                            if hasattr(candidate, 'content') and candidate.content:
+                                content = candidate.content
+                                
+                                # Check if content has parts
+                                if hasattr(content, 'parts') and content.parts:
+                                    text_parts = []
+                                    
+                                    # Process each part individually
+                                    for part in content.parts:
+                                        # Handle text parts
+                                        if hasattr(part, 'text') and part.text:
+                                            text_parts.append(part.text)
+                                        
+                                        # CRITICAL FIX: Handle function call parts with duplication prevention
+                                        elif hasattr(part, 'function_call') and part.function_call:
+                                            fc = part.function_call
+                                            
+                                            try:
+                                                # Extract function call data
+                                                function_name = getattr(fc, "name", "unknown")
+                                                function_args = dict(getattr(fc, "args", {}))
+                                                
+                                                # Create unique signature for this tool call
+                                                tool_signature = f"{function_name}:{json.dumps(function_args, sort_keys=True)}"
+                                                
+                                                # CRITICAL FIX: Only add if we haven't yielded this exact tool call
+                                                if tool_signature not in yielded_tool_signatures:
+                                                    tool_call = {
+                                                        "id": f"call_{uuid.uuid4().hex[:8]}",
+                                                        "type": "function", 
+                                                        "function": {
+                                                            "name": function_name,
+                                                            "arguments": json.dumps(function_args)
+                                                        }
+                                                    }
+                                                    
+                                                    new_tool_calls.append(tool_call)
+                                                    yielded_tool_signatures.add(tool_signature)  # Mark as yielded
+                                                    
+                                                    log.debug(f"New function call from Gemini: {function_name}")
+                                                else:
+                                                    log.debug(f"Skipping duplicate function call: {function_name}")
+                                                
+                                            except Exception as e:
+                                                log.error(f"Error extracting function call from Gemini chunk: {e}")
+                                    
+                                    # Combine text parts for this chunk
+                                    chunk_text = "".join(text_parts)
+                        
+                        # Handle text content with proper deduplication
+                        if chunk_text:
+                            # Check if this is new content or a repeat
+                            if not accumulated_response or not chunk_text.startswith(accumulated_response):
+                                # Extract only the new part
+                                if chunk_text.startswith(accumulated_response):
+                                    new_content = chunk_text[len(accumulated_response):]
+                                else:
+                                    new_content = chunk_text
+                                
+                                if new_content:
+                                    accumulated_response += new_content
+                                    
+                                    # Create chunk response for text
+                                    chunk_response = {
+                                        "response": new_content,
+                                        "tool_calls": []
+                                    }
+                                    yield chunk_response
+                        
+                        # CRITICAL FIX: Only yield NEW tool calls
+                        if new_tool_calls:
+                            # Create chunk response for tool calls
+                            tool_response = {
+                                "response": "",
+                                "tool_calls": new_tool_calls
                             }
-                
-                # Handle tool calls (names already restored)
-                if tool_calls:
-                    yield {
-                        "response": "",
-                        "tool_calls": tool_calls
-                    }
+                            
+                            # Restore tool names using universal restoration
+                            if name_mapping:
+                                tool_response = self._restore_tool_names_in_response(tool_response, name_mapping)
+                            
+                            yield tool_response
+                    
+                    except Exception as chunk_error:
+                        log.debug(f"Error processing Gemini chunk {chunk_count}: {chunk_error}")
+                        continue
+            
+            log.debug(f"Gemini streaming completed with {chunk_count} chunks, "
+                    f"{len(accumulated_response)} total characters, {len(yielded_tool_signatures)} unique tool calls")
         
         except Exception as e:
             log.error(f"Error in Gemini streaming: {e}")
@@ -989,7 +1067,7 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
                 "tool_calls": [],
                 "error": True
             }
-
+                
     @silence_gemini_warnings_async
     async def _regular_completion_async(
         self, 

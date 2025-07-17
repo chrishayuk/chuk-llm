@@ -1,4 +1,4 @@
-# chuk_llm/llm/providers/openai_client.py - FIXED VERSION FOR CONVERSATION FLOWS
+# chuk_llm/llm/providers/openai_client.py - FIXED VERSION FOR STREAMING
 """
 OpenAI chat-completion adapter with unified configuration integration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -10,6 +10,7 @@ CRITICAL FIXES:
 2. Fixed conversation flow tool name handling 
 3. Enhanced content extraction to eliminate warnings
 4. Added bidirectional mapping throughout conversation
+5. FIXED streaming tool call duplication bug
 """
 from __future__ import annotations
 from typing import Any, AsyncIterator, Dict, List, Optional, Union, Tuple
@@ -269,17 +270,25 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
         normalize_chunk: Optional[callable] = None
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Enhanced streaming with universal tool name restoration and improved chunk filtering.
+        CRITICAL FIX: Enhanced streaming with proper tool call accumulation.
+        
+        The key insight from diagnostics: OpenAI sends incremental deltas that need 
+        concatenation, but chuk-llm was receiving pre-processed complete chunks 
+        and duplicating them by extending instead of replacing.
         """
         try:
             chunk_count = 0
             total_content = ""
             
+            # Track tool calls across chunks
+            accumulated_tool_calls = {}  # {index: {id, name, arguments}}
+            last_complete_tool_calls = None  # Store last complete set
+            
             async for chunk in async_stream:
                 chunk_count += 1
                 
                 content = ""
-                tool_calls = []
+                current_tool_calls = []
                 
                 try:
                     if hasattr(chunk, 'choices') and chunk.choices and len(chunk.choices) > 0:
@@ -288,50 +297,134 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
                         if hasattr(choice, 'delta') and choice.delta:
                             delta = choice.delta
                             
+                            # Handle content
                             if hasattr(delta, 'content') and delta.content is not None:
                                 content = str(delta.content)
                                 total_content += content
                             
+                            # Handle tool calls - check if this is delta or complete
                             if hasattr(delta, 'tool_calls') and delta.tool_calls:
-                                for tc in delta.tool_calls:
-                                    try:
-                                        if hasattr(tc, 'function') and tc.function:
-                                            tool_name = getattr(tc.function, 'name', '')
-                                            tool_args = getattr(tc.function, 'arguments', '') or ""
+                                # Determine if we're getting deltas or complete chunks
+                                first_tc = delta.tool_calls[0]
+                                is_delta_chunk = (
+                                    # Delta chunks have partial function arguments
+                                    (hasattr(first_tc, 'function') and 
+                                     hasattr(first_tc.function, 'arguments') and 
+                                     first_tc.function.arguments is not None and
+                                     not first_tc.function.arguments.startswith('{"')) or
+                                    # Or they have no function name (continuation chunks)
+                                    (hasattr(first_tc, 'function') and 
+                                     hasattr(first_tc.function, 'name') and 
+                                     first_tc.function.name is None)
+                                )
+                                
+                                if is_delta_chunk:
+                                    # DELTA MODE: Accumulate pieces (for raw OpenAI streaming)
+                                    for tc in delta.tool_calls:
+                                        try:
+                                            tc_index = getattr(tc, 'index', 0)
                                             
-                                            # IMPROVED: Only include tool calls with actual names
-                                            if tool_name and tool_name.strip():
-                                                tool_calls.append({
+                                            if tc_index not in accumulated_tool_calls:
+                                                accumulated_tool_calls[tc_index] = {
                                                     "id": getattr(tc, 'id', f"call_{uuid.uuid4().hex[:8]}"),
+                                                    "name": "",
+                                                    "arguments": ""
+                                                }
+                                            
+                                            # Update ID if provided
+                                            if hasattr(tc, 'id') and tc.id:
+                                                accumulated_tool_calls[tc_index]["id"] = tc.id
+                                            
+                                            # Accumulate function data
+                                            if hasattr(tc, 'function') and tc.function:
+                                                if hasattr(tc.function, 'name') and tc.function.name:
+                                                    accumulated_tool_calls[tc_index]["name"] += tc.function.name
+                                                
+                                                if hasattr(tc.function, 'arguments') and tc.function.arguments:
+                                                    accumulated_tool_calls[tc_index]["arguments"] += tc.function.arguments
+                                        
+                                        except Exception as e:
+                                            log.debug(f"Error processing delta tool call: {e}")
+                                            continue
+                                    
+                                    # Build current complete tool calls from accumulated data
+                                    for tc_index, tc_data in accumulated_tool_calls.items():
+                                        if tc_data["name"] and tc_data["arguments"]:
+                                            # Validate JSON completeness
+                                            try:
+                                                json.loads(tc_data["arguments"])
+                                                current_tool_calls.append({
+                                                    "id": tc_data["id"],
                                                     "type": "function",
                                                     "function": {
-                                                        "name": tool_name,
-                                                        "arguments": tool_args
+                                                        "name": tc_data["name"],
+                                                        "arguments": tc_data["arguments"]
                                                     }
                                                 })
-                                    except Exception as e:
-                                        log.debug(f"Error processing streaming tool call: {e}")
-                                        continue
+                                            except json.JSONDecodeError:
+                                                # Incomplete JSON, skip for now
+                                                pass
+                                
+                                else:
+                                    # COMPLETE MODE: Use tool calls as-is (for pre-processed streams)
+                                    for tc in delta.tool_calls:
+                                        try:
+                                            tc_id = getattr(tc, "id", f"call_{uuid.uuid4().hex[:8]}")
+                                            
+                                            if hasattr(tc, 'function'):
+                                                func = tc.function
+                                                func_name = getattr(func, 'name', 'unknown_function')
+                                                
+                                                # Handle arguments
+                                                args = getattr(func, 'arguments', '{}')
+                                                try:
+                                                    if isinstance(args, str):
+                                                        # Validate and normalize JSON
+                                                        parsed_args = json.loads(args)
+                                                        args_j = json.dumps(parsed_args)
+                                                    elif isinstance(args, dict):
+                                                        args_j = json.dumps(args)
+                                                    else:
+                                                        args_j = "{}"
+                                                except json.JSONDecodeError:
+                                                    args_j = args if isinstance(args, str) else "{}"
+                                                
+                                                current_tool_calls.append({
+                                                    "id": tc_id,
+                                                    "type": "function",
+                                                    "function": {
+                                                        "name": func_name,
+                                                        "arguments": args_j,
+                                                    },
+                                                })
+                                        
+                                        except Exception as e:
+                                            log.warning(f"Failed to process complete tool call: {e}")
+                                            continue
+                                    
+                                    # CRITICAL FIX: Replace, don't extend for complete chunks
+                                    last_complete_tool_calls = current_tool_calls
                 
                 except Exception as chunk_error:
                     log.warning(f"Error processing chunk {chunk_count}: {chunk_error}")
                     content = ""
-                    tool_calls = []
                 
+                # Prepare result
                 result = {
                     "response": content,
-                    "tool_calls": tool_calls,
+                    "tool_calls": current_tool_calls if current_tool_calls else (last_complete_tool_calls or []),
                 }
                 
-                # CRITICAL: Restore tool names using universal restoration
-                if name_mapping and tool_calls:
+                # Restore tool names using universal restoration
+                if name_mapping and result.get("tool_calls"):
                     result = self._restore_tool_names_in_response(result, name_mapping)
                 
-                # IMPROVED: Only yield chunks with meaningful content or valid tool calls
-                if content or (tool_calls and all(tc.get("function", {}).get("name") for tc in tool_calls)):
+                # Yield if we have content or tool calls
+                if content or result.get("tool_calls"):
                     yield result
             
-            log.debug(f"[{self.detected_provider}] Streaming completed: {chunk_count} chunks, {len(total_content)} total characters")
+            log.debug(f"[{self.detected_provider}] Streaming completed: {chunk_count} chunks, "
+                    f"{len(total_content)} total characters, {len(accumulated_tool_calls)} accumulated tool calls")
                         
         except Exception as e:
             log.error(f"Error in {self.detected_provider} streaming: {e}")
@@ -340,7 +433,7 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
                 "tool_calls": [],
                 "error": True
             }
-
+            
     def _validate_request_with_config(
         self, 
         messages: List[Dict[str, Any]], 

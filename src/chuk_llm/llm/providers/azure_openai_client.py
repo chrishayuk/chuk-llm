@@ -248,23 +248,16 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
         **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Enhanced async streaming with Azure OpenAI configuration-aware retry logic and tool name restoration.
+        Enhanced async streaming for Azure OpenAI with FIXED tool call duplication.
         """
-        # Get retry configuration from provider config if available
-        max_retries = 1  # Default
-        try:
-            provider_config = self._get_provider_config()
-            if provider_config:
-                max_retries = 2  # Azure typically needs fewer retries than other providers
-        except:
-            pass
+        max_retries = 1
         
         for attempt in range(max_retries + 1):
             try:
                 log.debug(f"[azure_openai] Starting streaming (attempt {attempt + 1}): "
-                         f"deployment={self.azure_deployment}, messages={len(messages)}, tools={len(tools) if tools else 0}")
+                        f"deployment={self.azure_deployment}, messages={len(messages)}, tools={len(tools) if tools else 0}")
                 
-                # Prepare request parameters - ensure model is set to deployment name
+                # Prepare request parameters
                 request_params = kwargs.copy()
                 request_params["model"] = self.azure_deployment
                 request_params["messages"] = messages
@@ -272,57 +265,127 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
                     request_params["tools"] = tools
                 request_params["stream"] = True
                 
-                # Create streaming request
                 response_stream = await self.async_client.chat.completions.create(**request_params)
                 
-                # Stream results using inherited method from OpenAIStyleMixin with tool restoration
                 chunk_count = 0
-                async for result in self._stream_from_async(response_stream):
+                total_content = ""
+                
+                # CRITICAL FIX: Track both accumulated tool calls AND yielded tool calls
+                accumulated_tool_calls = {}  # {index: {id, name, arguments}}
+                yielded_tool_signatures = set()  # Track what we've already yielded
+                
+                async for chunk in response_stream:
+                    chunk_count += 1
+                    
+                    content = ""
+                    current_complete_tools = []
+                    
+                    try:
+                        if hasattr(chunk, 'choices') and chunk.choices and len(chunk.choices) > 0:
+                            choice = chunk.choices[0]
+                            
+                            if hasattr(choice, 'delta') and choice.delta:
+                                delta = choice.delta
+                                
+                                # Handle content
+                                if hasattr(delta, 'content') and delta.content is not None:
+                                    content = str(delta.content)
+                                    total_content += content
+                                
+                                # Handle tool calls with proper accumulation
+                                if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                                    for tc in delta.tool_calls:
+                                        try:
+                                            tc_index = getattr(tc, 'index', 0)
+                                            
+                                            if tc_index not in accumulated_tool_calls:
+                                                accumulated_tool_calls[tc_index] = {
+                                                    "id": getattr(tc, 'id', f"call_{uuid.uuid4().hex[:8]}"),
+                                                    "name": "",
+                                                    "arguments": ""
+                                                }
+                                            
+                                            if hasattr(tc, 'function') and tc.function:
+                                                if hasattr(tc.function, 'name') and tc.function.name:
+                                                    accumulated_tool_calls[tc_index]["name"] += tc.function.name
+                                                
+                                                if hasattr(tc.function, 'arguments') and tc.function.arguments:
+                                                    accumulated_tool_calls[tc_index]["arguments"] += tc.function.arguments
+                                                
+                                                if hasattr(tc, 'id') and tc.id:
+                                                    accumulated_tool_calls[tc_index]["id"] = tc.id
+                                        
+                                        except Exception as e:
+                                            log.debug(f"Error processing Azure streaming tool call chunk: {e}")
+                                            continue
+                    
+                    except Exception as chunk_error:
+                        log.warning(f"Error processing Azure chunk {chunk_count}: {chunk_error}")
+                        content = ""
+                    
+                    # CRITICAL FIX: Check for NEW complete tool calls that haven't been yielded
+                    for tc_index, tc_data in accumulated_tool_calls.items():
+                        if tc_data["name"] and tc_data["arguments"]:
+                            # Create a unique signature for this tool call
+                            tool_signature = f"{tc_data['name']}:{tc_data['arguments']}"
+                            
+                            # Only process if we haven't yielded this exact tool call before
+                            if tool_signature not in yielded_tool_signatures:
+                                try:
+                                    # Handle Azure-specific argument formatting
+                                    args_str = tc_data["arguments"]
+                                    if args_str.startswith('""') and args_str.endswith('""'):
+                                        args_str = args_str[2:-2]
+                                    
+                                    parsed_args = json.loads(args_str)
+                                    
+                                    tool_call = {
+                                        "id": tc_data["id"],
+                                        "type": "function",
+                                        "function": {
+                                            "name": tc_data["name"],
+                                            "arguments": json.dumps(parsed_args)
+                                        }
+                                    }
+                                    
+                                    current_complete_tools.append(tool_call)
+                                    yielded_tool_signatures.add(tool_signature)  # Mark as yielded
+                                    
+                                except json.JSONDecodeError:
+                                    # Arguments incomplete, skip for now
+                                    pass
+                    
+                    # Prepare result
+                    result = {
+                        "response": content,
+                        "tool_calls": current_complete_tools,
+                    }
+                    
                     # Restore tool names using universal restoration
-                    if name_mapping and result.get("tool_calls"):
+                    if name_mapping and current_complete_tools:
                         result = self._restore_tool_names_in_response(result, name_mapping)
                     
-                    chunk_count += 1
-                    yield result
+                    # Only yield if we have content or NEW tool calls
+                    if content or current_complete_tools:
+                        yield result
                 
-                # Success - exit retry loop
-                log.debug(f"[azure_openai] Streaming completed successfully with {chunk_count} chunks")
+                log.debug(f"[azure_openai] Streaming completed: {chunk_count} chunks, "
+                        f"{len(total_content)} total characters, {len(accumulated_tool_calls)} tool calls, "
+                        f"{len(yielded_tool_signatures)} unique signatures yielded")
                 return
                 
             except Exception as e:
                 error_str = str(e).lower()
                 
-                # Check for tool naming errors (uncommon but possible)
-                if "function" in error_str and ("name" in error_str or "invalid" in error_str):
-                    log.error(f"[azure_openai] Tool naming error (this should not happen with universal compatibility): {e}")
+                if "deployment" in error_str and "not found" in error_str:
+                    log.error(f"[azure_openai] Deployment error - check deployment name '{self.azure_deployment}': {e}")
                     yield {
-                        "response": f"Tool naming error: {str(e)}",
+                        "response": f"Azure deployment error: {str(e)}",
                         "tool_calls": [],
                         "error": True
                     }
                     return
-                
-                # Check if this is a retryable error
-                is_retryable = any(pattern in error_str for pattern in [
-                    "timeout", "connection", "network", "temporary", "rate limit", "throttled"
-                ])
-                
-                if attempt < max_retries and is_retryable:
-                    wait_time = (attempt + 1) * 1.0  # 1s, 2s, 3s...
-                    log.warning(f"[azure_openai] Streaming attempt {attempt + 1} failed: {e}. "
-                               f"Retrying in {wait_time}s...")
-                    import asyncio
-                    await asyncio.sleep(wait_time)
-                    continue
-                else:
-                    log.error(f"[azure_openai] Streaming failed after {attempt + 1} attempts: {e}")
-                    yield {
-                        "response": f"Error: {str(e)}",
-                        "tool_calls": [],
-                        "error": True
-                    }
-                    return
-
+                    
     async def _regular_completion(
         self,
         messages: List[Dict[str, Any]],
