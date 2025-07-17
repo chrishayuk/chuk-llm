@@ -147,6 +147,12 @@ def client(mock_configuration, monkeypatch):
         "supports_reasoning": False,
         "max_context_length": 8192,
         "max_output_tokens": 4096,
+        "tool_compatibility": {
+            "supports_universal_naming": True,
+            "sanitization_method": "replace_chars",
+            "restoration_method": "name_mapping",
+            "supported_name_patterns": ["alphanumeric_underscore"],
+        },
         "mistral_specific": {
             "supports_magistral_reasoning": "magistral" in cl.model.lower(),
             "supports_code_generation": any(pattern in cl.model.lower() 
@@ -179,11 +185,126 @@ def client(mock_configuration, monkeypatch):
         return result
     monkeypatch.setattr(cl, "validate_parameters", mock_validate_parameters)
     
+    # Mock tool compatibility methods
+    monkeypatch.setattr(cl, "_sanitize_tool_names", lambda tools: tools)
+    monkeypatch.setattr(cl, "_restore_tool_names_in_response", lambda response, mapping: response)
+    monkeypatch.setattr(cl, "get_tool_compatibility_info", lambda: {
+        "supports_universal_naming": True,
+        "sanitization_method": "replace_chars",
+        "restoration_method": "name_mapping",
+        "supported_name_patterns": ["alphanumeric_underscore"],
+    })
+    
+    # Initialize empty name mapping
+    cl._current_name_mapping = {}
+    
+    return cl
+
+@pytest.fixture
+def codestral_client(mock_configuration, monkeypatch):
+    """Mistral Codestral client with code generation features"""
+    cl = MistralLLMClient(model="codestral-latest", api_key="fake-key")
+    
+    # Codestral model has code generation features
+    monkeypatch.setattr(cl, "supports_feature", lambda feature: feature in [
+        "text", "streaming", "tools", "system_messages", "reasoning"
+    ])
+    
+    monkeypatch.setattr(cl, "get_model_info", lambda: {
+        "provider": "mistral",
+        "model": "codestral-latest",
+        "client_class": "MistralLLMClient",
+        "api_base": "https://api.mistral.ai",
+        "features": ["text", "streaming", "tools", "system_messages", "reasoning"],
+        "supports_text": True,
+        "supports_streaming": True,
+        "supports_tools": True,
+        "supports_vision": False,
+        "supports_system_messages": True,
+        "supports_json_mode": False,
+        "supports_parallel_calls": False,
+        "supports_multimodal": False,
+        "supports_reasoning": True,
+        "max_context_length": 8192,
+        "max_output_tokens": 4096,
+        "tool_compatibility": {
+            "supports_universal_naming": True,
+            "sanitization_method": "replace_chars",
+            "restoration_method": "name_mapping",
+            "supported_name_patterns": ["alphanumeric_underscore"],
+        },
+        "mistral_specific": {
+            "supports_magistral_reasoning": False,
+            "supports_code_generation": True,
+            "is_multilingual": False,
+            "is_edge_model": False,
+        },
+        "parameter_mapping": {
+            "temperature": "temperature",
+            "max_tokens": "max_tokens", 
+            "top_p": "top_p",
+            "stream": "stream",
+            "tool_choice": "tool_choice"
+        },
+        "unsupported_parameters": [
+            "frequency_penalty", "presence_penalty", "stop", 
+            "logit_bias", "user", "n", "best_of", "top_k", "seed"
+        ]
+    })
+    
+    # Mock tool compatibility methods
+    monkeypatch.setattr(cl, "_sanitize_tool_names", lambda tools: tools)
+    monkeypatch.setattr(cl, "_restore_tool_names_in_response", lambda response, mapping: response)
+    monkeypatch.setattr(cl, "get_tool_compatibility_info", lambda: {
+        "supports_universal_naming": True,
+        "sanitization_method": "replace_chars",
+        "restoration_method": "name_mapping",
+        "supported_name_patterns": ["alphanumeric_underscore"],
+    })
+    
+    # Initialize empty name mapping
+    cl._current_name_mapping = {}
+    
     return cl
 
 # Convenience helper to capture kwargs
 class Capture:
     kwargs = None
+
+# ---------------------------------------------------------------------------
+# Helper functions to create proper mock responses
+# ---------------------------------------------------------------------------
+
+def create_mock_mistral_response(content=None, tool_calls=None):
+    """Create a properly structured mock Mistral response."""
+    message = types.SimpleNamespace()
+    message.content = content
+    message.tool_calls = tool_calls or []
+    
+    choice = types.SimpleNamespace()
+    choice.message = message
+    
+    response = types.SimpleNamespace()
+    response.choices = [choice]
+    
+    return response
+
+def create_mock_mistral_stream_chunk(content=None, tool_calls=None):
+    """Create a properly structured mock Mistral streaming chunk."""
+    delta = types.SimpleNamespace()
+    delta.content = content
+    delta.tool_calls = tool_calls or []
+    
+    choice = types.SimpleNamespace()
+    choice.delta = delta
+    
+    data = types.SimpleNamespace()
+    data.choices = [choice]
+    
+    chunk = types.SimpleNamespace()
+    chunk.data = data
+    
+    return chunk
 
 # ---------------------------------------------------------------------------
 # Client initialization tests
@@ -216,6 +337,7 @@ def test_get_model_info(client):
     assert "mistral_specific" in info
     assert "parameter_mapping" in info
     assert "unsupported_parameters" in info
+    assert "tool_compatibility" in info
 
 def test_mistral_specific_features(mock_configuration):
     """Test detection of Mistral-specific model features."""
@@ -360,17 +482,7 @@ def test_convert_messages_system_not_supported(client, monkeypatch):
 
 def test_normalize_mistral_response_text(client):
     """Test normalizing Mistral response with text content."""
-    # Mock Mistral response structure
-    mock_response = types.SimpleNamespace(
-        choices=[
-            types.SimpleNamespace(
-                message=types.SimpleNamespace(
-                    content="Hello from Mistral",
-                    tool_calls=None
-                )
-            )
-        ]
-    )
+    mock_response = create_mock_mistral_response(content="Hello from Mistral")
     
     result = client._normalize_mistral_response(mock_response)
     
@@ -379,25 +491,14 @@ def test_normalize_mistral_response_text(client):
 def test_normalize_mistral_response_tool_calls(client):
     """Test normalizing Mistral response with tool calls."""
     # Mock tool call structure
-    mock_tool_call = types.SimpleNamespace(
-        id="call_123",
-        type="function",
-        function=types.SimpleNamespace(
-            name="test_tool",
-            arguments='{"arg": "value"}'
-        )
-    )
+    mock_tool_call = types.SimpleNamespace()
+    mock_tool_call.id = "call_123"
+    mock_tool_call.type = "function"
+    mock_tool_call.function = types.SimpleNamespace()
+    mock_tool_call.function.name = "test_tool"
+    mock_tool_call.function.arguments = '{"arg": "value"}'
     
-    mock_response = types.SimpleNamespace(
-        choices=[
-            types.SimpleNamespace(
-                message=types.SimpleNamespace(
-                    content=None,
-                    tool_calls=[mock_tool_call]
-                )
-            )
-        ]
-    )
+    mock_response = create_mock_mistral_response(content=None, tool_calls=[mock_tool_call])
     
     result = client._normalize_mistral_response(mock_response)
     
@@ -411,24 +512,16 @@ def test_normalize_mistral_response_tools_not_supported(client, monkeypatch):
     monkeypatch.setattr(client, "supports_feature", lambda feature: feature != "tools")
     
     # Mock tool call structure
-    mock_tool_call = types.SimpleNamespace(
-        id="call_123",
-        type="function",
-        function=types.SimpleNamespace(
-            name="test_tool",
-            arguments='{"arg": "value"}'
-        )
-    )
+    mock_tool_call = types.SimpleNamespace()
+    mock_tool_call.id = "call_123"
+    mock_tool_call.type = "function"
+    mock_tool_call.function = types.SimpleNamespace()
+    mock_tool_call.function.name = "test_tool"
+    mock_tool_call.function.arguments = '{"arg": "value"}'
     
-    mock_response = types.SimpleNamespace(
-        choices=[
-            types.SimpleNamespace(
-                message=types.SimpleNamespace(
-                    content="Some content",
-                    tool_calls=[mock_tool_call]
-                )
-            )
-        ]
+    mock_response = create_mock_mistral_response(
+        content="Some content", 
+        tool_calls=[mock_tool_call]
     )
     
     result = client._normalize_mistral_response(mock_response)
@@ -444,6 +537,35 @@ def test_normalize_mistral_response_fallback(client):
     result = client._normalize_mistral_response(mock_response)
     
     assert result == {"response": "Unknown response format", "tool_calls": []}
+
+def test_normalize_mistral_response_with_name_mapping(client):
+    """Test normalizing response with tool name restoration."""
+    # Mock tool call with sanitized name
+    mock_tool_call = types.SimpleNamespace()
+    mock_tool_call.id = "call_123"
+    mock_tool_call.type = "function"
+    mock_tool_call.function = types.SimpleNamespace()
+    mock_tool_call.function.name = "test_tool_sanitized"
+    mock_tool_call.function.arguments = '{"arg": "value"}'
+    
+    mock_response = create_mock_mistral_response(content=None, tool_calls=[mock_tool_call])
+    
+    # Mock name mapping
+    name_mapping = {"test_tool_sanitized": "test.tool:original"}
+    
+    def mock_restore(response, mapping):
+        if response.get("tool_calls") and mapping:
+            for tool_call in response["tool_calls"]:
+                sanitized_name = tool_call["function"]["name"]
+                if sanitized_name in mapping:
+                    tool_call["function"]["name"] = mapping[sanitized_name]
+        return response
+    
+    client._restore_tool_names_in_response = mock_restore
+    
+    result = client._normalize_mistral_response(mock_response, name_mapping)
+    
+    assert result["tool_calls"][0]["function"]["name"] == "test.tool:original"
 
 # ---------------------------------------------------------------------------
 # Request validation tests
@@ -481,6 +603,30 @@ def test_validate_request_unsupported_features(client, monkeypatch):
     assert "tool_choice" not in validated_kwargs  # Should be removed
     assert "temperature" in validated_kwargs
 
+def test_validate_request_vision_content(client, monkeypatch):
+    """Test request validation with vision content."""
+    messages = [{"role": "user", "content": [
+        {"type": "text", "text": "Look at this"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
+    ]}]
+    
+    # Test with vision supported
+    validated_messages, validated_tools, validated_stream, validated_kwargs = client._validate_request_with_config(
+        messages, stream=False
+    )
+    
+    assert validated_messages == messages  # Should pass through unchanged
+    
+    # Test with vision not supported
+    monkeypatch.setattr(client, "supports_feature", lambda feature: feature != "vision")
+    
+    validated_messages, validated_tools, validated_stream, validated_kwargs = client._validate_request_with_config(
+        messages, stream=False
+    )
+    
+    # Should still pass through - filtering happens in message conversion
+    assert validated_messages == messages
+
 # ---------------------------------------------------------------------------
 # Regular completion tests
 # ---------------------------------------------------------------------------
@@ -494,16 +640,7 @@ async def test_regular_completion(client):
     }
     
     # Mock the Mistral client's complete method
-    mock_response = types.SimpleNamespace(
-        choices=[
-            types.SimpleNamespace(
-                message=types.SimpleNamespace(
-                    content="Hello! How can I help you?",
-                    tool_calls=None
-                )
-            )
-        ]
-    )
+    mock_response = create_mock_mistral_response(content="Hello! How can I help you?")
     
     def mock_complete(**kwargs):
         return mock_response
@@ -525,25 +662,14 @@ async def test_regular_completion_with_tools(client):
     }
     
     # Mock tool call response
-    mock_tool_call = types.SimpleNamespace(
-        id="call_123",
-        type="function",
-        function=types.SimpleNamespace(
-            name="test_tool",
-            arguments='{"arg": "value"}'
-        )
-    )
+    mock_tool_call = types.SimpleNamespace()
+    mock_tool_call.id = "call_123"
+    mock_tool_call.type = "function"
+    mock_tool_call.function = types.SimpleNamespace()
+    mock_tool_call.function.name = "test_tool"
+    mock_tool_call.function.arguments = '{"arg": "value"}'
     
-    mock_response = types.SimpleNamespace(
-        choices=[
-            types.SimpleNamespace(
-                message=types.SimpleNamespace(
-                    content=None,
-                    tool_calls=[mock_tool_call]
-                )
-            )
-        ]
-    )
+    mock_response = create_mock_mistral_response(content=None, tool_calls=[mock_tool_call])
     
     def mock_complete(**kwargs):
         return mock_response
@@ -555,6 +681,47 @@ async def test_regular_completion_with_tools(client):
     assert result["response"] is None
     assert len(result["tool_calls"]) == 1
     assert result["tool_calls"][0]["function"]["name"] == "test_tool"
+
+@pytest.mark.asyncio
+async def test_regular_completion_with_name_mapping(client):
+    """Test regular completion with tool name restoration."""
+    request_params = {
+        "model": "mistral-large-latest",
+        "messages": [{"role": "user", "content": "Use a tool"}],
+        "tools": [{"type": "function", "function": {"name": "test_tool_sanitized"}}]
+    }
+    
+    # Mock tool call response
+    mock_tool_call = types.SimpleNamespace()
+    mock_tool_call.id = "call_123"
+    mock_tool_call.type = "function"
+    mock_tool_call.function = types.SimpleNamespace()
+    mock_tool_call.function.name = "test_tool_sanitized"
+    mock_tool_call.function.arguments = '{"arg": "value"}'
+    
+    mock_response = create_mock_mistral_response(content=None, tool_calls=[mock_tool_call])
+    
+    def mock_complete(**kwargs):
+        return mock_response
+    
+    client.client.chat.complete = mock_complete
+    
+    # Mock name mapping
+    name_mapping = {"test_tool_sanitized": "test.tool:original"}
+    
+    def mock_restore(response, mapping):
+        if response.get("tool_calls") and mapping:
+            for tool_call in response["tool_calls"]:
+                sanitized_name = tool_call["function"]["name"]
+                if sanitized_name in mapping:
+                    tool_call["function"]["name"] = mapping[sanitized_name]
+        return response
+    
+    client._restore_tool_names_in_response = mock_restore
+    
+    result = await client._regular_completion(request_params, name_mapping)
+    
+    assert result["tool_calls"][0]["function"]["name"] == "test.tool:original"
 
 @pytest.mark.asyncio
 async def test_regular_completion_error_handling(client):
@@ -590,32 +757,9 @@ async def test_stream_completion_async(client):
     
     # Mock streaming chunks
     def mock_stream_chunks():
-        # Mock Mistral streaming response structure
         chunks = [
-            types.SimpleNamespace(
-                data=types.SimpleNamespace(
-                    choices=[
-                        types.SimpleNamespace(
-                            delta=types.SimpleNamespace(
-                                content="Hello",
-                                tool_calls=None
-                            )
-                        )
-                    ]
-                )
-            ),
-            types.SimpleNamespace(
-                data=types.SimpleNamespace(
-                    choices=[
-                        types.SimpleNamespace(
-                            delta=types.SimpleNamespace(
-                                content=" from Mistral!",
-                                tool_calls=None
-                            )
-                        )
-                    ]
-                )
-            )
+            create_mock_mistral_stream_chunk(content="Hello"),
+            create_mock_mistral_stream_chunk(content=" from Mistral!")
         ]
         
         for chunk in chunks:
@@ -644,40 +788,16 @@ async def test_stream_completion_async_with_tools(client):
     # Mock streaming chunks with tool calls
     def mock_stream_chunks():
         # Mock tool call structure in streaming
-        mock_tool_call = types.SimpleNamespace(
-            id="call_123",
-            type="function",
-            function=types.SimpleNamespace(
-                name="test_tool",
-                arguments='{"arg": "value"}'
-            )
-        )
+        mock_tool_call = types.SimpleNamespace()
+        mock_tool_call.id = "call_123"
+        mock_tool_call.type = "function"
+        mock_tool_call.function = types.SimpleNamespace()
+        mock_tool_call.function.name = "test_tool"
+        mock_tool_call.function.arguments = '{"arg": "value"}'
         
         chunks = [
-            types.SimpleNamespace(
-                data=types.SimpleNamespace(
-                    choices=[
-                        types.SimpleNamespace(
-                            delta=types.SimpleNamespace(
-                                content="I'll use a tool",
-                                tool_calls=None
-                            )
-                        )
-                    ]
-                )
-            ),
-            types.SimpleNamespace(
-                data=types.SimpleNamespace(
-                    choices=[
-                        types.SimpleNamespace(
-                            delta=types.SimpleNamespace(
-                                content=None,
-                                tool_calls=[mock_tool_call]
-                            )
-                        )
-                    ]
-                )
-            )
+            create_mock_mistral_stream_chunk(content="I'll use a tool"),
+            create_mock_mistral_stream_chunk(content=None, tool_calls=[mock_tool_call])
         ]
         
         for chunk in chunks:
@@ -693,6 +813,55 @@ async def test_stream_completion_async_with_tools(client):
     assert len(chunks) == 2
     assert chunks[0]["response"] == "I'll use a tool"
     assert len(chunks[1]["tool_calls"]) == 1
+
+@pytest.mark.asyncio
+async def test_stream_completion_async_with_name_mapping(client):
+    """Test streaming completion with tool name restoration."""
+    request_params = {
+        "model": "mistral-large-latest",
+        "messages": [{"role": "user", "content": "Use tools"}],
+        "tools": [{"type": "function", "function": {"name": "test_tool_sanitized"}}]
+    }
+    
+    # Mock streaming chunks with tool calls
+    def mock_stream_chunks():
+        # Mock tool call structure in streaming
+        mock_tool_call = types.SimpleNamespace()
+        mock_tool_call.id = "call_123"
+        mock_tool_call.type = "function"
+        mock_tool_call.function = types.SimpleNamespace()
+        mock_tool_call.function.name = "test_tool_sanitized"
+        mock_tool_call.function.arguments = '{"arg": "value"}'
+        
+        chunks = [
+            create_mock_mistral_stream_chunk(content=None, tool_calls=[mock_tool_call])
+        ]
+        
+        for chunk in chunks:
+            yield chunk
+    
+    client.client.chat.stream = lambda **kwargs: mock_stream_chunks()
+    
+    # Mock name mapping
+    name_mapping = {"test_tool_sanitized": "test.tool:original"}
+    
+    def mock_restore(response, mapping):
+        if response.get("tool_calls") and mapping:
+            for tool_call in response["tool_calls"]:
+                sanitized_name = tool_call["function"]["name"]
+                if sanitized_name in mapping:
+                    tool_call["function"]["name"] = mapping[sanitized_name]
+        return response
+    
+    client._restore_tool_names_in_response = mock_restore
+    
+    # Collect streaming results
+    chunks = []
+    async for chunk in client._stream_completion_async(request_params, name_mapping):
+        chunks.append(chunk)
+    
+    assert len(chunks) == 1
+    assert chunks[0]["tool_calls"][0]["function"]["name"] == "test.tool:original"
 
 @pytest.mark.asyncio
 async def test_stream_completion_async_error_handling(client):
@@ -731,7 +900,7 @@ async def test_create_completion_non_streaming(client):
     # Mock the regular completion method
     expected_result = {"response": "Hello!", "tool_calls": []}
     
-    async def mock_regular_completion(request_params):
+    async def mock_regular_completion(request_params, name_mapping=None):
         return expected_result
     
     client._regular_completion = mock_regular_completion
@@ -750,7 +919,7 @@ async def test_create_completion_streaming(client):
     messages = [{"role": "user", "content": "Hello"}]
     
     # Mock the streaming method
-    async def mock_stream_completion_async(request_params):
+    async def mock_stream_completion_async(request_params, name_mapping=None):
         yield {"response": "chunk1", "tool_calls": []}
         yield {"response": "chunk2", "tool_calls": []}
     
@@ -770,6 +939,31 @@ async def test_create_completion_streaming(client):
     assert chunks[1]["response"] == "chunk2"
 
 @pytest.mark.asyncio
+async def test_create_completion_streaming_not_supported(client, monkeypatch):
+    """Test create_completion with streaming when not supported."""
+    messages = [{"role": "user", "content": "Hello"}]
+    
+    # Mock streaming as not supported
+    monkeypatch.setattr(client, "supports_feature", lambda feature: feature != "streaming")
+    
+    # Mock the regular completion method (should be called instead of streaming)
+    expected_result = {"response": "Hello!", "tool_calls": []}
+    
+    async def mock_regular_completion(request_params, name_mapping=None):
+        return expected_result
+    
+    client._regular_completion = mock_regular_completion
+    
+    result = client.create_completion(messages, stream=True)
+    
+    # Should return an awaitable (not async iterator) when streaming not supported
+    assert hasattr(result, '__await__')
+    assert not hasattr(result, '__aiter__')
+    
+    final_result = await result
+    assert final_result == expected_result
+
+@pytest.mark.asyncio
 async def test_create_completion_with_tools(client):
     """Test create_completion with tools."""
     messages = [{"role": "user", "content": "What's the weather?"}]
@@ -783,7 +977,7 @@ async def test_create_completion_with_tools(client):
         ]
     }
     
-    async def mock_regular_completion(request_params):
+    async def mock_regular_completion(request_params, name_mapping=None):
         # Verify tools were passed and tool_choice was set
         assert "tools" in request_params
         assert request_params["tools"] == tools
@@ -798,12 +992,35 @@ async def test_create_completion_with_tools(client):
     assert len(result["tool_calls"]) == 1
 
 @pytest.mark.asyncio
+async def test_create_completion_with_tools_not_supported(client, monkeypatch):
+    """Test create_completion with tools when not supported."""
+    messages = [{"role": "user", "content": "What's the weather?"}]
+    tools = [{"type": "function", "function": {"name": "get_weather", "parameters": {}}}]
+    
+    # Mock tools as not supported
+    monkeypatch.setattr(client, "supports_feature", lambda feature: feature != "tools")
+    
+    # Mock regular completion
+    expected_result = {"response": "I cannot use tools.", "tool_calls": []}
+    
+    async def mock_regular_completion(request_params, name_mapping=None):
+        # Verify tools were not passed
+        assert "tools" not in request_params
+        return expected_result
+    
+    client._regular_completion = mock_regular_completion
+    
+    result = await client.create_completion(messages, tools=tools, stream=False)
+    
+    assert result == expected_result
+
+@pytest.mark.asyncio
 async def test_create_completion_with_tool_choice(client):
     """Test create_completion with explicit tool_choice."""
     messages = [{"role": "user", "content": "Use this specific tool"}]
     tools = [{"type": "function", "function": {"name": "specific_tool", "parameters": {}}}]
     
-    async def mock_regular_completion(request_params):
+    async def mock_regular_completion(request_params, name_mapping=None):
         # Verify custom tool_choice was preserved
         assert request_params["tool_choice"] == "required"
         return {"response": "Tool used", "tool_calls": []}
@@ -825,7 +1042,7 @@ async def test_create_completion_parameter_validation(client):
     messages = [{"role": "user", "content": "Hello"}]
     
     # Mock parameter validation - the fixture already sets up validate_parameters
-    async def mock_regular_completion(request_params):
+    async def mock_regular_completion(request_params, name_mapping=None):
         return {"response": "Hello!", "tool_calls": []}
     
     client._regular_completion = mock_regular_completion
@@ -850,7 +1067,7 @@ async def test_streaming_error_handling(client, monkeypatch):
     messages = [{"role": "user", "content": "test"}]
 
     # Mock streaming with error
-    async def error_stream(request_params):
+    async def error_stream(request_params, name_mapping=None):
         yield {"response": "Starting...", "tool_calls": []}
         yield {"response": "Streaming error: Test error", "tool_calls": [], "error": True}
 
@@ -871,7 +1088,7 @@ async def test_non_streaming_error_handling(client, monkeypatch):
     messages = [{"role": "user", "content": "test"}]
 
     # Mock error in regular completion
-    async def error_completion(request_params):
+    async def error_completion(request_params, name_mapping=None):
         return {"response": "Error: Test error", "tool_calls": [], "error": True}
 
     monkeypatch.setattr(client, "_regular_completion", error_completion)
@@ -880,6 +1097,34 @@ async def test_non_streaming_error_handling(client, monkeypatch):
 
     assert result["error"] is True
     assert "Test error" in result["response"]
+
+@pytest.mark.asyncio
+async def test_error_handling_comprehensive(client):
+    """Test comprehensive error handling."""
+    messages = [{"role": "user", "content": "Hello"}]
+    
+    # Test various error scenarios
+    error_scenarios = [
+        "Network error",
+        "Rate limit exceeded", 
+        "Invalid request",
+        "Timeout error"
+    ]
+    
+    for error_msg in error_scenarios:
+        def mock_complete_error(**kwargs):
+            raise Exception(error_msg)
+        
+        client.client.chat.complete = mock_complete_error
+        
+        result = await client._regular_completion({
+            "model": "mistral-large-latest",
+            "messages": messages
+        })
+        
+        assert "error" in result
+        assert result["error"] is True
+        assert error_msg in result["response"]
 
 # ---------------------------------------------------------------------------
 # Integration tests
@@ -894,16 +1139,7 @@ async def test_full_integration_non_streaming(client):
     ]
     
     # Mock the actual Mistral API call
-    mock_response = types.SimpleNamespace(
-        choices=[
-            types.SimpleNamespace(
-                message=types.SimpleNamespace(
-                    content="Hello! How can I help you today?",
-                    tool_calls=None
-                )
-            )
-        ]
-    )
+    mock_response = create_mock_mistral_response(content="Hello! How can I help you today?")
     
     captured_params = {}
     def mock_complete(**kwargs):
@@ -931,18 +1167,7 @@ async def test_full_integration_streaming(client):
     def mock_stream(**kwargs):
         story_parts = ["Once", " upon", " a", " time..."]
         for part in story_parts:
-            yield types.SimpleNamespace(
-                data=types.SimpleNamespace(
-                    choices=[
-                        types.SimpleNamespace(
-                            delta=types.SimpleNamespace(
-                                content=part,
-                                tool_calls=None
-                            )
-                        )
-                    ]
-                )
-            )
+            yield create_mock_mistral_stream_chunk(content=part)
     
     client.client.chat.stream = mock_stream
     
@@ -956,6 +1181,37 @@ async def test_full_integration_streaming(client):
     assert story_parts == ["Once", " upon", " a", " time..."]
 
 # ---------------------------------------------------------------------------
+# Tool compatibility tests
+# ---------------------------------------------------------------------------
+
+def test_tool_compatibility_info(client):
+    """Test tool compatibility information."""
+    info = client.get_tool_compatibility_info()
+    
+    assert info["supports_universal_naming"] is True
+    assert info["sanitization_method"] == "replace_chars"
+    assert info["restoration_method"] == "name_mapping"
+    assert "alphanumeric_underscore" in info["supported_name_patterns"]
+
+def test_tool_name_sanitization_and_restoration(client):
+    """Test tool name sanitization and restoration."""
+    # Test that sanitization is called (mocked to return tools unchanged)
+    tools = [{"type": "function", "function": {"name": "test.tool:name", "parameters": {}}}]
+    
+    # Mock sanitization to simulate real behavior
+    def mock_sanitize(tools_list):
+        client._current_name_mapping = {"test_tool_name": "test.tool:name"}
+        return [{"type": "function", "function": {"name": "test_tool_name", "parameters": {}}}]
+    
+    client._sanitize_tool_names = mock_sanitize
+    
+    sanitized_tools = client._sanitize_tool_names(tools)
+    
+    # Verify sanitization occurred
+    assert sanitized_tools[0]["function"]["name"] == "test_tool_name"
+    assert "test_tool_name" in client._current_name_mapping
+
+# ---------------------------------------------------------------------------
 # Interface compliance tests
 # ---------------------------------------------------------------------------
 
@@ -966,7 +1222,7 @@ async def test_interface_compliance(client):
     messages = [{"role": "user", "content": "Test"}]
     
     # Mock the completion
-    async def mock_completion(request_params):
+    async def mock_completion(request_params, name_mapping=None):
         return {"response": "Test response", "tool_calls": []}
     
     client._regular_completion = mock_completion
@@ -980,7 +1236,7 @@ async def test_interface_compliance(client):
     assert "response" in result
     
     # Streaming should return async iterator
-    async def mock_stream(request_params):
+    async def mock_stream(request_params, name_mapping=None):
         yield {"response": "chunk1", "tool_calls": []}
         yield {"response": "chunk2", "tool_calls": []}
     
@@ -1022,7 +1278,7 @@ async def test_complex_conversation_flow(client):
     tools = [{"type": "function", "function": {"name": "analyze_image", "parameters": {}}}]
 
     # Mock completion
-    async def mock_completion(request_params):
+    async def mock_completion(request_params, name_mapping=None):
         return {"response": "Complex conversation complete", "tool_calls": []}
 
     client._regular_completion = mock_completion
@@ -1037,6 +1293,7 @@ async def test_cleanup(client):
     """Test client cleanup."""
     await client.close()
     # Mistral client doesn't require explicit cleanup, so this should pass without error
+    assert client._current_name_mapping == {}
 
 # ---------------------------------------------------------------------------
 # Configuration edge cases
@@ -1074,7 +1331,7 @@ async def test_unsupported_features_graceful_handling(client, monkeypatch):
     tools = [{"type": "function", "function": {"name": "test_tool", "parameters": {}}}]
     
     # Mock completion
-    async def mock_completion(request_params):
+    async def mock_completion(request_params, name_mapping=None):
         # Verify that unsupported features were handled gracefully
         assert "tools" not in request_params
         return {"response": "Features handled gracefully", "tool_calls": []}
@@ -1108,3 +1365,45 @@ def test_api_key_configuration(mock_configuration):
     
     # Should store the custom API key
     assert client.client.api_key == custom_key
+
+# ---------------------------------------------------------------------------
+# Feature support validation tests
+# ---------------------------------------------------------------------------
+
+def test_feature_support_validation(client, monkeypatch):
+    """Test that feature support is properly validated."""
+    # Test supported features (from fixture)
+    supported_features = ["text", "streaming", "tools", "vision", "system_messages", "multimodal"]
+    
+    for feature in supported_features:
+        assert client.supports_feature(feature) is True
+    
+    # Test unsupported features
+    unsupported_features = ["json_mode", "reasoning", "parallel_calls"]
+    
+    for feature in unsupported_features:
+        assert client.supports_feature(feature) is False
+    
+    # Test individual feature isolation
+    for feature in supported_features:
+        # Mock only this feature as supported
+        monkeypatch.setattr(client, "supports_feature", lambda f, target_feature=feature: f == target_feature)
+        
+        # Test that only the target feature is supported
+        assert client.supports_feature(feature) is True
+        
+        # Test that other features are not supported
+        other_features = [f for f in supported_features if f != feature]
+        for other_feature in other_features:
+            assert client.supports_feature(other_feature) is False
+
+def test_codestral_model_features(codestral_client):
+    """Test that Codestral model has code generation features."""
+    info = codestral_client.get_model_info()
+    
+    # Codestral model should have code generation capabilities
+    assert info["mistral_specific"]["supports_code_generation"] is True
+    assert info["supports_reasoning"] is True
+    assert info["supports_tools"] is True
+    # Codestral typically doesn't have vision
+    assert info["supports_vision"] is False

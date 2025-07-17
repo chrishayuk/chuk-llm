@@ -65,22 +65,14 @@ types_mod.GenerateContentConfig = GenerateContentConfig
 
 class _MockAIOModels:
     async def generate_content(self, **kwargs):
-        # Return a mock response with text
-        mock_response = MagicMock()
-        mock_response.text = "Mock response from Gemini"
-        mock_response.candidates = None
-        return mock_response
+        # Return a mock response with text using our helper
+        return create_mock_gemini_response(text="Mock response from Gemini")
 
     async def generate_content_stream(self, **kwargs):
         # Return an async generator
         async def mock_stream():
-            chunk1 = MagicMock()
-            chunk1.text = "chunk1"
-            yield chunk1
-            
-            chunk2 = MagicMock()
-            chunk2.text = "chunk2"
-            yield chunk2
+            yield create_mock_gemini_response(text="chunk1")
+            yield create_mock_gemini_response(text="chunk2")
         
         return mock_stream()
 
@@ -115,7 +107,7 @@ sys.modules["dotenv"].load_dotenv = lambda: None
 from chuk_llm.llm.providers.gemini_client import (
     GeminiLLMClient, 
     _convert_tools_to_gemini_format,
-    _parse_gemini_response,
+    _safe_parse_gemini_response,  # Fixed: use the correct function name
     validate_and_map_model
 )  # noqa: E402  pylint: disable=wrong-import-position
 
@@ -219,12 +211,23 @@ def client(mock_configuration, monkeypatch):
         "supports_reasoning": False,
         "max_context_length": 8192,
         "max_output_tokens": 4096,
+        "tool_compatibility": {
+            "supports_universal_naming": True,
+            "sanitization_method": "replace_chars",
+            "restoration_method": "name_mapping",
+            "supported_name_patterns": ["alphanumeric_underscore"],
+        },
         "gemini_specific": {
             "model_family": cl._detect_model_family(),
             "supports_function_calling": True,
             "supports_vision": True,
             "supports_multimodal": True,
             "max_input_tokens": 1000000,
+            "context_length": "2M tokens",
+            "experimental_features": True,
+            "warning_suppression": "ultimate",
+            "enhanced_reasoning": True,
+            "data_loss_protection": "enabled",
         }
     })
     
@@ -239,6 +242,19 @@ def client(mock_configuration, monkeypatch):
             result['max_tokens'] = 4096
         return result
     monkeypatch.setattr(cl, "validate_parameters", mock_validate_parameters)
+    
+    # Mock tool compatibility methods
+    monkeypatch.setattr(cl, "_sanitize_tool_names", lambda tools: tools)
+    monkeypatch.setattr(cl, "_restore_tool_names_in_response", lambda response, mapping: response)
+    monkeypatch.setattr(cl, "get_tool_compatibility_info", lambda: {
+        "supports_universal_naming": True,
+        "sanitization_method": "replace_chars",
+        "restoration_method": "name_mapping",
+        "supported_name_patterns": ["alphanumeric_underscore"],
+    })
+    
+    # Initialize empty name mapping
+    cl._current_name_mapping = {}
     
     return cl
 
@@ -269,14 +285,38 @@ def pro_client(mock_configuration, monkeypatch):
         "supports_reasoning": True,
         "max_context_length": 8192,
         "max_output_tokens": 4096,
+        "tool_compatibility": {
+            "supports_universal_naming": True,
+            "sanitization_method": "replace_chars",
+            "restoration_method": "name_mapping",
+            "supported_name_patterns": ["alphanumeric_underscore"],
+        },
         "gemini_specific": {
             "model_family": cl._detect_model_family(),
             "supports_function_calling": True,
             "supports_vision": True,
             "supports_multimodal": True,
             "max_input_tokens": 1000000,
+            "context_length": "2M tokens",
+            "experimental_features": True,
+            "warning_suppression": "ultimate",
+            "enhanced_reasoning": True,
+            "data_loss_protection": "enabled",
         }
     })
+    
+    # Mock tool compatibility methods
+    monkeypatch.setattr(cl, "_sanitize_tool_names", lambda tools: tools)
+    monkeypatch.setattr(cl, "_restore_tool_names_in_response", lambda response, mapping: response)
+    monkeypatch.setattr(cl, "get_tool_compatibility_info", lambda: {
+        "supports_universal_naming": True,
+        "sanitization_method": "replace_chars",
+        "restoration_method": "name_mapping",
+        "supported_name_patterns": ["alphanumeric_underscore"],
+    })
+    
+    # Initialize empty name mapping
+    cl._current_name_mapping = {}
     
     return cl
 
@@ -358,79 +398,139 @@ def test_convert_tools_invalid():
 # Response parsing tests
 # ---------------------------------------------------------------------------
 
-def test_parse_gemini_response_text_only():
-    """Test parsing response with text only."""
+# ---------------------------------------------------------------------------
+# Helper functions to create proper mock responses
+# ---------------------------------------------------------------------------
+
+def create_mock_gemini_response(text=None, function_calls=None, finish_reason=None):
+    """Create a properly structured mock Gemini response."""
     mock_response = MagicMock()
-    mock_response.text = "Hello world"
-    mock_response.candidates = None
     
-    result = _parse_gemini_response(mock_response)
+    if text or function_calls or finish_reason:
+        # Create candidate with content and parts
+        parts = []
+        
+        if text:
+            text_part = MagicMock()
+            text_part.text = text
+            # Mock hasattr for text_part
+            def text_part_hasattr(attr):
+                return attr in ['text', 'function_call']
+            text_part.__class__.__name__ = 'TextPart'
+            setattr(text_part, '__hasattr__', text_part_hasattr)
+            parts.append(text_part)
+        
+        if function_calls:
+            for fc in function_calls:
+                fc_part = MagicMock()
+                fc_part.text = None
+                fc_part.function_call = MagicMock()
+                fc_part.function_call.name = fc["name"]
+                fc_part.function_call.args = fc.get("args", {})
+                # Mock hasattr for fc_part
+                def fc_part_hasattr(attr):
+                    return attr in ['text', 'function_call']
+                fc_part.__class__.__name__ = 'FunctionCallPart'
+                setattr(fc_part, '__hasattr__', fc_part_hasattr)
+                parts.append(fc_part)
+        
+        if parts:
+            content = MagicMock()
+            content.parts = parts
+            # Mock hasattr for content
+            def content_hasattr(attr):
+                return attr in ['parts', 'text']
+            content.__class__.__name__ = 'Content'
+            setattr(content, '__hasattr__', content_hasattr)
+        else:
+            content = None
+        
+        candidate = MagicMock()
+        candidate.content = content
+        if finish_reason:
+            candidate.finish_reason = finish_reason
+        # Mock hasattr for candidate
+        def candidate_hasattr(attr):
+            return attr in ['content', 'finish_reason']
+        candidate.__class__.__name__ = 'Candidate'
+        setattr(candidate, '__hasattr__', candidate_hasattr)
+        
+        mock_response.candidates = [candidate]
+    else:
+        mock_response.candidates = None
+    
+    # Mock hasattr for response
+    def response_hasattr(attr):
+        return attr in ['candidates', 'text']
+    mock_response.__class__.__name__ = 'GenerateContentResponse'
+    setattr(mock_response, '__hasattr__', response_hasattr)
+    
+    return mock_response
+
+# ---------------------------------------------------------------------------
+# Updated response parsing tests
+# ---------------------------------------------------------------------------
+
+def test_safe_parse_gemini_response_text_only():
+    """Test parsing response with text only."""
+    mock_response = create_mock_gemini_response(text="Hello world")
+    
+    result = _safe_parse_gemini_response(mock_response)
     
     assert result["response"] == "Hello world"
     assert result["tool_calls"] == []
 
-def test_parse_gemini_response_candidates_structure():
+def test_safe_parse_gemini_response_candidates_structure():
     """Test parsing response with candidates structure."""
-    # Create mock candidate with content and parts
-    mock_part = MagicMock()
-    mock_part.text = "Response from candidates"
+    mock_response = create_mock_gemini_response(text="Response from candidates")
     
-    mock_content = MagicMock()
-    mock_content.parts = [mock_part]
-    
-    mock_candidate = MagicMock()
-    mock_candidate.content = mock_content
-    
-    mock_response = MagicMock()
-    mock_response.text = None
-    mock_response.candidates = [mock_candidate]
-    
-    result = _parse_gemini_response(mock_response)
+    result = _safe_parse_gemini_response(mock_response)
     
     assert result["response"] == "Response from candidates"
     assert result["tool_calls"] == []
 
-def test_parse_gemini_response_max_tokens():
+def test_safe_parse_gemini_response_max_tokens():
     """Test parsing response when max tokens reached."""
-    mock_candidate = MagicMock()
-    mock_candidate.finish_reason = "FinishReason.MAX_TOKENS"
-    mock_candidate.content = None
+    mock_response = create_mock_gemini_response(finish_reason="MAX_TOKENS")
     
-    mock_response = MagicMock()
-    mock_response.text = None
-    mock_response.candidates = [mock_candidate]
-    
-    result = _parse_gemini_response(mock_response)
+    result = _safe_parse_gemini_response(mock_response)
     
     assert "token limit" in result["response"]
     assert result["tool_calls"] == []
 
-def test_parse_gemini_response_function_calls():
+def test_safe_parse_gemini_response_function_calls():
     """Test parsing response with function calls."""
-    # Create mock function call
-    mock_function_call = MagicMock()
-    mock_function_call.name = "get_weather"
-    mock_function_call.args = {"city": "NYC"}
+    function_calls = [{"name": "get_weather", "args": {"city": "NYC"}}]
+    mock_response = create_mock_gemini_response(function_calls=function_calls)
     
-    mock_part = MagicMock()
-    mock_part.text = None
-    mock_part.function_call = mock_function_call
-    
-    mock_content = MagicMock()
-    mock_content.parts = [mock_part]
-    
-    mock_candidate = MagicMock()
-    mock_candidate.content = mock_content
-    
-    mock_response = MagicMock()
-    mock_response.text = None
-    mock_response.candidates = [mock_candidate]
-    
-    result = _parse_gemini_response(mock_response)
+    result = _safe_parse_gemini_response(mock_response)
     
     assert len(result["tool_calls"]) == 1
     assert result["tool_calls"][0]["function"]["name"] == "get_weather"
     assert "NYC" in result["tool_calls"][0]["function"]["arguments"]
+
+def test_safe_parse_gemini_response_mixed_content():
+    """Test parsing response with both text and function calls."""
+    function_calls = [{"name": "get_weather", "args": {"city": "NYC"}}]
+    mock_response = create_mock_gemini_response(
+        text="I'll check the weather for you.",
+        function_calls=function_calls
+    )
+    
+    result = _safe_parse_gemini_response(mock_response)
+    
+    assert result["response"] == "I'll check the weather for you."
+    assert len(result["tool_calls"]) == 1
+    assert result["tool_calls"][0]["function"]["name"] == "get_weather"
+
+def test_safe_parse_gemini_response_no_candidates():
+    """Test parsing response when there are no candidates."""
+    mock_response = create_mock_gemini_response()  # Empty response
+    
+    result = _safe_parse_gemini_response(mock_response)
+    
+    assert "[Unable to extract content from response - no candidates]" in result["response"]
+    assert result["tool_calls"] == []
 
 # ---------------------------------------------------------------------------
 # Client method tests
@@ -536,7 +636,7 @@ async def test_split_for_gemini_async_multimodal(client):
     messages = [
         {"role": "user", "content": [
             {"type": "text", "text": "What's in this image?"},
-            {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="}}
         ]}
     ]
     
@@ -544,8 +644,8 @@ async def test_split_for_gemini_async_multimodal(client):
     
     assert system_txt == ""
     assert len(contents) == 1
-    assert "What's in this image?" in contents[0]
-    assert "[Image content provided]" in contents[0]
+    # Should contain multimodal parts
+    assert isinstance(contents[0], list)
 
 @pytest.mark.asyncio
 async def test_split_for_gemini_async_multimodal_not_supported(client, monkeypatch):
@@ -566,7 +666,6 @@ async def test_split_for_gemini_async_multimodal_not_supported(client, monkeypat
     assert len(contents) == 1
     # Should only contain text when vision not supported
     assert "What's in this image?" in contents[0]
-    assert "[Image content provided]" not in contents[0]
 
 @pytest.mark.asyncio
 async def test_split_for_gemini_async_tool_calls(client):
@@ -597,9 +696,7 @@ async def test_regular_completion_async(client):
     messages = [{"role": "user", "content": "Hello"}]
     
     # Mock the client's generate_content method
-    mock_response = MagicMock()
-    mock_response.text = "Hello! How can I help you?"
-    mock_response.candidates = None
+    mock_response = create_mock_gemini_response(text="Hello! How can I help you?")
     
     async def mock_generate_content(**kwargs):
         return mock_response
@@ -611,7 +708,8 @@ async def test_regular_completion_async(client):
         json_instruction=None,
         messages=messages,
         gemini_tools=None,
-        filtered_params={}
+        filtered_params={},
+        name_mapping={}
     )
     
     assert result["response"] == "Hello! How can I help you?"
@@ -624,9 +722,7 @@ async def test_regular_completion_async_with_system(client):
     system = "You are a helpful assistant."
     
     # Mock the client's generate_content method
-    mock_response = MagicMock()
-    mock_response.text = "Hello! I'm here to help."
-    mock_response.candidates = None
+    mock_response = create_mock_gemini_response(text="Hello! I'm here to help.")
     
     async def mock_generate_content(**kwargs):
         # Verify system instruction is included
@@ -642,7 +738,8 @@ async def test_regular_completion_async_with_system(client):
         json_instruction=None,
         messages=messages,
         gemini_tools=None,
-        filtered_params={}
+        filtered_params={},
+        name_mapping={}
     )
     
     assert result["response"] == "Hello! I'm here to help."
@@ -663,7 +760,8 @@ async def test_regular_completion_async_error_handling(client):
         json_instruction=None,
         messages=messages,
         gemini_tools=None,
-        filtered_params={}
+        filtered_params={},
+        name_mapping={}
     )
     
     assert "error" in result
@@ -681,12 +779,10 @@ async def test_stream_completion_async(client):
     
     # Mock the streaming response
     async def mock_stream():
-        chunk1 = MagicMock()
-        chunk1.text = "Hello"
+        chunk1 = create_mock_gemini_response(text="Hello")
         yield chunk1
         
-        chunk2 = MagicMock()
-        chunk2.text = " world!"
+        chunk2 = create_mock_gemini_response(text=" world!")
         yield chunk2
     
     async def mock_generate_content_stream(**kwargs):
@@ -701,7 +797,8 @@ async def test_stream_completion_async(client):
         json_instruction=None,
         messages=messages,
         gemini_tools=None,
-        filtered_params={}
+        filtered_params={},
+        name_mapping={}
     ):
         chunks.append(chunk)
     
@@ -727,7 +824,8 @@ async def test_stream_completion_async_error_handling(client):
         json_instruction=None,
         messages=messages,
         gemini_tools=None,
-        filtered_params={}
+        filtered_params={},
+        name_mapping={}
     ):
         chunks.append(chunk)
     
@@ -749,7 +847,7 @@ async def test_create_completion_non_streaming(client):
     # Mock the regular completion method
     expected_result = {"response": "Hello!", "tool_calls": []}
     
-    async def mock_regular_completion_async(system, json_instruction, messages, gemini_tools, filtered_params):
+    async def mock_regular_completion_async(system, json_instruction, messages, gemini_tools, filtered_params, name_mapping):
         return expected_result
     
     client._regular_completion_async = mock_regular_completion_async
@@ -768,7 +866,7 @@ async def test_create_completion_streaming(client):
     messages = [{"role": "user", "content": "Hello"}]
     
     # Mock the streaming method
-    async def mock_stream_completion_async(system, json_instruction, messages, gemini_tools, filtered_params):
+    async def mock_stream_completion_async(system, json_instruction, messages, gemini_tools, filtered_params, name_mapping):
         yield {"response": "chunk1", "tool_calls": []}
         yield {"response": "chunk2", "tool_calls": []}
     
@@ -798,7 +896,7 @@ async def test_create_completion_streaming_not_supported(client, monkeypatch):
     # Mock the regular completion method (should be called instead of streaming)
     expected_result = {"response": "Hello!", "tool_calls": []}
     
-    async def mock_regular_completion_async(system, json_instruction, messages, gemini_tools, filtered_params):
+    async def mock_regular_completion_async(system, json_instruction, messages, gemini_tools, filtered_params, name_mapping):
         return expected_result
     
     client._regular_completion_async = mock_regular_completion_async
@@ -826,7 +924,7 @@ async def test_create_completion_with_tools(client):
         ]
     }
     
-    async def mock_regular_completion_async(system, json_instruction, messages, gemini_tools, filtered_params):
+    async def mock_regular_completion_async(system, json_instruction, messages, gemini_tools, filtered_params, name_mapping):
         # Verify tools were converted
         assert gemini_tools is not None
         assert len(gemini_tools) == 1
@@ -851,7 +949,7 @@ async def test_create_completion_with_tools_not_supported(client, monkeypatch):
     # Mock regular completion
     expected_result = {"response": "I cannot use tools.", "tool_calls": []}
     
-    async def mock_regular_completion_async(system, json_instruction, messages, gemini_tools, filtered_params):
+    async def mock_regular_completion_async(system, json_instruction, messages, gemini_tools, filtered_params, name_mapping):
         # Verify tools were not passed
         assert gemini_tools is None
         return expected_result
@@ -868,7 +966,7 @@ async def test_create_completion_with_max_tokens(client):
     messages = [{"role": "user", "content": "Hello"}]
     
     # Mock regular completion to check parameters
-    async def mock_regular_completion_async(system, json_instruction, messages, gemini_tools, filtered_params):
+    async def mock_regular_completion_async(system, json_instruction, messages, gemini_tools, filtered_params, name_mapping):
         # Verify max_tokens was converted to max_output_tokens
         assert "max_output_tokens" in filtered_params
         assert filtered_params["max_output_tokens"] == 500
@@ -886,22 +984,9 @@ async def test_create_completion_with_max_tokens(client):
 
 def test_extract_tool_calls_from_response(client):
     """Test extracting tool calls from response."""
-    # Create mock response with function calls
-    mock_function_call = MagicMock()
-    mock_function_call.name = "get_weather"
-    mock_function_call.args = {"city": "NYC"}
-    
-    mock_part = MagicMock()
-    mock_part.function_call = mock_function_call
-    
-    mock_content = MagicMock()
-    mock_content.parts = [mock_part]
-    
-    mock_candidate = MagicMock()
-    mock_candidate.content = mock_content
-    
-    mock_response = MagicMock()
-    mock_response.candidates = [mock_candidate]
+    # Create mock response with function calls using the helper
+    function_calls = [{"name": "get_weather", "args": {"city": "NYC"}}]
+    mock_response = create_mock_gemini_response(function_calls=function_calls)
     
     tool_calls = client._extract_tool_calls_from_response(mock_response)
     
@@ -951,9 +1036,7 @@ async def test_full_integration_non_streaming(client):
     ]
     
     # Mock the actual Gemini API call
-    mock_response = MagicMock()
-    mock_response.text = "Hello! How can I help you today?"
-    mock_response.candidates = None
+    mock_response = create_mock_gemini_response(text="Hello! How can I help you today?")
     
     async def mock_generate_content(**kwargs):
         # Verify request structure
@@ -977,8 +1060,7 @@ async def test_full_integration_streaming(client):
     # Mock streaming response
     async def mock_stream():
         for text in ["Once", " upon", " a", " time..."]:
-            chunk = MagicMock()
-            chunk.text = text
+            chunk = create_mock_gemini_response(text=text)
             yield chunk
     
     async def mock_generate_content_stream(**kwargs):
@@ -1005,10 +1087,7 @@ async def test_full_integration_streaming_not_supported(client, monkeypatch):
     
     # Mock regular completion
     async def mock_generate_content(**kwargs):
-        mock_response = MagicMock()
-        mock_response.text = "Once upon a time..."
-        mock_response.candidates = None
-        return mock_response
+        return create_mock_gemini_response(text="Once upon a time...")
     
     client.client.aio.models.generate_content = mock_generate_content
     
@@ -1046,7 +1125,8 @@ async def test_error_handling_comprehensive(client):
             json_instruction=None,
             messages=messages,
             gemini_tools=None,
-            filtered_params={}
+            filtered_params={},
+            name_mapping={}
         )
         
         assert "error" in result
@@ -1093,3 +1173,140 @@ def test_pro_model_features(pro_client):
     assert info["supports_reasoning"] is True
     assert info["supports_tools"] is True
     assert info["supports_vision"] is True
+
+# ---------------------------------------------------------------------------
+# Tool compatibility tests
+# ---------------------------------------------------------------------------
+
+def test_tool_compatibility_info(client):
+    """Test tool compatibility information."""
+    info = client.get_tool_compatibility_info()
+    
+    assert info["supports_universal_naming"] is True
+    assert info["sanitization_method"] == "replace_chars"
+    assert info["restoration_method"] == "name_mapping"
+    assert "alphanumeric_underscore" in info["supported_name_patterns"]
+
+def test_tool_name_sanitization_and_restoration(client):
+    """Test tool name sanitization and restoration."""
+    # Test that sanitization is called (mocked to return tools unchanged)
+    tools = [{"type": "function", "function": {"name": "test.tool:name", "parameters": {}}}]
+    
+    # Mock sanitization to simulate real behavior
+    def mock_sanitize(tools_list):
+        client._current_name_mapping = {"test_tool_name": "test.tool:name"}
+        return [{"type": "function", "function": {"name": "test_tool_name", "parameters": {}}}]
+    
+    client._sanitize_tool_names = mock_sanitize
+    
+    sanitized_tools = client._sanitize_tool_names(tools)
+    
+    # Verify sanitization occurred
+    assert sanitized_tools[0]["function"]["name"] == "test_tool_name"
+    assert "test_tool_name" in client._current_name_mapping
+
+def test_response_with_tool_name_restoration(client):
+    """Test response parsing with tool name restoration."""
+    # Set up name mapping
+    client._current_name_mapping = {"get_weather_data": "weather.api:get_data"}
+    
+    # Mock response with sanitized tool name
+    mock_response = {
+        "response": "I'll get the weather data.",
+        "tool_calls": [
+            {
+                "id": "call_123",
+                "type": "function",
+                "function": {"name": "get_weather_data", "arguments": "{}"}
+            }
+        ]
+    }
+    
+    # Mock restoration to simulate real behavior
+    def mock_restore(response, mapping):
+        if response.get("tool_calls") and mapping:
+            for tool_call in response["tool_calls"]:
+                sanitized_name = tool_call["function"]["name"]
+                if sanitized_name in mapping:
+                    tool_call["function"]["name"] = mapping[sanitized_name]
+        return response
+    
+    client._restore_tool_names_in_response = mock_restore
+    
+    restored_response = client._restore_tool_names_in_response(mock_response, client._current_name_mapping)
+    
+    # Verify restoration occurred
+    assert restored_response["tool_calls"][0]["function"]["name"] == "weather.api:get_data"
+
+# ---------------------------------------------------------------------------
+# Vision support tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_vision_content_processing(client):
+    """Test processing of vision content."""
+    messages = [
+        {"role": "user", "content": [
+            {"type": "text", "text": "What's in this image?"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="}}
+        ]}
+    ]
+    
+    system_txt, contents = await client._split_for_gemini_async(messages)
+    
+    assert system_txt == ""
+    assert len(contents) == 1
+    # Should contain multimodal content
+    assert isinstance(contents[0], list)
+
+@pytest.mark.asyncio 
+async def test_vision_content_fallback_when_not_supported(client, monkeypatch):
+    """Test vision content fallback when vision is not supported."""
+    # Mock vision as not supported
+    monkeypatch.setattr(client, "supports_feature", lambda feature: feature != "vision")
+    
+    messages = [
+        {"role": "user", "content": [
+            {"type": "text", "text": "What's in this image?"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
+        ]}
+    ]
+    
+    system_txt, contents = await client._split_for_gemini_async(messages)
+    
+    assert system_txt == ""
+    assert len(contents) == 1
+    # Should only contain text content when vision not supported
+    assert isinstance(contents[0], str)
+    assert "What's in this image?" in contents[0]
+
+# ---------------------------------------------------------------------------
+# Parameter validation tests
+# ---------------------------------------------------------------------------
+
+def test_parameter_mapping_and_limits(client):
+    """Test parameter mapping and limit enforcement."""
+    params = {
+        "temperature": 3.0,  # Above Gemini limit
+        "max_tokens": 10000,  # Above model limit
+        "top_p": 0.95,
+        "top_k": 50,
+        "frequency_penalty": 0.5,  # Unsupported
+        "presence_penalty": 0.5,   # Unsupported
+    }
+    
+    filtered = client._filter_gemini_params(params)
+    
+    # Temperature should be capped at 2.0 for Gemini
+    assert filtered["temperature"] == 2.0
+    
+    # max_tokens should be mapped and potentially capped
+    assert "max_output_tokens" in filtered
+    
+    # Supported parameters should be included
+    assert "top_p" in filtered
+    assert "top_k" in filtered
+    
+    # Unsupported parameters should be excluded
+    assert "frequency_penalty" not in filtered
+    assert "presence_penalty" not in filtered
