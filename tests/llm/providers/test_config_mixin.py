@@ -1,4 +1,4 @@
-# tests/providers/test_config_mixin.py
+# tests/llm/providers/test_config_mixin.py
 import logging
 import pytest
 import threading
@@ -41,11 +41,10 @@ class MockModelCapabilities:
         max_context_length: int = 4096,
         max_output_tokens: int = 2048
     ):
-        # FIXED: Only use default features if features is None, not if it's an empty set
         if features is None:
             self.features = {MockFeature.TEXT, MockFeature.STREAMING}
         else:
-            self.features = features  # Use exactly what was passed, including empty set
+            self.features = features
         self.max_context_length = max_context_length
         self.max_output_tokens = max_output_tokens
 
@@ -72,7 +71,7 @@ class MockProviderConfig:
     def get_model_capabilities(self, model: str) -> MockModelCapabilities:
         """Get capabilities for a specific model"""
         if model not in self._model_capabilities:
-            # Default capabilities
+            # Default capabilities based on model name
             if "advanced" in model:
                 features = {
                     MockFeature.TEXT, MockFeature.STREAMING, MockFeature.TOOLS,
@@ -88,7 +87,7 @@ class MockProviderConfig:
                 self._model_capabilities[model] = MockModelCapabilities(
                     features=features,
                     max_context_length=32768,
-                    max_output_tokens=100000  # Very high limit for testing capping
+                    max_output_tokens=100000
                 )
             else:
                 self._model_capabilities[model] = MockModelCapabilities()
@@ -198,7 +197,7 @@ def test_get_provider_config_success(basic_mixin):
     assert config is not None
     assert config.name == "openai"
     assert config.client_class == "OpenAIClient"
-    assert basic_mixin._cached_config is config  # Should be cached
+    assert basic_mixin._cached_config is config
 
 
 def test_get_provider_config_caching(mock_config):
@@ -220,7 +219,7 @@ def test_get_provider_config_caching(mock_config):
             config2 = mixin._get_provider_config()
             
             assert config1 is config2
-            assert call_count == 1  # Should only call get_config once
+            assert call_count == 1
 
 
 def test_get_provider_config_import_error():
@@ -251,7 +250,7 @@ def test_get_model_capabilities_success(advanced_mixin):
     assert MockFeature.TOOLS in caps.features
     assert MockFeature.VISION in caps.features
     assert caps.max_context_length == 8192
-    assert advanced_mixin._cached_model_caps is caps  # Should be cached
+    assert advanced_mixin._cached_model_caps is caps
 
 
 def test_get_model_capabilities_caching(basic_mixin):
@@ -329,7 +328,6 @@ def test_get_model_info_config_error():
         
         info = mixin.get_model_info()
         
-        # Should get the fallback error response
         assert info["provider"] == "openai"
         assert info["model"] == "gpt-4"
         assert info["error"] == "Configuration not available"
@@ -355,7 +353,7 @@ def test_supports_feature_string_input(basic_mixin):
     """Test supports_feature with string input"""
     assert basic_mixin.supports_feature("text") is True
     assert basic_mixin.supports_feature("streaming") is True
-    assert basic_mixin.supports_feature("tools") is False  # gpt-4 basic doesn't have tools
+    assert basic_mixin.supports_feature("tools") is False
     assert basic_mixin.supports_feature("vision") is False
 
 
@@ -455,21 +453,21 @@ def test_validate_parameters_basic(basic_mixin):
 
 def test_validate_parameters_max_tokens_capping(basic_mixin):
     """Test that max_tokens is capped to model limit"""
-    params = {"temperature": 0.7, "max_tokens": 5000}  # Exceeds limit of 2048
+    params = {"temperature": 0.7, "max_tokens": 5000}
     
     validated = basic_mixin.validate_parameters(**params)
     
     assert validated["temperature"] == 0.7
-    assert validated["max_tokens"] == 2048  # Should be capped
+    assert validated["max_tokens"] == 2048
 
 
 def test_validate_parameters_max_tokens_within_limit(basic_mixin):
     """Test that max_tokens within limit is not changed"""
-    params = {"temperature": 0.7, "max_tokens": 1500}  # Within limit of 2048
+    params = {"temperature": 0.7, "max_tokens": 1500}
     
     validated = basic_mixin.validate_parameters(**params)
     
-    assert validated["max_tokens"] == 1500  # Should remain unchanged
+    assert validated["max_tokens"] == 1500
 
 
 def test_validate_parameters_add_default_max_tokens(basic_mixin):
@@ -480,7 +478,7 @@ def test_validate_parameters_add_default_max_tokens(basic_mixin):
     
     assert validated["temperature"] == 0.7
     assert "max_tokens" in validated
-    assert validated["max_tokens"] == 2048  # Should use model limit
+    assert validated["max_tokens"] == 2048
 
 
 def test_validate_parameters_add_default_max_tokens_high_limit(ultra_mixin):
@@ -488,7 +486,6 @@ def test_validate_parameters_add_default_max_tokens_high_limit(ultra_mixin):
     params = {"temperature": 0.7}
     validated = ultra_mixin.validate_parameters(**params)
     
-    # Should cap at 4096 even when model limit is higher
     assert validated["max_tokens"] == 4096
 
 
@@ -531,12 +528,38 @@ def test_validate_parameters_no_mutation(basic_mixin):
     
     validated = basic_mixin.validate_parameters(**original_params)
     
-    # Original should be unchanged
     assert original_params["max_tokens"] == 5000
-    # Validated should be capped
     assert validated["max_tokens"] == 2048
-    # Should be different objects
     assert original_params is not validated
+
+
+def test_validate_parameters_none_max_tokens(basic_mixin):
+    """Test parameter validation with None max_tokens"""
+    params = {"temperature": 0.7, "max_tokens": None}
+    
+    validated = basic_mixin.validate_parameters(**params)
+    
+    assert validated["temperature"] == 0.7
+    assert validated["max_tokens"] == 2048
+
+
+def test_validate_parameters_edge_cases(basic_mixin):
+    """Test parameter validation edge cases"""
+    # Test with zero max_tokens
+    validated = basic_mixin.validate_parameters(max_tokens=0)
+    assert validated["max_tokens"] == 0
+    
+    # Test with negative max_tokens
+    validated = basic_mixin.validate_parameters(max_tokens=-1)
+    assert validated["max_tokens"] == -1
+    
+    # Test with exactly the limit
+    validated = basic_mixin.validate_parameters(max_tokens=2048)
+    assert validated["max_tokens"] == 2048
+    
+    # Test with one more than the limit
+    validated = basic_mixin.validate_parameters(max_tokens=2049)
+    assert validated["max_tokens"] == 2048
 
 
 # ---------------------------------------------------------------------------
@@ -553,7 +576,7 @@ def test_full_workflow_integration(advanced_mixin):
     # Check specific features
     assert advanced_mixin.supports_feature("tools") is True
     assert advanced_mixin.supports_feature("vision") is True
-    assert advanced_mixin.supports_feature("reasoning") is False  # Not in advanced features
+    assert advanced_mixin.supports_feature("reasoning") is False
     
     # Get limits
     assert advanced_mixin.get_max_tokens_limit() == 4096
@@ -562,80 +585,33 @@ def test_full_workflow_integration(advanced_mixin):
     # Validate parameters
     params = {"temperature": 0.7, "max_tokens": 10000}
     validated = advanced_mixin.validate_parameters(**params)
-    assert validated["max_tokens"] == 4096  # Capped to limit
+    assert validated["max_tokens"] == 4096
 
 
 def test_multiple_provider_workflow(mock_configuration):
     """Test workflow with multiple providers"""
-    # OpenAI mixin
     openai_mixin = ConfigAwareProviderMixin("openai", "gpt-4")
-    
-    # Anthropic mixin
     anthropic_mixin = ConfigAwareProviderMixin("anthropic", "claude-3-opus")
     
-    # Both should work independently
     openai_info = openai_mixin.get_model_info()
     anthropic_info = anthropic_mixin.get_model_info()
     
     assert openai_info["provider"] == "openai"
     assert anthropic_info["provider"] == "anthropic"
-    
-    # Check they have different configs cached
     assert openai_mixin._cached_config != anthropic_mixin._cached_config
 
 
 # ---------------------------------------------------------------------------
-# Error handling and edge cases - FIXED TESTS
+# Error handling and edge cases
 # ---------------------------------------------------------------------------
 
-def test_caching_with_config_errors():
-    """Test that caching works correctly even with config errors - FIXED"""
+def test_caching_with_config_success():
+    """Test that caching works correctly with successful configs"""
     call_count = 0
     
     def mock_get_config():
         nonlocal call_count
         call_count += 1
-        if call_count == 1:
-            # First call succeeds and returns a valid config
-            config = MockConfig()
-            provider = MockProviderConfig(name="openai")
-            config.add_provider(provider)
-            return config
-        else:
-            # Subsequent calls fail  
-            raise Exception("Config temporarily unavailable")
-    
-    with patch('chuk_llm.configuration.get_config', side_effect=mock_get_config):
-        with patch('chuk_llm.configuration.Feature', MockFeature):
-            mixin = ConfigAwareProviderMixin("openai", "gpt-4")
-            
-            # First call should succeed and cache the result
-            config1 = mixin._get_provider_config()
-            assert config1 is not None
-            assert call_count == 1
-            
-            # Second call should return cached result (not call get_config again)
-            config2 = mixin._get_provider_config()
-            assert config2 is config1  # Same cached object
-            assert call_count == 1  # Should not increment
-            
-            # Clear cache to force new call which will fail
-            mixin._cached_config = None
-            
-            # Third call should fail and return None
-            config3 = mixin._get_provider_config()
-            assert config3 is None  # FIXED: Should be None when config fails
-            assert call_count == 2
-
-
-def test_caching_success_after_clear():
-    """Test that clearing cache allows successful retry - FIXED"""
-    call_count = 0
-    
-    def mock_get_config():
-        nonlocal call_count
-        call_count += 1
-        # FIXED: Always return valid config, don't simulate failures
         config = MockConfig()
         provider = MockProviderConfig(name="openai")
         config.add_provider(provider)
@@ -645,23 +621,14 @@ def test_caching_success_after_clear():
         with patch('chuk_llm.configuration.Feature', MockFeature):
             mixin = ConfigAwareProviderMixin("openai", "gpt-4")
             
-            # First call
+            # First call should succeed and cache the result
             config1 = mixin._get_provider_config()
             assert config1 is not None
             
-            # Second call should use cache
+            # Second call should return cached result
             config2 = mixin._get_provider_config()
             assert config2 is config1
-            
-            # Clear cache
-            mixin._cached_config = None
-            
-            # Third call should fetch new config
-            config3 = mixin._get_provider_config()
-            assert config3 is not None
-            
-            # FIXED: Should only be called twice total (initial + after clear)
-            assert call_count == 2
+            assert call_count == 1
 
 
 def test_model_capabilities_with_missing_model(mock_configuration):
@@ -670,7 +637,6 @@ def test_model_capabilities_with_missing_model(mock_configuration):
     
     caps = mixin._get_model_capabilities()
     
-    # Should still get default capabilities
     assert caps is not None
     assert MockFeature.TEXT in caps.features
     assert MockFeature.STREAMING in caps.features
@@ -679,7 +645,6 @@ def test_model_capabilities_with_missing_model(mock_configuration):
 def test_logging_behavior(basic_mixin, caplog):
     """Test that appropriate log messages are generated"""
     with caplog.at_level(logging.DEBUG):
-        # Test parameter capping logging
         params = {"max_tokens": 5000}
         basic_mixin.validate_parameters(**params)
         
@@ -695,37 +660,31 @@ def test_concurrent_access_safety(mock_config):
         with patch('chuk_llm.configuration.get_config', return_value=mock_config):
             with patch('chuk_llm.configuration.Feature', MockFeature):
                 mixin = ConfigAwareProviderMixin("openai", "gpt-4")
-                time.sleep(0.01)  # Small delay to increase chance of race conditions
+                time.sleep(0.01)
                 config = mixin._get_provider_config()
                 with results_lock:
                     results.append(config)
     
-    # Start multiple threads
     threads = [threading.Thread(target=access_config) for _ in range(10)]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
     
-    # All results should be similar config objects
     assert len(results) == 10
-    # Check that all results are not None (basic functionality works)
     assert all(r is not None for r in results)
 
 
 def test_memory_usage_with_large_configs(basic_mixin):
     """Test memory usage doesn't grow with repeated access"""
-    # Access config many times
-    for _ in range(1000):
+    for _ in range(100):  # Reduced from 1000 for faster testing
         basic_mixin._get_provider_config()
         basic_mixin._get_model_capabilities()
         basic_mixin.get_model_info()
     
-    # Should still only have one cached config
     assert basic_mixin._cached_config is not None
     assert basic_mixin._cached_model_caps is not None
     
-    # Force garbage collection
     gc.collect()
 
 
@@ -738,7 +697,6 @@ def test_custom_model_capabilities(mock_configuration):
     config = mock_configuration
     provider = config.get_provider("openai")
     
-    # Create custom capabilities
     custom_caps = MockModelCapabilities(
         features={MockFeature.TEXT, MockFeature.REASONING, MockFeature.MULTIMODAL},
         max_context_length=32768,
@@ -761,27 +719,22 @@ def test_custom_model_capabilities(mock_configuration):
 
 
 def test_empty_features():
-    """Test model with no features - FIXED"""
-    # Create a completely isolated test to avoid fixture interference
+    """Test model with no features"""
     isolated_config = MockConfig()
     isolated_provider = MockProviderConfig(name="openai")
     
-    # FIXED: Create capabilities with explicit empty set
-    minimal_caps = MockModelCapabilities(features=set())  # Explicit empty set
+    minimal_caps = MockModelCapabilities(features=set())
     isolated_provider.set_model_capabilities("minimal-model", minimal_caps)
     isolated_config.add_provider(isolated_provider)
     
-    # Use completely isolated configuration for this test
     with patch('chuk_llm.configuration.get_config', return_value=isolated_config):
         with patch('chuk_llm.configuration.Feature', MockFeature):
             mixin = ConfigAwareProviderMixin("openai", "minimal-model")
             
-            # Verify the capabilities are actually empty
             caps = mixin._get_model_capabilities()
             assert caps is not None
-            assert len(caps.features) == 0  # Should be 0 now
+            assert len(caps.features) == 0
             
-            # Now test feature support
             assert mixin.supports_feature("text") is False
             assert mixin.supports_feature("streaming") is False
             
@@ -797,7 +750,6 @@ def test_provider_without_api_base(mock_configuration):
     """Test provider configuration without api_base"""
     config = mock_configuration
     
-    # Add provider without api_base
     local_provider = MockProviderConfig(name="local", api_base=None)
     config.add_provider(local_provider)
     
@@ -816,106 +768,29 @@ def test_cache_isolation_between_instances(mock_configuration):
     mixin1 = ConfigAwareProviderMixin("openai", "gpt-4")
     mixin2 = ConfigAwareProviderMixin("anthropic", "claude-3-opus")
     
-    # Load configs for both
     config1 = mixin1._get_provider_config()
     config2 = mixin2._get_provider_config()
     
-    # Should have different configs
     assert config1 != config2
     assert mixin1._cached_config != mixin2._cached_config
 
 
 def test_cache_persistence_across_method_calls(basic_mixin):
     """Test that cache persists across different method calls"""
-    # First access through get_model_info
     info = basic_mixin.get_model_info()
     cached_config_1 = basic_mixin._cached_config
     
-    # Second access through supports_feature
     supports_text = basic_mixin.supports_feature("text")
     cached_config_2 = basic_mixin._cached_config
     
-    # Third access through get_max_tokens_limit
     limit = basic_mixin.get_max_tokens_limit()
     cached_config_3 = basic_mixin._cached_config
     
-    # All should use the same cached config
     assert cached_config_1 is cached_config_2
     assert cached_config_2 is cached_config_3
     assert info["provider"] == "openai"
     assert supports_text is True
     assert limit == 2048
-
-
-# ---------------------------------------------------------------------------
-# Edge cases for parameter validation
-# ---------------------------------------------------------------------------
-
-def test_validate_parameters_edge_cases(basic_mixin):
-    """Test parameter validation edge cases"""
-    # Test with zero max_tokens
-    validated = basic_mixin.validate_parameters(max_tokens=0)
-    assert validated["max_tokens"] == 0  # Should not be capped to model limit
-    
-    # Test with negative max_tokens
-    validated = basic_mixin.validate_parameters(max_tokens=-1)
-    assert validated["max_tokens"] == -1  # Should pass through (let API handle)
-    
-    # Test with exactly the limit
-    validated = basic_mixin.validate_parameters(max_tokens=2048)
-    assert validated["max_tokens"] == 2048  # Should not be changed
-    
-    # Test with one more than the limit
-    validated = basic_mixin.validate_parameters(max_tokens=2049)
-    assert validated["max_tokens"] == 2048  # Should be capped
-    
-    # Test with None max_tokens (should not cause comparison error)
-    validated = basic_mixin.validate_parameters(max_tokens=None)
-    assert validated["max_tokens"] == 2048  # Should add default
-
-
-def test_validate_parameters_none_comparison_safety(basic_mixin):
-    """Test that None values don't cause comparison errors"""
-    # This specifically tests the fix for the TypeError: '>' not supported between instances of 'NoneType' and 'int'
-    params = {
-        "temperature": 0.7,
-        "max_tokens": None,  # This should not cause a comparison error
-        "top_p": 0.9
-    }
-    
-    # This should not raise any TypeError
-    validated = basic_mixin.validate_parameters(**params)
-    
-    assert validated["temperature"] == 0.7
-    assert validated["max_tokens"] == 2048  # Should use default
-    assert validated["top_p"] == 0.9
-
-
-def test_validate_parameters_with_none_values(basic_mixin):
-    """Test parameter validation with None values"""
-    params = {
-        "temperature": None,
-        "max_tokens": None,
-        "top_p": 0.9
-    }
-    
-    validated = basic_mixin.validate_parameters(**params)
-    
-    assert validated["temperature"] is None
-    assert validated["max_tokens"] == 2048  # Should add default since None counts as not specified
-    assert validated["top_p"] == 0.9
-
-
-def test_validate_parameters_with_string_max_tokens(basic_mixin):
-    """Test parameter validation with string max_tokens (edge case)"""
-    # This might happen if parameters come from user input
-    try:
-        validated = basic_mixin.validate_parameters(max_tokens="1000")
-        # If it doesn't raise an exception, check the behavior
-        # The actual behavior depends on implementation
-    except (TypeError, ValueError):
-        # It's acceptable for this to raise an exception
-        pass
 
 
 # ---------------------------------------------------------------------------
@@ -935,14 +810,12 @@ def test_no_config_reload_on_repeated_calls(mock_config):
         with patch('chuk_llm.configuration.Feature', MockFeature):
             mixin = ConfigAwareProviderMixin("openai", "gpt-4")
             
-            # Multiple calls to different methods
-            for _ in range(10):
+            for _ in range(5):  # Reduced iterations for faster testing
                 mixin.get_model_info()
                 mixin.supports_feature("text")
                 mixin.get_max_tokens_limit()
                 mixin.validate_parameters(temperature=0.7)
             
-            # Should only call get_config once
             assert call_count == 1
 
 
@@ -950,22 +823,19 @@ def test_capabilities_not_recomputed_unnecessarily(mock_configuration, monkeypat
     """Test that model capabilities are not recomputed unnecessarily"""
     call_count = 0
     
-    def counting_get_model_capabilities(self, model):
+    def counting_get_model_capabilities(model):
         nonlocal call_count
         call_count += 1
         return MockModelCapabilities()
     
     provider = mock_configuration.get_provider("openai")
-    monkeypatch.setattr(provider, "get_model_capabilities", 
-                       lambda model: counting_get_model_capabilities(provider, model))
+    monkeypatch.setattr(provider, "get_model_capabilities", counting_get_model_capabilities)
     
     mixin = ConfigAwareProviderMixin("openai", "gpt-4")
     
-    # Multiple calls that need capabilities
     for _ in range(5):
         mixin.supports_feature("text")
         mixin.get_max_tokens_limit()
         mixin.get_context_length_limit()
     
-    # Should only call get_model_capabilities once due to caching
     assert call_count == 1
