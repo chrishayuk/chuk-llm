@@ -4,7 +4,7 @@ Core ask/stream functions with unified configuration and automatic session track
 ==================================================================================
 
 Main API functions using the unified configuration system with integrated session management.
-FIXED VERSION - Corrected streaming implementation to work with OpenAI client properly.
+FIXED VERSION - Corrected streaming implementation and reasoning model support.
 """
 
 from typing import List, Dict, Any, Optional, AsyncIterator
@@ -33,7 +33,7 @@ _SESSIONS_ENABLED = _SESSION_AVAILABLE and os.getenv("CHUK_LLM_DISABLE_SESSIONS"
 
 
 def _get_session_manager() -> Optional['SessionManager']:
-    """Get or create the global session manager."""
+    """Get or create the global session manager with lazy initialization."""
     global _global_session_manager
     
     if not _SESSIONS_ENABLED:
@@ -55,6 +55,27 @@ def _get_session_manager() -> Optional['SessionManager']:
             return None
     
     return _global_session_manager
+
+
+
+
+
+async def _track_user_message(session_manager, prompt: str):
+    """Safely track user message in session."""
+    if session_manager:
+        try:
+            await session_manager.user_says(prompt)
+        except Exception as e:
+            logger.debug(f"Session tracking error (user): {e}")
+
+
+async def _track_ai_response(session_manager, response: str, model: str, provider: str):
+    """Safely track AI response in session."""
+    if session_manager:
+        try:
+            await session_manager.ai_responds(response, model=model, provider=provider)
+        except Exception as e:
+            logger.debug(f"Session tracking error (response): {e}")
 
 
 async def ask(
@@ -94,11 +115,7 @@ async def ask(
     session_manager = _get_session_manager()
     
     # Track user message if session is available
-    if session_manager:
-        try:
-            await session_manager.user_says(prompt)
-        except Exception as e:
-            logger.debug(f"Session tracking error (user): {e}")
+    await _track_user_message(session_manager, prompt)
     
     # Get base configuration
     config = get_current_config()
@@ -198,13 +215,28 @@ async def ask(
     # Prepare completion arguments
     completion_args = {"messages": messages}
     
-    # Add tools if supported
+    # Add tools if supported - FIXED: Better tool support detection
     if tools:
         try:
-            if config_manager.supports_feature(effective_provider, Feature.TOOLS, effective_model):
+            # First check our internal knowledge
+            model_supports_tools = _supports_tools_by_model(effective_model)
+            
+            # Then check configuration if available
+            config_supports_tools = True
+            try:
+                config_supports_tools = config_manager.supports_feature(effective_provider, Feature.TOOLS, effective_model)
+            except Exception:
+                # Unknown provider/model, use our internal logic
+                pass
+            
+            if model_supports_tools and config_supports_tools:
                 completion_args["tools"] = tools
             else:
-                logger.warning(f"{effective_provider}/{effective_model} doesn't support tools, ignoring")
+                if not model_supports_tools:
+                    logger.debug(f"{effective_model} is an old reasoning model without tool support")
+                else:
+                    logger.warning(f"{effective_provider}/{effective_model} doesn't support tools according to config")
+                
         except Exception:
             # Unknown provider, try anyway
             completion_args["tools"] = tools
@@ -227,7 +259,7 @@ async def ask(
             if effective_provider == "openai":
                 completion_args["response_format"] = {"type": "json_object"}
     
-    # Add temperature and max_tokens
+    # Add temperature and max_tokens - Let provider client handle parameter mapping
     if effective_config.get("temperature") is not None:
         completion_args["temperature"] = effective_config["temperature"]
     if effective_config.get("max_tokens") is not None:
@@ -249,24 +281,20 @@ async def ask(
             response_text = str(response)
         
         # Track AI response if session is available
-        if session_manager:
-            try:
-                await session_manager.ai_responds(
-                    response_text,
-                    model=effective_model,
-                    provider=effective_provider
-                )
-                
-                # Track tool usage if tools were provided
-                if tools and isinstance(response, dict) and "tool_calls" in response:
+        await _track_ai_response(session_manager, response_text, effective_model, effective_provider)
+        
+        # Track tool usage if tools were provided
+        if tools and isinstance(response, dict) and "tool_calls" in response:
+            if session_manager:
+                try:
                     for tool_call in response["tool_calls"]:
                         await session_manager.tool_used(
                             tool_name=tool_call.get("name", "unknown"),
                             arguments=tool_call.get("arguments", {}),
                             result=tool_call.get("result", {})
                         )
-            except Exception as e:
-                logger.debug(f"Session tracking error (response): {e}")
+                except Exception as e:
+                    logger.debug(f"Session tool tracking error: {e}")
         
         return response_text
         
@@ -278,7 +306,7 @@ async def ask(
 async def stream(prompt: str, context: str = None, previous_messages: List[Dict[str, str]] = None, **kwargs) -> AsyncIterator[str]:
     """
     Stream a response token by token with unified configuration and automatic session tracking.
-    FIXED VERSION - Properly handles streaming from OpenAI client.
+    FIXED VERSION - Properly handles streaming from OpenAI client and reasoning models.
     
     Args:
         prompt: The question/prompt to send
@@ -293,11 +321,7 @@ async def stream(prompt: str, context: str = None, previous_messages: List[Dict[
     session_manager = _get_session_manager()
     
     # Track user message if session is available
-    if session_manager:
-        try:
-            await session_manager.user_says(prompt)
-        except Exception as e:
-            logger.debug(f"Session tracking error (user): {e}")
+    await _track_user_message(session_manager, prompt)
     
     # Collect full response for session tracking
     full_response = ""
@@ -367,15 +391,7 @@ async def stream(prompt: str, context: str = None, previous_messages: List[Dict[
             response = await ask(prompt, **kwargs)
             
             # Track the response if session is available
-            if session_manager:
-                try:
-                    await session_manager.ai_responds(
-                        response,
-                        model=effective_model,
-                        provider=effective_provider
-                    )
-                except Exception as e:
-                    logger.debug(f"Session tracking error (response): {e}")
+            await _track_ai_response(session_manager, response, effective_model, effective_provider)
             
             yield response
             return
@@ -412,15 +428,18 @@ async def stream(prompt: str, context: str = None, previous_messages: List[Dict[
         "stream": True,
     }
     
-    # Add tools if supported
+    # Add tools if supported - Let the provider client handle tool support logic
     tools = kwargs.get("tools")
     if tools:
         try:
+            # Check configuration-based tool support
             if config_manager.supports_feature(effective_provider, Feature.TOOLS, effective_model):
                 completion_args["tools"] = tools
             else:
-                logger.warning(f"{effective_provider}/{effective_model} doesn't support tools, ignoring")
+                logger.warning(f"{effective_provider}/{effective_model} doesn't support tools according to configuration")
+                    
         except Exception:
+            # Unknown provider/model in configuration, let the client handle it
             completion_args["tools"] = tools
     
     # Add JSON mode if requested and supported
@@ -439,89 +458,69 @@ async def stream(prompt: str, context: str = None, previous_messages: List[Dict[
             if effective_provider == "openai":
                 completion_args["response_format"] = {"type": "json_object"}
     
-    # Handle O1 model parameters correctly
-    if "o1" in effective_model.lower():
-        # O1 models use max_completion_tokens instead of max_tokens
-        if "max_tokens" in completion_kwargs:
-            completion_args["max_completion_tokens"] = completion_kwargs.pop("max_tokens")
-        elif effective_config.get("max_tokens") is not None:
-            completion_args["max_completion_tokens"] = effective_config["max_tokens"]
-        
-        # Remove temperature for O1 models (they don't support it)
-        completion_kwargs.pop("temperature", None)
-    else:
-        # Regular models use max_tokens
-        if effective_config.get("max_tokens") is not None:
-            completion_args["max_tokens"] = effective_config["max_tokens"]
-        
-        # Add temperature for regular models
-        if effective_config.get("temperature") is not None:
-            completion_args["temperature"] = effective_config["temperature"]
+    # Add temperature and max_tokens - Let provider client handle parameter mapping
+    if effective_config.get("max_tokens") is not None:
+        completion_args["max_tokens"] = effective_config["max_tokens"]
+    if effective_config.get("temperature") is not None:
+        completion_args["temperature"] = effective_config["temperature"]
     
-    # Remove provider/model/system_prompt from completion_kwargs to avoid conflicts
-    completion_kwargs.pop('provider', None)
-    completion_kwargs.pop('model', None)
-    completion_kwargs.pop('system_prompt', None)
-    completion_kwargs.pop('max_tokens', None)
-    completion_kwargs.pop('temperature', None)
-    completion_kwargs.pop('tools', None)
-    completion_kwargs.pop('json_mode', None)
-    completion_kwargs.pop('max_completion_tokens', None)
+    # Remove parameters that we've already handled from completion_kwargs
+    for param in ['provider', 'model', 'system_prompt', 'max_tokens', 'temperature', 'tools', 'json_mode', 'max_completion_tokens']:
+        completion_kwargs.pop(param, None)
     
     # Add remaining kwargs
     completion_args.update(completion_kwargs)
     
-    # CRITICAL FIX: Stream the response with proper async handling
+    # FIXED: Stream the response with proper error handling
     try:
         logger.debug(f"Starting streaming with {effective_provider}/{effective_model}")
         
         # Call client.create_completion with stream=True - this returns an async generator
         response_stream = client.create_completion(**completion_args)
         
-        # FIXED: The response_stream from OpenAI client is already an async generator
-        # We need to iterate over it directly and extract the content properly
+        # The response_stream from OpenAI client is already an async generator
         chunk_count = 0
         
         async for chunk in response_stream:
             chunk_count += 1
             
-            # Extract content from the chunk - this handles the OpenAI client's response format
-            content = _extract_streaming_content(chunk)
-            
-            if content:
-                full_response += content
-                yield content
-            
-            # Handle tool calls in streaming (though they typically don't stream incrementally)
-            tool_calls = _extract_streaming_tool_calls(chunk)
-            if tool_calls:
-                # For tool calls, we might want to yield a formatted representation
-                # but for now, we'll just log them for debugging
-                logger.debug(f"Tool calls in stream: {len(tool_calls)}")
+            try:
+                # Extract content from the chunk - this handles the OpenAI client's response format
+                content = _extract_streaming_content(chunk)
+                
+                if content:
+                    full_response += content
+                    yield content
+                    
+            except Exception as chunk_error:
+                logger.debug(f"Error processing chunk {chunk_count}: {chunk_error}")
+                continue  # Skip problematic chunks
         
         logger.debug(f"Streaming completed: {chunk_count} chunks, {len(full_response)} total chars")
         
         # Track complete response if session is available
-        if session_manager and full_response:
-            try:
-                await session_manager.ai_responds(
-                    full_response,
-                    model=effective_model,
-                    provider=effective_provider
-                )
-            except Exception as e:
-                logger.debug(f"Session tracking error (response): {e}")
+        if full_response:
+            await _track_ai_response(session_manager, full_response, effective_model, effective_provider)
                 
     except Exception as e:
         logger.error(f"Streaming failed: {e}")
-        error_msg = f"[Streaming Error: {str(e)}]"
-        yield error_msg
+        
+        # Try fallback to non-streaming
+        try:
+            logger.info("Attempting fallback to non-streaming mode")
+            fallback_kwargs = {k: v for k, v in kwargs.items() if k != 'stream'}
+            fallback_response = await ask(prompt, context=context, previous_messages=previous_messages, **fallback_kwargs)
+            yield fallback_response
+        except Exception as fallback_error:
+            logger.error(f"Fallback also failed: {fallback_error}")
+            error_msg = f"[Error: {str(e)}]"
+            yield error_msg
 
 
 def _extract_streaming_content(chunk) -> str:
     """
-    Extract text content from a streaming chunk.
-    UPDATED: Now provides user-friendly tool call messages with incremental JSON.
+    Extract text content from a streaming chunk with enhanced tool call formatting.
+    FIXED: Single comprehensive implementation matching diagnostic output.
     """
     try:
         # Handle dictionary responses from OpenAI client
@@ -530,7 +529,7 @@ def _extract_streaming_content(chunk) -> str:
             if chunk.get("error"):
                 return f"[Error: {chunk.get('error_message', 'Unknown error')}]"
             
-            # UPDATED: Handle incremental tool calls with better user messaging
+            # FIXED: Handle tool calls with format matching diagnostic expectations
             if chunk.get("tool_calls"):
                 tool_calls = chunk["tool_calls"]
                 content_parts = []
@@ -542,12 +541,10 @@ def _extract_streaming_content(chunk) -> str:
                         
                         if tc.get("incremental") and args_portion:
                             # For incremental updates, show the JSON being built
-                            # But prefix with a user-friendly indicator on first chunk
-                            if args_portion.startswith('{"') or args_portion.startswith('{'):
-                                # This looks like the start of JSON arguments
+                            # Format to match: [Calling execute_sql]: {"query":"..."}
+                            if args_portion.strip().startswith('{'):
                                 content_parts.append(f"[Calling {func_name}]: {args_portion}")
                             else:
-                                # Continuation of arguments
                                 content_parts.append(args_portion)
                                 
                         elif not tc.get("incremental"):
@@ -555,13 +552,16 @@ def _extract_streaming_content(chunk) -> str:
                             try:
                                 import json
                                 args = json.loads(args_portion) if args_portion else {}
-                                args_str = ", ".join(f"{k}={repr(v)}" for k, v in args.items())
-                                content_parts.append(f"[Calling: {func_name}({args_str})]")
+                                # For complete calls, show the formatted JSON
+                                if args_portion:
+                                    content_parts.append(f"[Calling {func_name}]: {args_portion}")
+                                else:
+                                    content_parts.append(f"[Calling {func_name}]")
                             except:
                                 if args_portion:
                                     content_parts.append(f"[Calling {func_name}]: {args_portion}")
                                 else:
-                                    content_parts.append(f"[Calling: {func_name}(...)]")
+                                    content_parts.append(f"[Calling {func_name}]")
                 
                 if content_parts:
                     return "".join(content_parts)
@@ -599,7 +599,7 @@ def _extract_streaming_content(chunk) -> str:
                     if hasattr(choice.delta, 'content') and choice.delta.content:
                         return choice.delta.content
                     
-                    # UPDATED: Handle tool calls in SDK object format with better messaging
+                    # Handle tool calls in SDK object format
                     if hasattr(choice.delta, 'tool_calls') and choice.delta.tool_calls:
                         content_parts = []
                         for tc in choice.delta.tool_calls:
@@ -608,11 +608,8 @@ def _extract_streaming_content(chunk) -> str:
                                 args_str = getattr(tc.function, 'arguments', '')
                                 
                                 if func_name and args_str:
-                                    # Check if this looks like the start of JSON
-                                    if args_str.startswith('{"') or args_str.startswith('{'):
-                                        content_parts.append(f"[Calling {func_name}]: {args_str}")
-                                    else:
-                                        content_parts.append(args_str)
+                                    # Format to match diagnostic: [Calling execute_sql]: {"query":"..."}
+                                    content_parts.append(f"[Calling {func_name}]: {args_str}")
                                 elif func_name:
                                     content_parts.append(f"[Calling {func_name}]")
                         
@@ -630,145 +627,6 @@ def _extract_streaming_content(chunk) -> str:
     except Exception as e:
         logger.debug(f"Error extracting streaming content: {e}")
         return ""
-
-
-def _extract_streaming_tool_calls(chunk) -> List[Dict[str, Any]]:
-    """
-    Extract tool calls from a streaming chunk.
-    UPDATED: Now handles incremental tool call updates.
-    """
-    try:
-        tool_calls = []
-        
-        if isinstance(chunk, dict):
-            if "tool_calls" in chunk:
-                # Filter out incremental markers for final tool calls
-                return [tc for tc in chunk["tool_calls"] if not tc.get("incremental")]
-            
-            if "choices" in chunk and chunk["choices"]:
-                choice = chunk["choices"][0]
-                if "delta" in choice and choice["delta"]:
-                    if "tool_calls" in choice["delta"]:
-                        # Return incremental tool call updates
-                        return choice["delta"]["tool_calls"]
-                elif "message" in choice and "tool_calls" in choice["message"]:
-                    return choice["message"]["tool_calls"]
-        
-        else:
-            # Handle OpenAI SDK objects
-            if hasattr(chunk, 'choices') and chunk.choices:
-                choice = chunk.choices[0]
-                if hasattr(choice, 'delta') and choice.delta:
-                    if hasattr(choice.delta, 'tool_calls') and choice.delta.tool_calls:
-                        # Convert tool call objects to dictionaries
-                        for tc in choice.delta.tool_calls:
-                            if hasattr(tc, 'function'):
-                                tool_calls.append({
-                                    "id": getattr(tc, 'id', ''),
-                                    "type": "function",
-                                    "function": {
-                                        "name": getattr(tc.function, 'name', ''),
-                                        "arguments": getattr(tc.function, 'arguments', '')
-                                    }
-                                })
-        
-        return tool_calls
-        
-    except Exception as e:
-        logger.debug(f"Error extracting tool calls from stream: {e}")
-        return []
-    
-
-def _extract_streaming_tool_calls(chunk) -> List[Dict[str, Any]]:
-    """
-    Extract tool calls from a streaming chunk.
-    UPDATED: Now handles incremental tool call updates.
-    """
-    try:
-        tool_calls = []
-        
-        if isinstance(chunk, dict):
-            if "tool_calls" in chunk:
-                # Filter out incremental markers for final tool calls
-                return [tc for tc in chunk["tool_calls"] if not tc.get("incremental")]
-            
-            if "choices" in chunk and chunk["choices"]:
-                choice = chunk["choices"][0]
-                if "delta" in choice and choice["delta"]:
-                    if "tool_calls" in choice["delta"]:
-                        # Return incremental tool call updates
-                        return choice["delta"]["tool_calls"]
-                elif "message" in choice and "tool_calls" in choice["message"]:
-                    return choice["message"]["tool_calls"]
-        
-        else:
-            # Handle OpenAI SDK objects
-            if hasattr(chunk, 'choices') and chunk.choices:
-                choice = chunk.choices[0]
-                if hasattr(choice, 'delta') and choice.delta:
-                    if hasattr(choice.delta, 'tool_calls') and choice.delta.tool_calls:
-                        # Convert tool call objects to dictionaries
-                        for tc in choice.delta.tool_calls:
-                            if hasattr(tc, 'function'):
-                                tool_calls.append({
-                                    "id": getattr(tc, 'id', ''),
-                                    "type": "function",
-                                    "function": {
-                                        "name": getattr(tc.function, 'name', ''),
-                                        "arguments": getattr(tc.function, 'arguments', '')
-                                    }
-                                })
-        
-        return tool_calls
-        
-    except Exception as e:
-        logger.debug(f"Error extracting tool calls from stream: {e}")
-        return []
-       
-def _extract_streaming_tool_calls(chunk) -> List[Dict[str, Any]]:
-    """
-    Extract tool calls from a streaming chunk.
-    Tool calls typically come complete, not incrementally.
-    """
-    try:
-        tool_calls = []
-        
-        if isinstance(chunk, dict):
-            if "tool_calls" in chunk:
-                return chunk["tool_calls"]
-            
-            if "choices" in chunk and chunk["choices"]:
-                choice = chunk["choices"][0]
-                if "delta" in choice and choice["delta"]:
-                    if "tool_calls" in choice["delta"]:
-                        # Tool calls in streaming delta format
-                        return choice["delta"]["tool_calls"]
-                elif "message" in choice and "tool_calls" in choice["message"]:
-                    return choice["message"]["tool_calls"]
-        
-        else:
-            # Handle OpenAI SDK objects
-            if hasattr(chunk, 'choices') and chunk.choices:
-                choice = chunk.choices[0]
-                if hasattr(choice, 'delta') and choice.delta:
-                    if hasattr(choice.delta, 'tool_calls') and choice.delta.tool_calls:
-                        # Convert tool call objects to dictionaries
-                        for tc in choice.delta.tool_calls:
-                            if hasattr(tc, 'function'):
-                                tool_calls.append({
-                                    "id": getattr(tc, 'id', ''),
-                                    "type": "function",
-                                    "function": {
-                                        "name": getattr(tc.function, 'name', ''),
-                                        "arguments": getattr(tc.function, 'arguments', '')
-                                    }
-                                })
-        
-        return tool_calls
-        
-    except Exception as e:
-        logger.debug(f"Error extracting tool calls from stream: {e}")
-        return []
 
 
 def _build_messages(

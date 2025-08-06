@@ -183,38 +183,42 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
     def supports_feature(self, feature_name: str) -> bool:
         """
         Enhanced feature support with smart defaults for unknown OpenAI models.
+        ENHANCED: Now properly handles configuration fallback.
         """
         try:
             # First try the configuration system
             config_supports = super().supports_feature(feature_name)
             
-            # If configuration says it supports it, trust that
-            if config_supports:
-                return True
+            # If configuration gives a definitive answer, trust it
+            if config_supports is not None:
+                return config_supports
             
-            # If this is OpenAI and we don't have explicit config, use smart defaults
-            if self.detected_provider == "openai" and not self._has_explicit_model_config(self.model):
+            # Configuration returned None (unknown model) - use our smart defaults
+            if self.detected_provider == "openai":
                 smart_features = self._get_smart_default_features(self.model)
                 supports_smart = feature_name in smart_features
                 
                 if supports_smart:
-                    log.info(f"[{self.detected_provider}] Using smart default: {self.model} supports {feature_name}")
+                    log.info(f"[{self.detected_provider}] No config for {self.model} - using smart default: supports {feature_name}")
+                else:
+                    log.debug(f"[{self.detected_provider}] No config for {self.model} - smart default: doesn't support {feature_name}")
                 
                 return supports_smart
             
-            # For explicit configs or non-OpenAI providers, use configuration result
-            return config_supports
+            # For non-OpenAI providers without config, be conservative
+            log.warning(f"[{self.detected_provider}] No config for {self.model} - assuming doesn't support {feature_name}")
+            return False
             
         except Exception as e:
             log.warning(f"Feature support check failed for {feature_name}: {e}")
             
             # For OpenAI, be optimistic about unknown features
             if self.detected_provider == "openai":
-                log.info(f"[{self.detected_provider}] Assuming {self.model} supports {feature_name} (optimistic smart default)")
+                log.info(f"[{self.detected_provider}] Error checking config - assuming {self.model} supports {feature_name} (optimistic fallback)")
                 return True
             
             return False
-
+        
     # ================================================================
     # REASONING MODEL SUPPORT METHODS
     # ================================================================
