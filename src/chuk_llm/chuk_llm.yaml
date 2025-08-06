@@ -998,9 +998,152 @@ ollama:
   - codellama
   rate_limits: {}
 openai:
-  api_key_env: OPENAI_API_KEY
+  # CRITICAL: These were missing and causing the configuration errors
   client_class: chuk_llm.llm.providers.openai_client.OpenAILLMClient
+  api_key_env: OPENAI_API_KEY
   default_model: gpt-4o-mini
+  
+  # Updated features to include reasoning
+  features:
+    - text
+    - streaming
+    - system_messages
+    - json_mode
+    - reasoning  # Added for reasoning models
+  
+  max_context_length: 128000
+  max_output_tokens: 4096
+  
+  # REALISTIC model list - only include actually available models
+  models:
+    # Standard GPT models (confirmed available)
+    - gpt-4.1
+    - gpt-4.1-mini
+    - gpt-4.1-nano
+    - gpt-4o
+    - gpt-4o-mini
+    - gpt-4-turbo
+    - gpt-4
+    - gpt-3.5-turbo
+    
+    # Reasoning models (with tier requirements)
+    - o1-mini          # Available to most API users (Tier 1+)
+    - o1               # Requires Tier 5 ($1000+ spent, 30+ days)
+    - o1-2024-12-17    # Requires Tier 5
+    - o3-mini          # Requires Tier 3+ (moderate usage)
+    # NOTE: o3, o4, o4-mini are not available in API yet
+
+  # Enhanced model capabilities with reasoning model support
+  model_capabilities:
+    # O1 reasoning models (FIXED with proper parameters)
+    - pattern: "o1.*"
+      features:
+        - text
+        - tools
+        - reasoning
+        # Note: o1 models don't support streaming or system messages
+      max_context_length: 200000
+      max_output_tokens: 100000
+      special_handling:
+        parameter_mapping:
+          max_tokens: max_completion_tokens  # CRITICAL FIX
+        restrictions:
+          no_streaming: true
+          no_system_messages: true
+          unsupported_params: [temperature, top_p, frequency_penalty, presence_penalty]
+    
+    # O3 reasoning models
+    - pattern: "o3.*"
+      features:
+        - text
+        - streaming  # o3 supports streaming
+        - tools
+        - reasoning
+        - system_messages  # o3 supports system messages
+      max_context_length: 200000
+      max_output_tokens: 100000
+      special_handling:
+        parameter_mapping:
+          max_tokens: max_completion_tokens  # CRITICAL FIX
+        restrictions:
+          unsupported_params: [temperature, top_p, frequency_penalty, presence_penalty]
+    
+    # GPT-4.1 series (existing, working)
+    - pattern: "gpt-4\\.1.*"
+      features:
+        - text
+        - streaming
+        - tools
+        - vision
+        - parallel_calls
+        - json_mode
+        - system_messages
+      max_context_length: 128000
+      max_output_tokens: 8192
+    
+    # GPT-4o series (existing, working)
+    - pattern: "gpt-4o.*"
+      features:
+        - text
+        - streaming
+        - tools
+        - vision
+        - parallel_calls
+        - json_mode
+        - system_messages
+      max_context_length: 128000
+      max_output_tokens: 8192
+    
+    # GPT-4 Turbo and regular (existing, working)
+    - pattern: "gpt-4(-turbo|-preview)?$"
+      features:
+        - text
+        - streaming
+        - tools
+        - vision
+        - parallel_calls
+        - json_mode
+        - system_messages
+      max_context_length: 128000
+      max_output_tokens: 8192
+    
+    # GPT-3.5 Turbo (existing, working)
+    - pattern: "gpt-3\\.5-turbo.*"
+      features:
+        - text
+        - streaming
+        - tools
+        - json_mode
+        - system_messages
+      max_context_length: 16384
+      max_output_tokens: 4096
+
+  # Model aliases including reasoning models
+  model_aliases:
+    # Standard aliases
+    latest: gpt-4.1
+    mini: gpt-4.1-mini
+    turbo: gpt-4-turbo
+    
+    # Reasoning model aliases
+    reasoning: o1-mini         # Most accessible reasoning model
+    reasoning_mini: o1-mini    # Same as above
+    reasoning_full: o1         # Requires Tier 5
+    reasoning_latest: o3-mini  # Requires Tier 3+
+    
+    # Specific model aliases
+    o1_mini: o1-mini
+    o1_standard: o1
+    o1_latest: o1-2024-12-17
+    o3_mini: o3-mini
+
+  # Rate limits
+  rate_limits:
+    default: 3500
+    tier_1: 500
+    tier_5: 10000  # Higher limits for reasoning model users
+
+  # Enhanced dynamic discovery for reasoning models
   extra:
     dynamic_discovery:
       cache_timeout: 600
@@ -1009,147 +1152,97 @@ openai:
       inference_config:
         default_context_length: 128000
         default_features:
-        - text
-        - streaming
-        - system_messages
-        - json_mode
+          - text
+          - streaming
+          - system_messages
+          - json_mode
         default_max_output_tokens: 4096
-        family_rules:
-          gpt3_series:
-            base_context_length: 16384
-            base_max_output_tokens: 4096
-            features:
-            - text
-            - streaming
-            - tools
-            - json_mode
-            - system_messages
-            patterns:
-            - gpt-3.5
-          gpt4_series:
-            base_context_length: 128000
-            base_max_output_tokens: 8192
-            features:
-            - text
-            - streaming
-            - tools
-            - vision
-            - parallel_calls
-            - json_mode
-            - system_messages
-            patterns:
-            - gpt-4
-            - gpt-4o
-            - gpt-4.1
-          o_series:
-            base_context_length: 200000
-            base_max_output_tokens: 32768
-            features:
-            - text
-            - streaming
-            - tools
-            - vision
-            - reasoning
-            - parallel_calls
-            patterns:
-            - o[1-4]
-        pattern_rules:
-          mini_models:
+        
+        # Model-specific overrides for reasoning models
+        model_overrides:
+          # O1 series overrides
+          o1-mini:
+            features: [text, tools, reasoning]
             context_length: 128000
-            max_output_tokens: 16384
+            max_output_tokens: 65536
+            family: o1_reasoning
+            parameter_mapping:
+              max_tokens: max_completion_tokens
+            restrictions:
+              no_streaming: true
+              no_system_messages: true
+              unsupported_params: [temperature, top_p, frequency_penalty, presence_penalty]
+          
+          o1:
+            features: [text, tools, reasoning] 
+            context_length: 200000
+            max_output_tokens: 100000
+            family: o1_reasoning
+            parameter_mapping:
+              max_tokens: max_completion_tokens
+            restrictions:
+              no_streaming: true
+              no_system_messages: true
+              unsupported_params: [temperature, top_p, frequency_penalty, presence_penalty]
+          
+          "o1-2024-12-17":
+            features: [text, tools, reasoning] 
+            context_length: 200000
+            max_output_tokens: 100000
+            family: o1_reasoning
+            parameter_mapping:
+              max_tokens: max_completion_tokens
+            restrictions:
+              no_streaming: true
+              no_system_messages: true
+              unsupported_params: [temperature, top_p, frequency_penalty, presence_penalty]
+          
+          # O3 series overrides
+          o3-mini:
+            features: [text, streaming, tools, reasoning, system_messages]
+            context_length: 200000
+            max_output_tokens: 65536
+            family: o3_reasoning
+            parameter_mapping:
+              max_tokens: max_completion_tokens
+            restrictions:
+              unsupported_params: [temperature, top_p, frequency_penalty, presence_penalty]
+        
+        # Family rules for reasoning models
+        family_rules:
+          o1_series:
+            base_context_length: 200000
+            base_max_output_tokens: 65536
+            features:
+              - text
+              - tools
+              - reasoning
+            restrictions:
+              no_streaming: true
+              no_system_messages: true
+              parameter_mapping:
+                max_tokens: max_completion_tokens
             patterns:
-            - .*mini.*
-            - .*nano.*
-          preview_models:
-            add_features:
-            - reasoning
+              - o1
+              - o1-mini
+              - o1-.*
+          
+          o3_series:
+            base_context_length: 200000
+            base_max_output_tokens: 65536
+            features:
+              - text
+              - streaming
+              - tools
+              - reasoning
+              - system_messages
+            restrictions:
+              parameter_mapping:
+                max_tokens: max_completion_tokens
             patterns:
-            - .*preview.*
-            - .*beta.*
-  features:
-  - text
-  - streaming
-  - system_messages
-  - json_mode
-  max_context_length: 128000
-  max_output_tokens: 4096
-  model_aliases:
-    gpt3_5: gpt-3.5-turbo
-    gpt4: gpt-4
-    gpt4_1: gpt-4.1
-    gpt4_turbo: gpt-4-turbo
-    gpt4o: gpt-4o
-    gpt4o_mini: gpt-4o-mini
-    latest: gpt-4.1
-    mini: gpt-4.1-mini
-    nano: gpt-4.1-nano
-    o1_mini: o1-mini
-    o3_mini: o3-mini
-    o4_mini: o4-mini
-    reasoning: o3
-    reasoning_mini: o3-mini
-    turbo: gpt-4-turbo
-  model_capabilities:
-  - features:
-    - text
-    - streaming
-    - tools
-    - vision
-    - reasoning
-    - parallel_calls
-    max_context_length: 200000
-    max_output_tokens: 32768
-    pattern: o[1-4].*
-  - features:
-    - text
-    - streaming
-    - tools
-    - vision
-    - parallel_calls
-    max_context_length: 128000
-    max_output_tokens: 8192
-    pattern: gpt-4o.*
-  - features:
-    - text
-    - streaming
-    - tools
-    - vision
-    - parallel_calls
-    max_context_length: 128000
-    max_output_tokens: 8192
-    pattern: gpt-4\.[01].*|gpt-4-(turbo|preview).*
-  - features:
-    - text
-    - streaming
-    - tools
-    - vision
-    - parallel_calls
-    max_context_length: 8192
-    max_output_tokens: 4096
-    pattern: gpt-4$
-  - features:
-    - text
-    - streaming
-    max_context_length: 16384
-    max_output_tokens: 4096
-    pattern: gpt-3\.5-turbo.*
-  models:
-  - gpt-4.1
-  - gpt-4.1-mini
-  - gpt-4.1-nano
-  - gpt-4o
-  - gpt-4o-mini
-  - gpt-4-turbo
-  - gpt-4
-  - gpt-3.5-turbo
-  - o1
-  - o1-mini
-  - o3
-  - o3-mini
-  - o4-mini
-  rate_limits:
-    default: 3500
-    tier_1: 500
+              - o3
+              - o3-mini
+              - o3-.*
 perplexity:
   api_base: https://api.perplexity.ai
   api_key_env: PERPLEXITY_API_KEY

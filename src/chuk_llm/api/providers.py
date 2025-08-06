@@ -21,6 +21,7 @@ import re
 import logging
 import warnings
 import os
+import sys
 from typing import Dict, Optional, List, AsyncIterator, Union
 from pathlib import Path
 import base64
@@ -182,15 +183,117 @@ def _check_ollama_available_models(timeout: float = None) -> List[str]:
     return []
 
 
+def _ensure_provider_models_current(provider_name: str) -> List[str]:
+    """FIXED: Ensure provider models are current (trigger discovery if needed)"""
+    # Check if auto-discovery is disabled globally
+    if not _is_auto_discover_enabled() or not _is_discovery_enabled(provider_name):
+        try:
+            config_manager = get_config()
+            provider_config = config_manager.get_provider(provider_name)
+            return provider_config.models
+        except Exception as e:
+            logger.debug(f"Could not get models for {provider_name}: {e}")
+            return []
+    
+    try:
+        config_manager = get_config()
+        provider_config = config_manager.get_provider(provider_name)
+        
+        # 🎯 CRITICAL FIX: Check discovery cache and merge discovered models
+        cache_data = getattr(config_manager, '_discovery_cache', {}).get(provider_name)
+        if cache_data and 'models' in cache_data:
+            cached_models = cache_data['models']
+            original_count = len(provider_config.models)
+            
+            # Merge static and discovered models (avoid duplicates)
+            all_models = list(set(provider_config.models + cached_models))
+            
+            # 🎯 CRITICAL: Update provider config with merged models
+            provider_config.models = all_models
+            config_manager.providers[provider_name] = provider_config  # Ensure it's saved
+            
+            logger.info(f"Merged discovery cache for {provider_name}: {original_count} -> {len(all_models)} models")
+            return all_models
+        
+        # For Ollama, also query the API directly to get current models
+        if provider_name == "ollama":
+            try:
+                import httpx
+                import asyncio
+                
+                async def get_ollama_models():
+                    try:
+                        timeout = float(os.getenv('CHUK_LLM_DISCOVERY_TIMEOUT', '3'))
+                        async with httpx.AsyncClient(timeout=timeout) as client:
+                            response = await client.get("http://localhost:11434/api/tags")
+                            if response.status_code == 200:
+                                data = response.json()
+                                return [model['name'] for model in data.get('models', [])]
+                    except:
+                        return []
+                    return []
+                
+                # Get current models from Ollama API
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # If we're in an async context, skip the API call to avoid blocking
+                        pass
+                    else:
+                        ollama_models = loop.run_until_complete(get_ollama_models())
+                        if ollama_models:
+                            # Merge with existing models
+                            all_models = list(set(provider_config.models + ollama_models))
+                            provider_config.models = all_models
+                            logger.debug(f"Updated Ollama models: {len(all_models)} total")
+                except:
+                    # If async fails, continue with existing models
+                    pass
+            except ImportError:
+                # httpx not available, continue with existing models
+                pass
+        
+        # Check if discovery is enabled
+        discovery_data = provider_config.extra.get("dynamic_discovery")
+        if discovery_data and discovery_data.get("enabled", False):
+            # 🎯 CRITICAL FIX: Trigger discovery and merge results
+            try:
+                # Force discovery to populate cache
+                discovered_count = config_manager.force_discover_models(provider_name)
+                if discovered_count > 0:
+                    logger.info(f"Force discovery found {discovered_count} new models for {provider_name}")
+                    
+                    # Re-check cache after discovery
+                    cache_data = getattr(config_manager, '_discovery_cache', {}).get(provider_name)
+                    if cache_data and 'models' in cache_data:
+                        cached_models = cache_data['models']
+                        # Merge and update
+                        all_models = list(set(provider_config.models + cached_models))
+                        provider_config.models = all_models
+                        config_manager.providers[provider_name] = provider_config
+                        logger.info(f"Merged after force discovery: {len(all_models)} total models")
+                        return all_models
+            except Exception as e:
+                logger.debug(f"Force discovery failed: {e}")
+        
+        return provider_config.models
+        
+    except Exception as e:
+        logger.debug(f"Could not ensure current models for {provider_name}: {e}")
+        return []
+
+
 def _get_safe_models_for_provider(provider_name: str, provider_config) -> List[str]:
-    """Get models that are safe to generate static functions for"""
-    config_models = provider_config.models.copy()
+    """FIXED: Get models that are safe to generate static functions for"""
+    
+    # 🎯 FIRST: Get current models including discovered ones
+    current_models = _ensure_provider_models_current(provider_name)
     
     if provider_name == "ollama":
         # Check if startup discovery is enabled
         if not _is_startup_discovery_enabled():
             logger.info("Ollama startup discovery disabled - using configured models only")
-            return config_models  # Use all configured models without checking
+            return current_models  # Use all current models (including discovered)
         
         # For Ollama, only include models that are actually available
         available_models = _check_ollama_available_models()
@@ -198,7 +301,7 @@ def _get_safe_models_for_provider(provider_name: str, provider_config) -> List[s
         if available_models:
             # Filter to only include models that are actually downloaded
             safe_models = []
-            for model in config_models:
+            for model in current_models:  # Use current_models instead of config_models
                 # Check both exact match and :latest variants
                 model_base = model.replace(':latest', '') if model.endswith(':latest') else model
                 model_latest = f"{model_base}:latest"
@@ -208,7 +311,7 @@ def _get_safe_models_for_provider(provider_name: str, provider_config) -> List[s
                     model_latest in available_models):
                     safe_models.append(model)
             
-            logger.info(f"Ollama: Using {len(safe_models)}/{len(config_models)} available models for static generation")
+            logger.info(f"Ollama: Using {len(safe_models)}/{len(current_models)} available models for static generation")
             return safe_models
         else:
             # Ollama not available - use minimal set or empty
@@ -219,8 +322,8 @@ def _get_safe_models_for_provider(provider_name: str, provider_config) -> List[s
         if not _is_discovery_enabled(provider_name):
             logger.debug(f"Discovery disabled for {provider_name} - using all configured models")
         
-        # For non-Ollama providers, always use all configured models
-        return config_models
+        # For non-Ollama providers, use all current models (including discovered)
+        return current_models
 
 
 def _prepare_vision_message(prompt: str, image: Union[str, Path, bytes], provider: str = None) -> Dict[str, any]:
@@ -573,76 +676,63 @@ def _generate_functions_for_models(provider_name: str, provider_config, models: 
     return functions
 
 
-def _ensure_provider_models_current(provider_name: str) -> List[str]:
-    """Ensure provider models are current (trigger discovery if needed)"""
-    # Check if auto-discovery is disabled globally
-    if not _is_auto_discover_enabled() or not _is_discovery_enabled(provider_name):
-        try:
-            config_manager = get_config()
-            provider_config = config_manager.get_provider(provider_name)
-            return provider_config.models
-        except Exception as e:
-            logger.debug(f"Could not get models for {provider_name}: {e}")
-            return []
+def force_discovery_integration():
+    """CRITICAL FIX: Force integration of discovery results into function generation"""
     
-    try:
-        config_manager = get_config()
-        provider_config = config_manager.get_provider(provider_name)
+    logger.debug("🔧 Force integrating discovery results...")
+    
+    config_manager = get_config()
+    total_new_functions = 0
+    
+    # Check each provider's discovery cache
+    for provider_name in config_manager.get_all_providers():
+        if not _is_discovery_enabled(provider_name):
+            continue
         
-        # For Ollama, also query the API directly to get current models
-        if provider_name == "ollama":
-            try:
-                import httpx
-                import asyncio
+        try:
+            provider_config = config_manager.get_provider(provider_name)
+            cache_data = getattr(config_manager, '_discovery_cache', {}).get(provider_name)
+            
+            if cache_data and 'models' in cache_data:
+                cached_models = cache_data['models']
+                original_models = set(provider_config.models)
                 
-                async def get_ollama_models():
-                    try:
-                        timeout = float(os.getenv('CHUK_LLM_DISCOVERY_TIMEOUT', '3'))
-                        async with httpx.AsyncClient(timeout=timeout) as client:
-                            response = await client.get("http://localhost:11434/api/tags")
-                            if response.status_code == 200:
-                                data = response.json()
-                                return [model['name'] for model in data.get('models', [])]
-                    except:
-                        return []
-                    return []
+                # Find new models from cache
+                new_models = [m for m in cached_models if m not in original_models]
                 
-                # Get current models from Ollama API
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        # If we're in an async context, skip the API call to avoid blocking
-                        pass
-                    else:
-                        ollama_models = loop.run_until_complete(get_ollama_models())
-                        if ollama_models:
-                            # Merge with existing models
-                            all_models = list(set(provider_config.models + ollama_models))
-                            provider_config.models = all_models
-                            logger.debug(f"Updated Ollama models: {len(all_models)} total")
-                except:
-                    # If async fails, continue with existing models
-                    pass
-            except ImportError:
-                # httpx not available, continue with existing models
-                pass
-        
-        # Check if discovery is enabled
-        discovery_data = provider_config.extra.get("dynamic_discovery")
-        if discovery_data and discovery_data.get("enabled", False):
-            # Trigger discovery by accessing models through the ensure method
-            # This will automatically discover new models if they exist
-            try:
-                dummy_model = config_manager._ensure_model_available(provider_name, "dummy_model_to_trigger_discovery")
-            except:
-                # Discovery might fail, continue with current models
-                pass
-        
-        return provider_config.models
-        
-    except Exception as e:
-        logger.debug(f"Could not ensure current models for {provider_name}: {e}")
-        return []
+                if new_models:
+                    logger.debug(f"   📈 {provider_name}: Adding {len(new_models)} discovered models")
+                    
+                    # Update provider config
+                    provider_config.models.extend(new_models)
+                    config_manager.providers[provider_name] = provider_config
+                    
+                    # Generate functions for new models
+                    new_functions = _generate_functions_for_models(provider_name, provider_config, new_models)
+                    
+                    # Update global functions
+                    global _GENERATED_FUNCTIONS
+                    _GENERATED_FUNCTIONS.update(new_functions)
+                    
+                    # Update module namespace
+                    current_module = sys.modules[__name__]
+                    for name, func in new_functions.items():
+                        setattr(current_module, name, func)
+                    
+                    # Update __all__
+                    if hasattr(current_module, '__all__'):
+                        for name in new_functions.keys():
+                            if name not in current_module.__all__:
+                                current_module.__all__.append(name)
+                    
+                    total_new_functions += len(new_functions)
+                    logger.debug(f"   ✅ Generated {len(new_functions)} functions for {provider_name}")
+            
+        except Exception as e:
+            logger.debug(f"   ❌ Failed to integrate {provider_name}: {e}")
+    
+    logger.debug(f"✅ Integration complete: {total_new_functions} new functions generated")
+    return total_new_functions
 
 
 def _generate_static_functions():
@@ -762,7 +852,6 @@ def _create_utility_functions():
     
     def show_config():
         """Show current configuration status including discovery settings"""
-        from chuk_llm.configuration.unified_config import get_config
         config = get_config()
         
         print("🔧 ChukLLM Configuration")
@@ -847,6 +936,35 @@ def _create_utility_functions():
             os.environ['CHUK_LLM_DISCOVERY_ENABLED'] = 'true'
             print("✅ Enabled discovery globally")
     
+    def test_discovery_bridge(provider_name: str = "ollama", model_name: str = "llama3.1:latest"):
+        """Test the discovery bridge"""
+        print(f"🧪 Testing Discovery Bridge: {provider_name}/{model_name}")
+        
+        # Step 1: Force discovery integration
+        new_functions = force_discovery_integration()
+        print(f"   📈 Discovery integration: {new_functions} new functions")
+        
+        # Step 2: Test _ensure_model_available
+        config = get_config()
+        resolved = config._ensure_model_available(provider_name, model_name)
+        print(f"   🔍 Model resolution: {model_name} -> {resolved}")
+        
+        # Step 3: Check if model is now in provider list
+        provider = config.get_provider(provider_name)
+        in_list = model_name in provider.models
+        print(f"   📋 In provider models: {in_list}")
+        
+        # Step 4: Try to get the function
+        func_name = f"ask_{provider_name}_{_sanitize_name(model_name)}"
+        try:
+            func = globals().get(func_name) or getattr(sys.modules[__name__], func_name, None)
+            has_func = func is not None
+            print(f"   🎯 Function {func_name}: {'✅ Available' if has_func else '❌ Missing'}")
+            return has_func
+        except:
+            print(f"   🎯 Function {func_name}: ❌ Error accessing")
+            return False
+    
     return {
         'quick_question': quick_question,
         'compare_providers': compare_providers,
@@ -856,6 +974,8 @@ def _create_utility_functions():
         'trigger_ollama_discovery_and_refresh': trigger_ollama_discovery_and_refresh,
         'disable_discovery': disable_discovery,
         'enable_discovery': enable_discovery,
+        'test_discovery_bridge': test_discovery_bridge,
+        'force_discovery_integration': force_discovery_integration,
     }
 
 
@@ -918,7 +1038,6 @@ def refresh_provider_functions(provider_name: str = None):
             _GENERATED_FUNCTIONS.update(new_functions)
             
             # Update module namespace
-            import sys
             current_module = sys.modules[__name__]
             for name, func in new_functions.items():
                 setattr(current_module, name, func)
@@ -951,7 +1070,6 @@ def refresh_provider_functions(provider_name: str = None):
         _FUNCTION_CACHE_DIRTY = False
         
         # Update module namespace
-        import sys
         current_module = sys.modules[__name__]
         for name, func in all_new_functions.items():
             setattr(current_module, name, func)
@@ -1024,7 +1142,6 @@ def trigger_ollama_discovery_and_refresh():
         _GENERATED_FUNCTIONS.update(new_functions)
         
         # Update module namespace
-        import sys
         current_module = sys.modules[__name__]
         for name, func in new_functions.items():
             setattr(current_module, name, func)
@@ -1089,7 +1206,6 @@ def _ensure_model_available_for_get_client(provider_name: str, model_name: str) 
                 _GENERATED_FUNCTIONS.update(model_functions)
                 
                 # Update module namespace
-                import sys
                 current_module = sys.modules[__name__]
                 for name, func in model_functions.items():
                     setattr(current_module, name, func)
@@ -1102,6 +1218,89 @@ def _ensure_model_available_for_get_client(provider_name: str, model_name: str) 
     except Exception as e:
         logger.debug(f"Model availability check failed for {provider_name}/{model_name}: {e}")
         return False
+
+
+# Enhanced __getattr__ to support on-demand function generation with environment controls
+def __getattr__(name):
+    """FIXED: Allow access to generated functions with on-demand discovery"""
+    # First check if it's in our generated functions
+    if name in _GENERATED_FUNCTIONS:
+        return _GENERATED_FUNCTIONS[name]
+    
+    # Check if auto-discovery is disabled
+    if not _is_auto_discover_enabled():
+        raise AttributeError(f"module 'providers' has no attribute '{name}' (auto-discovery disabled)")
+    
+    # 🎯 CRITICAL FIX: Try discovery integration first
+    try:
+        logger.debug(f"🔍 Function {name} not found, trying discovery integration...")
+        new_count = force_discovery_integration()
+        
+        if new_count > 0 and name in _GENERATED_FUNCTIONS:
+            logger.debug(f"✅ Found {name} after discovery integration!")
+            return _GENERATED_FUNCTIONS[name]
+    except Exception as e:
+        logger.debug(f"Discovery integration failed: {e}")
+    
+    # Check if it looks like a provider function we might need to generate
+    if name.startswith(('ask_', 'stream_')) and ('_' in name[4:] if name.startswith('ask_') else '_' in name[7:]):
+        # Parse the function name to extract provider and model
+        if name.startswith('ask_'):
+            base_name = name[4:]  # Remove 'ask_'
+            is_sync = base_name.endswith('_sync')
+            if is_sync:
+                base_name = base_name[:-5]  # Remove '_sync'
+        elif name.startswith('stream_'):
+            base_name = name[7:]  # Remove 'stream_'
+            is_sync = False
+        else:
+            raise AttributeError(f"module 'providers' has no attribute '{name}'")
+        
+        # Split provider and model
+        parts = base_name.split('_', 1)
+        if len(parts) == 2:
+            provider_name, model_part = parts
+            
+            # Check if discovery is enabled for this provider
+            if not _is_discovery_enabled(provider_name):
+                raise AttributeError(f"module 'providers' has no attribute '{name}' (discovery disabled for {provider_name})")
+            
+            # 🎯 CRITICAL FIX: Force a specific model check
+            try:
+                config_manager = get_config()
+                
+                # Convert model_part back to actual model name (reverse sanitization)
+                possible_models = [
+                    model_part.replace('_', ':'),
+                    model_part.replace('_', '.'),
+                    model_part.replace('_', '-'),
+                    model_part,
+                    f"{model_part}:latest"
+                ]
+                
+                for possible_model in possible_models:
+                    resolved = config_manager._ensure_model_available(provider_name, possible_model)
+                    if resolved:
+                        logger.debug(f"✅ Model {possible_model} resolved to {resolved} via discovery")
+                        # Refresh functions for this provider
+                        new_functions = refresh_provider_functions(provider_name)
+                        if name in new_functions:
+                            return new_functions[name]
+                        break
+                
+            except Exception as e:
+                logger.debug(f"Model availability check failed: {e}")
+            
+            # Try to refresh functions for this provider
+            try:
+                new_functions = refresh_provider_functions(provider_name)
+                if name in new_functions:
+                    return new_functions[name]
+            except Exception as e:
+                logger.debug(f"Could not refresh functions for {provider_name}: {e}")
+    
+    # If we still don't have it, raise AttributeError
+    raise AttributeError(f"module 'providers' has no attribute '{name}'")
 
 
 # Generate all functions at module import with environment controls
@@ -1152,7 +1351,7 @@ try:
 except Exception as e:
     logger.error(f"Error generating provider functions: {e}")
     # Fallback - at least provide utility functions
-    __all__ = ['show_config', 'refresh_provider_functions', 'trigger_ollama_discovery_and_refresh', 'disable_discovery', 'enable_discovery']
+    __all__ = ['show_config', 'refresh_provider_functions', 'trigger_ollama_discovery_and_refresh', 'disable_discovery', 'enable_discovery', 'test_discovery_bridge', 'force_discovery_integration']
     
     def show_config():
         print(f"❌ Error loading configuration: {e}")
@@ -1172,57 +1371,21 @@ except Exception as e:
     def enable_discovery(provider: str = None):
         print("❌ Discovery control not available")
     
+    def test_discovery_bridge(provider_name: str = "ollama", model_name: str = "llama3.1:latest"):
+        print("❌ Discovery bridge test not available")
+        return False
+    
+    def force_discovery_integration():
+        print("❌ Discovery integration not available")
+        return 0
+    
     globals()['show_config'] = show_config
     globals()['refresh_provider_functions'] = refresh_provider_functions
     globals()['trigger_ollama_discovery_and_refresh'] = trigger_ollama_discovery_and_refresh
     globals()['disable_discovery'] = disable_discovery
     globals()['enable_discovery'] = enable_discovery
-
-
-# Enhanced __getattr__ to support on-demand function generation with environment controls
-def __getattr__(name):
-    """Allow access to generated functions with on-demand discovery"""
-    # First check if it's in our generated functions
-    if name in _GENERATED_FUNCTIONS:
-        return _GENERATED_FUNCTIONS[name]
-    
-    # Check if auto-discovery is disabled
-    if not _is_auto_discover_enabled():
-        raise AttributeError(f"module 'providers' has no attribute '{name}' (auto-discovery disabled)")
-    
-    # Check if it looks like a provider function we might need to generate
-    if name.startswith(('ask_', 'stream_')) and ('_' in name[4:] if name.startswith('ask_') else '_' in name[7:]):
-        # Parse the function name to extract provider and model
-        if name.startswith('ask_'):
-            base_name = name[4:]  # Remove 'ask_'
-            is_sync = base_name.endswith('_sync')
-            if is_sync:
-                base_name = base_name[:-5]  # Remove '_sync'
-        elif name.startswith('stream_'):
-            base_name = name[7:]  # Remove 'stream_'
-            is_sync = False
-        else:
-            raise AttributeError(f"module 'providers' has no attribute '{name}'")
-        
-        # Split provider and model
-        parts = base_name.split('_', 1)
-        if len(parts) == 2:
-            provider_name, model_part = parts
-            
-            # Check if discovery is enabled for this provider
-            if not _is_discovery_enabled(provider_name):
-                raise AttributeError(f"module 'providers' has no attribute '{name}' (discovery disabled for {provider_name})")
-            
-            # Try to refresh functions for this provider
-            try:
-                new_functions = refresh_provider_functions(provider_name)
-                if name in new_functions:
-                    return new_functions[name]
-            except Exception as e:
-                logger.debug(f"Could not refresh functions for {provider_name}: {e}")
-    
-    # If we still don't have it, raise AttributeError
-    raise AttributeError(f"module 'providers' has no attribute '{name}'")
+    globals()['test_discovery_bridge'] = test_discovery_bridge
+    globals()['force_discovery_integration'] = force_discovery_integration
 
 
 # Export all generated functions for external access
@@ -1268,3 +1431,366 @@ def get_discovered_functions(provider: str = None):
             logger.debug(f"Could not check discovered functions for {provider_name}: {e}")
     
     return discovered
+
+
+def apply_discovery_bridge_fix():
+    """
+    CRITICAL DISCOVERY BRIDGE FIX
+    =============================
+    
+    This function fixes the gap between discovery and inference by ensuring
+    that discovered models are immediately added to provider model lists and
+    functions are generated for them.
+    
+    Call this function at startup or when discovery results aren't appearing.
+    """
+    
+    print("🔧 Applying Critical Discovery Bridge Fix...")
+    
+    config_manager = get_config()
+    
+    # Store original _ensure_model_available method
+    original_ensure = getattr(config_manager, '_ensure_model_available', None)
+    if not original_ensure:
+        print("❌ _ensure_model_available method not found")
+        return False
+    
+    def fixed_ensure_model_available(provider_name: str, model_name: str):
+        """
+        FIXED VERSION: Actually adds discovered models to provider lists
+        and generates functions immediately
+        """
+        if not model_name:
+            return None
+        
+        provider = config_manager.providers[provider_name]
+        
+        # Step 1: Check if already available (exact match)
+        if model_name in provider.models:
+            return model_name
+        
+        # Step 2: Check aliases and variants
+        resolved = provider.model_aliases.get(model_name, model_name)
+        if resolved in provider.models:
+            return resolved
+        
+        # Step 3: Try :latest variants
+        variants_to_check = []
+        if model_name.endswith(':latest'):
+            base_name = model_name.replace(':latest', '')
+            variants_to_check.append(base_name)
+        else:
+            latest_name = f"{model_name}:latest"
+            variants_to_check.append(latest_name)
+        
+        for variant in variants_to_check:
+            if variant in provider.models:
+                return variant
+        
+        # Step 4: 🎯 CRITICAL FIX - Check discovery cache and ADD MODEL
+        cache_data = getattr(config_manager, '_discovery_cache', {}).get(provider_name)
+        if cache_data and 'models' in cache_data:
+            cached_models = cache_data['models']
+            
+            # Check all variants
+            all_variants = [model_name] + variants_to_check
+            
+            for variant in all_variants:
+                if variant in cached_models and variant not in provider.models:
+                    # 🎯 CRITICAL: Actually add the model to provider
+                    provider.models.append(variant)
+                    print(f"✅ Added {variant} to {provider_name} from discovery cache")
+                    
+                    # 🎯 CRITICAL: Generate functions immediately
+                    try:
+                        global _GENERATED_FUNCTIONS
+                        model_functions = _generate_functions_for_models(provider_name, provider, [variant])
+                        _GENERATED_FUNCTIONS.update(model_functions)
+                        
+                        # Add to module namespace
+                        current_module = sys.modules[__name__]
+                        for name, func in model_functions.items():
+                            setattr(current_module, name, func)
+                        
+                        # Update __all__
+                        if hasattr(current_module, '__all__'):
+                            for name in model_functions.keys():
+                                if name not in current_module.__all__:
+                                    current_module.__all__.append(name)
+                        
+                        print(f"✅ Generated {len(model_functions)} functions for {variant}")
+                        
+                    except Exception as e:
+                        print(f"⚠️ Function generation failed for {variant}: {e}")
+                    
+                    return variant
+        
+        # Step 5: No luck in cache - try force discovery (if enabled)
+        if (hasattr(config_manager, '_is_discovery_enabled') and 
+            config_manager._is_discovery_enabled(provider_name)):
+            
+            try:
+                print(f"🔍 Force discovering models for {provider_name}...")
+                discovered = config_manager.force_discover_models(provider_name)
+                
+                if discovered > 0:
+                    print(f"✅ Discovered {discovered} new models for {provider_name}")
+                    
+                    # Re-check after discovery
+                    updated_provider = config_manager.providers[provider_name]
+                    all_variants = [model_name] + variants_to_check
+                    
+                    for variant in all_variants:
+                        if variant in updated_provider.models:
+                            print(f"✅ Found {variant} after force discovery")
+                            return variant
+                
+            except Exception as e:
+                print(f"⚠️ Force discovery failed: {e}")
+        
+        # Model not found anywhere
+        return original_ensure(provider_name, model_name) if original_ensure else None
+    
+    # Replace the method
+    config_manager._ensure_model_available = fixed_ensure_model_available
+    
+    print("✅ Discovery bridge fix applied!")
+    print("   Discovered models will now be immediately available for inference")
+    return True
+
+
+def test_discovery_fix():
+    """Test that the discovery bridge fix works"""
+    
+    print("\n🧪 Testing Discovery Bridge Fix")
+    print("=" * 50)
+    
+    # Apply the fix first
+    fix_applied = apply_discovery_bridge_fix()
+    if not fix_applied:
+        print("❌ Could not apply discovery bridge fix")
+        return False
+    
+    # Test cases
+    test_cases = [
+        ("ollama", "llama3.1:latest"),
+        ("ollama", "qwen3:latest"),
+        ("openai", "o1-mini-2024-09-12"),
+    ]
+    
+    success_count = 0
+    
+    for provider, model in test_cases:
+        print(f"\n🎯 Testing: {provider}/{model}")
+        
+        try:
+            config = get_config()
+            
+            # Get initial state
+            provider_obj = config.get_provider(provider)
+            initial_models = set(provider_obj.models)
+            print(f"   📋 Initial models: {len(initial_models)}")
+            
+            # Test _ensure_model_available
+            resolved = config._ensure_model_available(provider, model)
+            print(f"   🔍 Resolution result: {resolved}")
+            
+            # Check if model was added
+            current_models = set(provider_obj.models)
+            new_models = current_models - initial_models
+            
+            if new_models:
+                print(f"   📈 New models added: {list(new_models)}")
+                
+                # Check if function exists
+                func_name = f"ask_{provider}_{_sanitize_name(model)}"
+                try:
+                    func = globals().get(func_name)
+                    if func:
+                        print(f"   ✅ Function {func_name} is available!")
+                        success_count += 1
+                    else:
+                        print(f"   ❌ Function {func_name} not found")
+                except:
+                    print(f"   ❌ Error accessing function {func_name}")
+            else:
+                if resolved:
+                    print(f"   ✅ Model already available (resolved to {resolved})")
+                    success_count += 1
+                else:
+                    print(f"   ❌ Model not resolved and not added")
+                    
+        except Exception as e:
+            print(f"   💥 Test failed: {e}")
+    
+    success_rate = success_count / len(test_cases)
+    print(f"\n📊 Test Results: {success_count}/{len(test_cases)} successful ({success_rate:.1%})")
+    
+    if success_rate >= 0.5:
+        print("✅ Discovery bridge is working!")
+        return True
+    else:
+        print("❌ Discovery bridge needs more work")
+        return False
+
+
+# Add these functions to the utility functions
+def _create_utility_functions():
+    """Create utility functions with discovery status - ENHANCED VERSION"""
+    config_manager = get_config()
+    
+    def quick_question(question: str, provider: str = None) -> str:
+        """Quick one-off question using sync API"""
+        if not provider:
+            settings = config_manager.get_global_settings()
+            provider = settings.get("active_provider", "openai")
+        
+        from .sync import ask_sync
+        return ask_sync(question, provider=provider)
+    
+    def compare_providers(question: str, providers: List[str] = None) -> Dict[str, str]:
+        """Compare responses from multiple providers"""
+        if not providers:
+            all_providers = config_manager.get_all_providers()
+            providers = all_providers[:3] if len(all_providers) >= 3 else all_providers
+        
+        from .sync import ask_sync
+        results = {}
+        
+        for provider in providers:
+            try:
+                results[provider] = ask_sync(question, provider=provider)
+            except Exception as e:
+                results[provider] = f"Error: {str(e)}"
+        
+        return results
+    
+    def show_config():
+        """Show current configuration status including discovery settings"""
+        config = get_config()
+        
+        print("🔧 ChukLLM Configuration")
+        print("=" * 50)
+        
+        # Discovery settings
+        print("\n🔍 Discovery Settings:")
+        discovery_enabled = _env_bool('CHUK_LLM_DISCOVERY_ENABLED', True)
+        startup_enabled = _env_bool('CHUK_LLM_DISCOVERY_ON_STARTUP', True)
+        auto_enabled = _env_bool('CHUK_LLM_AUTO_DISCOVER', True)
+        
+        print(f"  Global Discovery: {'✅ Enabled' if discovery_enabled else '❌ Disabled'}")
+        print(f"  Startup Check:    {'✅ Enabled' if startup_enabled else '❌ Disabled'}")
+        print(f"  Auto Discovery:   {'✅ Enabled' if auto_enabled else '❌ Disabled'}")
+        
+        timeout = os.getenv('CHUK_LLM_DISCOVERY_TIMEOUT', '5')
+        quick_timeout = os.getenv('CHUK_LLM_DISCOVERY_QUICK_TIMEOUT', '2.0')
+        print(f"  Timeout:          {timeout}s (quick: {quick_timeout}s)")
+        
+        providers = config.get_all_providers()
+        print(f"\n📦 Providers: {len(providers)}")
+        for provider_name in providers:
+            try:
+                provider = config.get_provider(provider_name)
+                has_key = "✅" if config.get_api_key(provider_name) else "❌"
+                discovery_status = "🔍" if _is_discovery_enabled(provider_name) else "🚫"
+                print(f"  {has_key} {discovery_status} {provider_name:<12} | {len(provider.models):2d} models | {len(provider.model_aliases):2d} aliases")
+            except Exception as e:
+                print(f"  ❌ 🚫 {provider_name:<12} | Error: {e}")
+        
+        aliases = config.get_global_aliases()
+        if aliases:
+            print(f"\n🌍 Global Aliases: {len(aliases)}")
+            for alias, target in list(aliases.items())[:5]:
+                print(f"  ask_{alias}() -> {target}")
+            if len(aliases) > 5:
+                print(f"  ... and {len(aliases) - 5} more")
+        
+        print(f"\n🎛️  Environment Controls:")
+        print(f"  CHUK_LLM_DISCOVERY_ENABLED={_env_bool('CHUK_LLM_DISCOVERY_ENABLED', True)}")
+        print(f"  CHUK_LLM_DISCOVERY_ON_STARTUP={_env_bool('CHUK_LLM_DISCOVERY_ON_STARTUP', True)}")
+        print(f"  CHUK_LLM_AUTO_DISCOVER={_env_bool('CHUK_LLM_AUTO_DISCOVER', True)}")
+        print(f"  CHUK_LLM_OLLAMA_DISCOVERY={_env_bool('CHUK_LLM_OLLAMA_DISCOVERY', True)}")
+        
+        # Show discovery methods
+        print(f"\n🎮 Discovery Control Methods:")
+        print(f"  # Disable all discovery")
+        print(f"  export CHUK_LLM_DISCOVERY_ENABLED=false")
+        print(f"  ")
+        print(f"  # Disable only Ollama discovery")
+        print(f"  export CHUK_LLM_OLLAMA_DISCOVERY=false")
+        print(f"  ")
+        print(f"  # Disable startup checks (but allow on-demand)")
+        print(f"  export CHUK_LLM_DISCOVERY_ON_STARTUP=false")
+    
+    def discover_and_refresh(provider: str = "ollama"):
+        """Discover models and refresh functions for a provider"""
+        if not _is_discovery_enabled(provider):
+            print(f"❌ Discovery disabled for {provider}")
+            print(f"   Set CHUK_LLM_{provider.upper()}_DISCOVERY=true to enable")
+            return {}
+        
+        return refresh_provider_functions(provider)
+    
+    def disable_discovery(provider: str = None):
+        """Disable discovery at runtime"""
+        if provider:
+            env_key = f'CHUK_LLM_{provider.upper()}_DISCOVERY'
+            os.environ[env_key] = 'false'
+            print(f"✅ Disabled discovery for {provider}")
+        else:
+            os.environ['CHUK_LLM_DISCOVERY_ENABLED'] = 'false'
+            print("✅ Disabled discovery globally")
+    
+    def enable_discovery(provider: str = None):
+        """Enable discovery at runtime"""
+        if provider:
+            env_key = f'CHUK_LLM_{provider.upper()}_DISCOVERY'
+            os.environ[env_key] = 'true'
+            print(f"✅ Enabled discovery for {provider}")
+        else:
+            os.environ['CHUK_LLM_DISCOVERY_ENABLED'] = 'true'
+            print("✅ Enabled discovery globally")
+    
+    def test_discovery_bridge(provider_name: str = "ollama", model_name: str = "llama3.1:latest"):
+        """Test the discovery bridge"""
+        print(f"🧪 Testing Discovery Bridge: {provider_name}/{model_name}")
+        
+        # Step 1: Force discovery integration
+        new_functions = force_discovery_integration()
+        print(f"   📈 Discovery integration: {new_functions} new functions")
+        
+        # Step 2: Test _ensure_model_available
+        config = get_config()
+        resolved = config._ensure_model_available(provider_name, model_name)
+        print(f"   🔍 Model resolution: {model_name} -> {resolved}")
+        
+        # Step 3: Check if model is now in provider list
+        provider = config.get_provider(provider_name)
+        in_list = model_name in provider.models
+        print(f"   📋 In provider models: {in_list}")
+        
+        # Step 4: Try to get the function
+        func_name = f"ask_{provider_name}_{_sanitize_name(model_name)}"
+        try:
+            func = globals().get(func_name) or getattr(sys.modules[__name__], func_name, None)
+            has_func = func is not None
+            print(f"   🎯 Function {func_name}: {'✅ Available' if has_func else '❌ Missing'}")
+            return has_func
+        except:
+            print(f"   🎯 Function {func_name}: ❌ Error accessing")
+            return False
+    
+    return {
+        'quick_question': quick_question,
+        'compare_providers': compare_providers,
+        'show_config': show_config,
+        'discover_and_refresh': discover_and_refresh,
+        'refresh_provider_functions': refresh_provider_functions,
+        'trigger_ollama_discovery_and_refresh': trigger_ollama_discovery_and_refresh,
+        'disable_discovery': disable_discovery,
+        'enable_discovery': enable_discovery,
+        'test_discovery_bridge': test_discovery_bridge,
+        'force_discovery_integration': force_discovery_integration,
+        'apply_discovery_bridge_fix': apply_discovery_bridge_fix,
+        'test_discovery_fix': test_discovery_fix,
+    }

@@ -4,6 +4,7 @@ Core ask/stream functions with unified configuration and automatic session track
 ==================================================================================
 
 Main API functions using the unified configuration system with integrated session management.
+FIXED VERSION - Corrected streaming implementation to work with OpenAI client properly.
 """
 
 from typing import List, Dict, Any, Optional, AsyncIterator
@@ -277,6 +278,7 @@ async def ask(
 async def stream(prompt: str, context: str = None, previous_messages: List[Dict[str, str]] = None, **kwargs) -> AsyncIterator[str]:
     """
     Stream a response token by token with unified configuration and automatic session tracking.
+    FIXED VERSION - Properly handles streaming from OpenAI client.
     
     Args:
         prompt: The question/prompt to send
@@ -416,78 +418,88 @@ async def stream(prompt: str, context: str = None, previous_messages: List[Dict[
         try:
             if config_manager.supports_feature(effective_provider, Feature.TOOLS, effective_model):
                 completion_args["tools"] = tools
+            else:
+                logger.warning(f"{effective_provider}/{effective_model} doesn't support tools, ignoring")
         except Exception:
             completion_args["tools"] = tools
     
-    # Add non-config kwargs
-    non_config_kwargs = {k: v for k, v in completion_kwargs.items() 
-                        if k not in ['provider', 'model', 'system_prompt', 'temperature', 'max_tokens']}
-    completion_args.update(non_config_kwargs)
+    # Add JSON mode if requested and supported
+    json_mode = kwargs.get("json_mode", False)
+    if json_mode:
+        try:
+            if config_manager.supports_feature(effective_provider, Feature.JSON_MODE, effective_model):
+                if effective_provider == "openai":
+                    completion_args["response_format"] = {"type": "json_object"}
+                elif effective_provider == "gemini":
+                    completion_args.setdefault("generation_config", {})["response_mime_type"] = "application/json"
+            else:
+                logger.warning(f"{effective_provider}/{effective_model} doesn't support JSON mode")
+                _add_json_instruction_to_messages(messages)
+        except Exception:
+            if effective_provider == "openai":
+                completion_args["response_format"] = {"type": "json_object"}
     
-    # Add config parameters
-    if effective_config.get("temperature") is not None:
-        completion_args["temperature"] = effective_config["temperature"]
-    if effective_config.get("max_tokens") is not None:
-        completion_args["max_tokens"] = effective_config["max_tokens"]
+    # Handle O1 model parameters correctly
+    if "o1" in effective_model.lower():
+        # O1 models use max_completion_tokens instead of max_tokens
+        if "max_tokens" in completion_kwargs:
+            completion_args["max_completion_tokens"] = completion_kwargs.pop("max_tokens")
+        elif effective_config.get("max_tokens") is not None:
+            completion_args["max_completion_tokens"] = effective_config["max_tokens"]
+        
+        # Remove temperature for O1 models (they don't support it)
+        completion_kwargs.pop("temperature", None)
+    else:
+        # Regular models use max_tokens
+        if effective_config.get("max_tokens") is not None:
+            completion_args["max_tokens"] = effective_config["max_tokens"]
+        
+        # Add temperature for regular models
+        if effective_config.get("temperature") is not None:
+            completion_args["temperature"] = effective_config["temperature"]
     
-    # Stream the response
+    # Remove provider/model/system_prompt from completion_kwargs to avoid conflicts
+    completion_kwargs.pop('provider', None)
+    completion_kwargs.pop('model', None)
+    completion_kwargs.pop('system_prompt', None)
+    completion_kwargs.pop('max_tokens', None)
+    completion_kwargs.pop('temperature', None)
+    completion_kwargs.pop('tools', None)
+    completion_kwargs.pop('json_mode', None)
+    completion_kwargs.pop('max_completion_tokens', None)
+    
+    # Add remaining kwargs
+    completion_args.update(completion_kwargs)
+    
+    # CRITICAL FIX: Stream the response with proper async handling
     try:
-        # When streaming, create_completion returns an async generator directly
+        logger.debug(f"Starting streaming with {effective_provider}/{effective_model}")
+        
+        # Call client.create_completion with stream=True - this returns an async generator
         response_stream = client.create_completion(**completion_args)
         
-        # Check if it's already an async generator (no await needed)
-        if hasattr(response_stream, '__aiter__'):
-            async for chunk in response_stream:
-                if isinstance(chunk, dict):
-                    if chunk.get("error"):
-                        error_msg = f"[Error: {chunk.get('error_message', 'Unknown error')}]"
-                        full_response += error_msg
-                        yield error_msg
-                        return
-                    content = chunk.get("response", "")
-                    if content:
-                        full_response += content
-                        yield content
-                else:
-                    chunk_str = str(chunk)
-                    full_response += chunk_str
-                    yield chunk_str
-        else:
-            # It might be a coroutine that needs awaiting
-            result = await response_stream
+        # FIXED: The response_stream from OpenAI client is already an async generator
+        # We need to iterate over it directly and extract the content properly
+        chunk_count = 0
+        
+        async for chunk in response_stream:
+            chunk_count += 1
             
-            if hasattr(result, '__aiter__'):
-                # Result is an async generator
-                async for chunk in result:
-                    if isinstance(chunk, dict):
-                        if chunk.get("error"):
-                            error_msg = f"[Error: {chunk.get('error_message', 'Unknown error')}]"
-                            full_response += error_msg
-                            yield error_msg
-                            return
-                        content = chunk.get("response", "")
-                        if content:
-                            full_response += content
-                            yield content
-                    else:
-                        chunk_str = str(chunk)
-                        full_response += chunk_str
-                        yield chunk_str
-            else:
-                # Handle non-streaming response
-                if isinstance(result, dict):
-                    if result.get("error"):
-                        error_msg = f"[Error: {result.get('error_message', 'Unknown error')}]"
-                        full_response = error_msg
-                        yield error_msg
-                    else:
-                        content = result.get("response", "")
-                        full_response = content
-                        yield content
-                else:
-                    result_str = str(result)
-                    full_response = result_str
-                    yield result_str
+            # Extract content from the chunk - this handles the OpenAI client's response format
+            content = _extract_streaming_content(chunk)
+            
+            if content:
+                full_response += content
+                yield content
+            
+            # Handle tool calls in streaming (though they typically don't stream incrementally)
+            tool_calls = _extract_streaming_tool_calls(chunk)
+            if tool_calls:
+                # For tool calls, we might want to yield a formatted representation
+                # but for now, we'll just log them for debugging
+                logger.debug(f"Tool calls in stream: {len(tool_calls)}")
+        
+        logger.debug(f"Streaming completed: {chunk_count} chunks, {len(full_response)} total chars")
         
         # Track complete response if session is available
         if session_manager and full_response:
@@ -502,7 +514,261 @@ async def stream(prompt: str, context: str = None, previous_messages: List[Dict[
                 
     except Exception as e:
         logger.error(f"Streaming failed: {e}")
-        yield f"[Streaming Error: {str(e)}]"
+        error_msg = f"[Streaming Error: {str(e)}]"
+        yield error_msg
+
+
+def _extract_streaming_content(chunk) -> str:
+    """
+    Extract text content from a streaming chunk.
+    UPDATED: Now provides user-friendly tool call messages with incremental JSON.
+    """
+    try:
+        # Handle dictionary responses from OpenAI client
+        if isinstance(chunk, dict):
+            # Handle error responses
+            if chunk.get("error"):
+                return f"[Error: {chunk.get('error_message', 'Unknown error')}]"
+            
+            # UPDATED: Handle incremental tool calls with better user messaging
+            if chunk.get("tool_calls"):
+                tool_calls = chunk["tool_calls"]
+                content_parts = []
+                
+                for tc in tool_calls:
+                    if tc.get("function", {}).get("name"):
+                        func_name = tc["function"]["name"]
+                        args_portion = tc["function"].get("arguments", "")
+                        
+                        if tc.get("incremental") and args_portion:
+                            # For incremental updates, show the JSON being built
+                            # But prefix with a user-friendly indicator on first chunk
+                            if args_portion.startswith('{"') or args_portion.startswith('{'):
+                                # This looks like the start of JSON arguments
+                                content_parts.append(f"[Calling {func_name}]: {args_portion}")
+                            else:
+                                # Continuation of arguments
+                                content_parts.append(args_portion)
+                                
+                        elif not tc.get("incremental"):
+                            # This is a complete tool call
+                            try:
+                                import json
+                                args = json.loads(args_portion) if args_portion else {}
+                                args_str = ", ".join(f"{k}={repr(v)}" for k, v in args.items())
+                                content_parts.append(f"[Calling: {func_name}({args_str})]")
+                            except:
+                                if args_portion:
+                                    content_parts.append(f"[Calling {func_name}]: {args_portion}")
+                                else:
+                                    content_parts.append(f"[Calling: {func_name}(...)]")
+                
+                if content_parts:
+                    return "".join(content_parts)
+            
+            # Handle standard response format
+            if "response" in chunk:
+                content = chunk["response"]
+                if content:  # Only return non-empty content
+                    return content
+            
+            # Handle choices format (direct from OpenAI API)
+            if "choices" in chunk and chunk["choices"]:
+                choice = chunk["choices"][0]
+                if "delta" in choice and choice["delta"]:
+                    delta = choice["delta"]
+                    if "content" in delta:
+                        content = delta["content"]
+                        if content:  # Only return non-empty content
+                            return content
+                elif "message" in choice:
+                    content = choice["message"].get("content", "")
+                    if content:  # Only return non-empty content
+                        return content
+            
+            return ""
+        
+        elif isinstance(chunk, str):
+            return chunk
+        
+        else:
+            # Try to extract from object attributes (for OpenAI SDK objects)
+            if hasattr(chunk, 'choices') and chunk.choices:
+                choice = chunk.choices[0]
+                if hasattr(choice, 'delta') and choice.delta:
+                    if hasattr(choice.delta, 'content') and choice.delta.content:
+                        return choice.delta.content
+                    
+                    # UPDATED: Handle tool calls in SDK object format with better messaging
+                    if hasattr(choice.delta, 'tool_calls') and choice.delta.tool_calls:
+                        content_parts = []
+                        for tc in choice.delta.tool_calls:
+                            if hasattr(tc, 'function') and tc.function:
+                                func_name = getattr(tc.function, 'name', '')
+                                args_str = getattr(tc.function, 'arguments', '')
+                                
+                                if func_name and args_str:
+                                    # Check if this looks like the start of JSON
+                                    if args_str.startswith('{"') or args_str.startswith('{'):
+                                        content_parts.append(f"[Calling {func_name}]: {args_str}")
+                                    else:
+                                        content_parts.append(args_str)
+                                elif func_name:
+                                    content_parts.append(f"[Calling {func_name}]")
+                        
+                        if content_parts:
+                            return "".join(content_parts)
+                
+                elif hasattr(choice, 'message') and choice.message:
+                    if hasattr(choice.message, 'content'):
+                        content = choice.message.content
+                        if content:
+                            return content
+            
+            return ""
+            
+    except Exception as e:
+        logger.debug(f"Error extracting streaming content: {e}")
+        return ""
+
+
+def _extract_streaming_tool_calls(chunk) -> List[Dict[str, Any]]:
+    """
+    Extract tool calls from a streaming chunk.
+    UPDATED: Now handles incremental tool call updates.
+    """
+    try:
+        tool_calls = []
+        
+        if isinstance(chunk, dict):
+            if "tool_calls" in chunk:
+                # Filter out incremental markers for final tool calls
+                return [tc for tc in chunk["tool_calls"] if not tc.get("incremental")]
+            
+            if "choices" in chunk and chunk["choices"]:
+                choice = chunk["choices"][0]
+                if "delta" in choice and choice["delta"]:
+                    if "tool_calls" in choice["delta"]:
+                        # Return incremental tool call updates
+                        return choice["delta"]["tool_calls"]
+                elif "message" in choice and "tool_calls" in choice["message"]:
+                    return choice["message"]["tool_calls"]
+        
+        else:
+            # Handle OpenAI SDK objects
+            if hasattr(chunk, 'choices') and chunk.choices:
+                choice = chunk.choices[0]
+                if hasattr(choice, 'delta') and choice.delta:
+                    if hasattr(choice.delta, 'tool_calls') and choice.delta.tool_calls:
+                        # Convert tool call objects to dictionaries
+                        for tc in choice.delta.tool_calls:
+                            if hasattr(tc, 'function'):
+                                tool_calls.append({
+                                    "id": getattr(tc, 'id', ''),
+                                    "type": "function",
+                                    "function": {
+                                        "name": getattr(tc.function, 'name', ''),
+                                        "arguments": getattr(tc.function, 'arguments', '')
+                                    }
+                                })
+        
+        return tool_calls
+        
+    except Exception as e:
+        logger.debug(f"Error extracting tool calls from stream: {e}")
+        return []
+    
+
+def _extract_streaming_tool_calls(chunk) -> List[Dict[str, Any]]:
+    """
+    Extract tool calls from a streaming chunk.
+    UPDATED: Now handles incremental tool call updates.
+    """
+    try:
+        tool_calls = []
+        
+        if isinstance(chunk, dict):
+            if "tool_calls" in chunk:
+                # Filter out incremental markers for final tool calls
+                return [tc for tc in chunk["tool_calls"] if not tc.get("incremental")]
+            
+            if "choices" in chunk and chunk["choices"]:
+                choice = chunk["choices"][0]
+                if "delta" in choice and choice["delta"]:
+                    if "tool_calls" in choice["delta"]:
+                        # Return incremental tool call updates
+                        return choice["delta"]["tool_calls"]
+                elif "message" in choice and "tool_calls" in choice["message"]:
+                    return choice["message"]["tool_calls"]
+        
+        else:
+            # Handle OpenAI SDK objects
+            if hasattr(chunk, 'choices') and chunk.choices:
+                choice = chunk.choices[0]
+                if hasattr(choice, 'delta') and choice.delta:
+                    if hasattr(choice.delta, 'tool_calls') and choice.delta.tool_calls:
+                        # Convert tool call objects to dictionaries
+                        for tc in choice.delta.tool_calls:
+                            if hasattr(tc, 'function'):
+                                tool_calls.append({
+                                    "id": getattr(tc, 'id', ''),
+                                    "type": "function",
+                                    "function": {
+                                        "name": getattr(tc.function, 'name', ''),
+                                        "arguments": getattr(tc.function, 'arguments', '')
+                                    }
+                                })
+        
+        return tool_calls
+        
+    except Exception as e:
+        logger.debug(f"Error extracting tool calls from stream: {e}")
+        return []
+       
+def _extract_streaming_tool_calls(chunk) -> List[Dict[str, Any]]:
+    """
+    Extract tool calls from a streaming chunk.
+    Tool calls typically come complete, not incrementally.
+    """
+    try:
+        tool_calls = []
+        
+        if isinstance(chunk, dict):
+            if "tool_calls" in chunk:
+                return chunk["tool_calls"]
+            
+            if "choices" in chunk and chunk["choices"]:
+                choice = chunk["choices"][0]
+                if "delta" in choice and choice["delta"]:
+                    if "tool_calls" in choice["delta"]:
+                        # Tool calls in streaming delta format
+                        return choice["delta"]["tool_calls"]
+                elif "message" in choice and "tool_calls" in choice["message"]:
+                    return choice["message"]["tool_calls"]
+        
+        else:
+            # Handle OpenAI SDK objects
+            if hasattr(chunk, 'choices') and chunk.choices:
+                choice = chunk.choices[0]
+                if hasattr(choice, 'delta') and choice.delta:
+                    if hasattr(choice.delta, 'tool_calls') and choice.delta.tool_calls:
+                        # Convert tool call objects to dictionaries
+                        for tc in choice.delta.tool_calls:
+                            if hasattr(tc, 'function'):
+                                tool_calls.append({
+                                    "id": getattr(tc, 'id', ''),
+                                    "type": "function",
+                                    "function": {
+                                        "name": getattr(tc.function, 'name', ''),
+                                        "arguments": getattr(tc.function, 'arguments', '')
+                                    }
+                                })
+        
+        return tool_calls
+        
+    except Exception as e:
+        logger.debug(f"Error extracting tool calls from stream: {e}")
+        return []
 
 
 def _build_messages(
