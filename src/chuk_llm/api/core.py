@@ -436,7 +436,7 @@ async def stream(prompt: str, context: str = None, previous_messages: List[Dict[
             if config_manager.supports_feature(effective_provider, Feature.TOOLS, effective_model):
                 completion_args["tools"] = tools
             else:
-                logger.warning(f"{effective_provider}/{effective_model} doesn't support tools according to configuration")
+                logger.debug(f"{effective_provider}/{effective_model} doesn't support tools according to configuration")
                     
         except Exception:
             # Unknown provider/model in configuration, let the client handle it
