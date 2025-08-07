@@ -185,6 +185,7 @@ class DiscovererFactory:
             # Import all discoverer modules to trigger registration
             from . import ollama_discoverer
             from . import openai_discoverer
+            from . import azure_openai_discoverer
             from . import general_discoverers
             cls._imported = True
             log.debug(f"Auto-imported discoverers: {list(cls._discoverers.keys())}")

@@ -79,6 +79,14 @@ class UniversalDiscoveryManager:
                 "api_key": os.getenv("OPENAI_API_KEY"),
                 "api_base": "https://api.openai.com/v1"
             })
+        elif provider_name == "azure_openai":
+            import os
+            config.update({
+                "api_key": os.getenv("AZURE_OPENAI_API_KEY"),
+                "azure_endpoint": os.getenv("AZURE_OPENAI_ENDPOINT"),
+                "api_version": discovery_config.get("api_version", "2024-02-01"),
+                "azure_ad_token": os.getenv("AZURE_AD_TOKEN")
+            })
         elif provider_name == "ollama":
             config.update({
                 "api_base": discovery_config.get("api_base", "http://localhost:11434")

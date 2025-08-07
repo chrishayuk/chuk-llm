@@ -1,6 +1,6 @@
 # chuk_llm/llm/discovery/__init__.py
 """
-Model discovery system - Clean modular version
+Model discovery system - Clean modular version with Azure OpenAI support
 """
 
 # Import base classes and factory
@@ -19,7 +19,7 @@ from .manager import UniversalDiscoveryManager, DiscoveryResults
 __all__ = [
     # Base classes
     "BaseModelDiscoverer",
-    "DiscoveredModel",
+    "DiscoveredModel", 
     "DiscovererFactory",
     
     # Engine components

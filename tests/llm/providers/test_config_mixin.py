@@ -376,8 +376,9 @@ def test_supports_feature_no_capabilities():
     with patch('chuk_llm.configuration.get_config', side_effect=Exception("No config")):
         mixin = ConfigAwareProviderMixin("openai", "gpt-4")
         
-        assert mixin.supports_feature("text") is False
-        assert mixin.supports_feature("streaming") is False
+        # FIXED: Now expects None (defers to client) instead of False
+        assert mixin.supports_feature("text") is None
+        assert mixin.supports_feature("streaming") is None
 
 
 def test_supports_feature_invalid_feature(basic_mixin):
@@ -388,7 +389,8 @@ def test_supports_feature_invalid_feature(basic_mixin):
 def test_supports_feature_exception_handling(basic_mixin, monkeypatch):
     """Test supports_feature handles exceptions gracefully"""
     monkeypatch.setattr(basic_mixin, '_get_model_capabilities', lambda: None)
-    assert basic_mixin.supports_feature("text") is False
+    # FIXED: Now expects None (defers to client) instead of False
+    assert basic_mixin.supports_feature("text") is None
 
 
 # ---------------------------------------------------------------------------
@@ -839,3 +841,88 @@ def test_capabilities_not_recomputed_unnecessarily(mock_configuration, monkeypat
         mixin.get_context_length_limit()
     
     assert call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# New tests for smart fallback behavior
+# ---------------------------------------------------------------------------
+
+def test_supports_feature_returns_none_for_unknown_model():
+    """Test that supports_feature returns None when model capabilities are unavailable"""
+    with patch('chuk_llm.configuration.get_config', side_effect=ImportError("Config not available")):
+        mixin = ConfigAwareProviderMixin("unknown_provider", "unknown_model")
+        
+        # Should return None to defer to provider client
+        assert mixin.supports_feature("text") is None
+        assert mixin.supports_feature("tools") is None
+        assert mixin.supports_feature("streaming") is None
+
+
+def test_supports_feature_behavior_with_partial_config():
+    """Test supports_feature behavior when config exists but model capabilities are missing"""
+    config = MockConfig()
+    provider = MockProviderConfig(name="test_provider")
+    config.add_provider(provider)
+    
+    with patch('chuk_llm.configuration.get_config', return_value=config):
+        with patch('chuk_llm.configuration.Feature', MockFeature):
+            mixin = ConfigAwareProviderMixin("test_provider", "unknown_model")
+            
+            # Should still work since provider exists and can provide default capabilities
+            assert mixin.supports_feature("text") is True  # Default capability
+            assert mixin.supports_feature("streaming") is True  # Default capability
+            assert mixin.supports_feature("advanced_feature") is False  # Not in defaults
+
+
+def test_get_model_info_includes_fallback_metadata(mock_configuration):
+    """Test that get_model_info includes metadata about fallback usage"""
+    mixin = ConfigAwareProviderMixin("openai", "gpt-4")
+    info = mixin.get_model_info()
+    
+    # Should indicate whether using explicit config or fallback
+    assert "has_explicit_config" in info
+    assert "using_fallback" in info
+    assert info["has_explicit_config"] is True  # gpt-4 is in our mock config
+    assert info["using_fallback"] is False
+
+
+def test_get_model_info_fallback_for_unknown_model(mock_configuration):
+    """Test get_model_info fallback behavior for unknown models"""
+    mixin = ConfigAwareProviderMixin("openai", "unknown-model-2025")
+    info = mixin.get_model_info()
+    
+    # Should still work but indicate it's using fallback
+    assert info["provider"] == "openai"
+    assert info["model"] == "unknown-model-2025"
+    assert info["has_explicit_config"] is False
+    assert info["using_fallback"] is True
+
+
+def test_feature_detection_error_handling():
+    """Test that feature detection handles errors gracefully"""
+    with patch('chuk_llm.configuration.Feature.from_string', side_effect=AttributeError("Feature not found")):
+        config = MockConfig()
+        provider = MockProviderConfig(name="openai")
+        config.add_provider(provider)
+        
+        with patch('chuk_llm.configuration.get_config', return_value=config):
+            mixin = ConfigAwareProviderMixin("openai", "gpt-4")
+            
+            # Should handle feature detection errors gracefully
+            result = mixin.supports_feature("invalid_feature")
+            assert result is None  # Defers to client when there's an error
+
+
+def test_logging_for_config_fallback():
+    """Test that appropriate logging occurs when falling back to client"""
+    with patch('chuk_llm.configuration.get_config', side_effect=ImportError("Config not available")):
+        mixin = ConfigAwareProviderMixin("openai", "new-model")
+        
+        with patch('chuk_llm.llm.providers._config_mixin.log') as mock_log:
+            result = mixin.supports_feature("text")
+            
+            assert result is None
+            # Should log that it's deferring to client
+            mock_log.debug.assert_called()
+            debug_calls = [call.args[0] for call in mock_log.debug.call_args_list]
+            assert any("deferring to client" in call for call in debug_calls)

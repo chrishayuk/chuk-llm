@@ -44,12 +44,11 @@ __discovery_defaults__:
       add_features:
       - reasoning
       patterns:
-      - .*70b.*
-      - .*72b.*
-      - .*405b.*
       - .*reasoning.*
       - o[1-4].*
       - magistral.*
+      - gpt-oss.*
+      - gpt-5.*
     vision_models:
       add_features:
       - vision
@@ -84,7 +83,6 @@ __global__:
     preferred_discoverers:
     - ollama
     - openai
-    - huggingface
   max_retries: 3
 __global_aliases__:
   claude: anthropic/claude-sonnet-4-20250514
@@ -751,6 +749,18 @@ ollama:
         - streaming
         - system_messages
         family_rules:
+          # ADDED: GPT-OSS support - CRITICAL FIX
+          gpt_oss:
+            base_context_length: 32768
+            features:
+            - text
+            - streaming
+            - tools          # CRITICAL: Enable tools support
+            - reasoning      # Mark as reasoning model
+            - system_messages
+            patterns:
+            - gpt-oss
+          
           code:
             base_context_length: 16384
             features:
@@ -860,6 +870,14 @@ ollama:
             - .*llava.*
             - .*moondream.*
         pattern_rules:
+          # ADDED: GPT-OSS pattern rule - CRITICAL FIX
+          gpt_oss_capable:
+            add_features:
+            - tools
+            - reasoning
+            patterns:
+            - .*gpt-oss.*
+          
           instruct_tuned:
             add_features:
             - system_messages
@@ -880,6 +898,7 @@ ollama:
             - .*llama-?3\.[12].*
             - .*phi4.*
             - .*reasoning.*
+            - .*gpt-oss.*  # ADDED: GPT-OSS to reasoning capable
           tool_capable:
             add_features:
             - tools
@@ -889,6 +908,7 @@ ollama:
             - .*mistral.*
             - .*granite.*
             - .*devstral.*
+            - .*gpt-oss.*  # ADDED: GPT-OSS to tool capable patterns - CRITICAL FIX
           vision_capable:
             add_features:
             - vision
@@ -918,6 +938,7 @@ ollama:
     default: llama3.3
     fast: llama3.3
     granite: granite3.3
+    gpt_oss: gpt-oss:latest  # ADDED: GPT-OSS alias
     latest: llama3.3
     llama: llama3.3
     mistral_local: mistral
@@ -925,69 +946,80 @@ ollama:
     programming: codellama
     qwen: qwen3
     reasoning: llama3.3
+    reasoning_local: gpt-oss:latest  # ADDED: Local reasoning alias
     smart: llama3.3
   model_capabilities:
-  - features:
-    - text
-    - streaming
-    - tools
-    max_context_length: 8192
-    max_output_tokens: 4096
-    pattern: gemma.*
-  - features:
-    - text
-    - streaming
-    - tools
-    max_context_length: 32768
-    max_output_tokens: 8192
-    pattern: llama3\.[23].*
-  - features:
-    - text
-    - streaming
-    - tools
-    max_context_length: 32768
-    max_output_tokens: 8192
-    pattern: mistral.*
-  - features:
-    - text
-    - streaming
-    - tools
-    - reasoning
-    max_context_length: 32768
-    max_output_tokens: 8192
-    pattern: qwen.*
-  - features:
-    - text
-    - streaming
-    max_context_length: 16384
-    max_output_tokens: 8192
-    pattern: .*codellama.*|.*code.*
-  - features:
-    - text
-    - streaming
-    max_context_length: 4096
-    max_output_tokens: 2048
-    pattern: phi.*
-  - features:
-    - text
-    - streaming
-    - tools
-    - vision
-    - multimodal
-    max_context_length: 8192
-    max_output_tokens: 4096
-    pattern: llama3\.2.*vision.*
-  - features: []
-    max_context_length: 512
-    pattern: .*embed.*|.*embedding.*
-  - features:
-    - text
-    - streaming
-    - tools
-    - reasoning
-    max_context_length: 8192
-    max_output_tokens: 4096
-    pattern: granite.*
+    # ADDED: GPT-OSS model capabilities - CRITICAL FIX
+    - features:
+      - text
+      - streaming
+      - tools       # CRITICAL: Tools support enabled
+      - reasoning   # Reasoning model
+      max_context_length: 32768
+      max_output_tokens: 8192
+      pattern: gpt-oss.*
+    
+    - features:
+      - text
+      - streaming
+      - tools
+      max_context_length: 8192
+      max_output_tokens: 4096
+      pattern: gemma.*
+    - features:
+      - text
+      - streaming
+      - tools
+      max_context_length: 32768
+      max_output_tokens: 8192
+      pattern: llama3\.[23].*
+    - features:
+      - text
+      - streaming
+      - tools
+      max_context_length: 32768
+      max_output_tokens: 8192
+      pattern: mistral.*
+    - features:
+      - text
+      - streaming
+      - tools
+      - reasoning
+      max_context_length: 32768
+      max_output_tokens: 8192
+      pattern: qwen.*
+    - features:
+      - text
+      - streaming
+      max_context_length: 16384
+      max_output_tokens: 8192
+      pattern: .*codellama.*|.*code.*
+    - features:
+      - text
+      - streaming
+      max_context_length: 4096
+      max_output_tokens: 2048
+      pattern: phi.*
+    - features:
+      - text
+      - streaming
+      - tools
+      - vision
+      - multimodal
+      max_context_length: 8192
+      max_output_tokens: 4096
+      pattern: llama3\.2.*vision.*
+    - features: []
+      max_context_length: 512
+      pattern: .*embed.*|.*embedding.*
+    - features:
+      - text
+      - streaming
+      - tools
+      - reasoning
+      max_context_length: 8192
+      max_output_tokens: 4096
+      pattern: granite.*
   models:
   - llama3.3
   - qwen3
@@ -996,6 +1028,9 @@ ollama:
   - gemma3
   - phi3
   - codellama
+  - gpt-oss:latest  # ADDED: GPT-OSS to available models
+  - gpt-oss:20b     # ADDED: Other GPT-OSS variants
+  - gpt-oss:120b
   rate_limits: {}
 openai:
   # CRITICAL: These were missing and causing the configuration errors

@@ -1,6 +1,6 @@
 # chuk_llm/llm/discovery/openai_discoverer.py
 """
-OpenAI-specific model discoverer with enhanced reasoning model support
+OpenAI-specific model discoverer with enhanced reasoning model support - FIXED VERSION
 """
 
 import logging
@@ -20,12 +20,16 @@ class OpenAIModelDiscoverer(BaseModelDiscoverer):
     def __init__(self, provider_name: str = "openai", api_key: Optional[str] = None, 
                  api_base: str = "https://api.openai.com/v1", **config):
         super().__init__(provider_name, **config)
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        # FIXED: Proper API key handling - only fall back to env if api_key is None
+        if api_key is None:
+            self.api_key = os.getenv("OPENAI_API_KEY")
+        else:
+            self.api_key = api_key
         self.api_base = api_base.rstrip('/')
         
         # Enhanced model categorization patterns
-        self.reasoning_patterns = [r'o1', r'o3', r'o4', r'reasoning', r'think']
-        self.vision_patterns = [r'gpt-4.*vision', r'gpt-4o', r'vision']
+        self.reasoning_patterns = [r'o1', r'o3', r'o4', r'o5', r'o6', r'gpt-5', r'reasoning', r'think']
+        self.vision_patterns = [r'gpt-4.*vision', r'gpt-4o', r'gpt-5.*vision', r'vision']
         self.code_patterns = [r'code', r'davinci-code']
         
         # Model family definitions
@@ -63,6 +67,19 @@ class OpenAIModelDiscoverer(BaseModelDiscoverer):
                 'supports_system_messages': True,
                 'context_length': 300000,
                 'max_output': 100000,
+                'parameter_requirements': {
+                    'use_max_completion_tokens': True,
+                    'no_system_messages': False,
+                    'no_streaming': False
+                }
+            },
+            'gpt-5': {
+                'generation': 'gpt5',
+                'reasoning_type': 'advanced-reasoning',
+                'supports_streaming': True,
+                'supports_system_messages': True,
+                'context_length': 200000,
+                'max_output': 64000,
                 'parameter_requirements': {
                     'use_max_completion_tokens': True,
                     'no_system_messages': False,
@@ -375,8 +392,10 @@ class OpenAIModelDiscoverer(BaseModelDiscoverer):
         """Determine model family for configuration"""
         model_lower = model_name.lower()
         
-        if any(pattern in model_lower for pattern in ["o1", "o3", "o4"]):
+        if any(pattern in model_lower for pattern in ["o1", "o3", "o4", "o5", "o6"]):
             return "reasoning"
+        elif "gpt-5" in model_lower:
+            return "reasoning"  # GPT-5 is a reasoning model
         elif "gpt-4" in model_lower:
             return "gpt4"
         elif "gpt-3.5" in model_lower:
@@ -388,8 +407,8 @@ class OpenAIModelDiscoverer(BaseModelDiscoverer):
         """Estimate pricing tier based on model name"""
         model_lower = model_name.lower()
         
-        if any(pattern in model_lower for pattern in ["o1", "o3", "o4"]):
-            return "premium"  # Reasoning models are premium
+        if any(pattern in model_lower for pattern in ["o1", "o3", "o4", "o5", "o6", "gpt-5"]):
+            return "premium"  # Reasoning models and GPT-5 are premium
         elif "mini" in model_lower or "nano" in model_lower:
             return "economy"
         elif "gpt-3.5" in model_lower:
@@ -403,7 +422,7 @@ class OpenAIModelDiscoverer(BaseModelDiscoverer):
         
         if "o1" in model_lower:
             return "reasoning"
-        elif any(pattern in model_lower for pattern in ["o3", "o4"]):
+        elif any(pattern in model_lower for pattern in ["o3", "o4", "o5", "o6", "gpt-5"]):
             return "advanced-reasoning"
         elif "gpt-4" in model_lower:
             return "high"
@@ -468,12 +487,23 @@ class OpenAIModelDiscoverer(BaseModelDiscoverer):
         )
     
     async def test_model_availability(self, model_name: str) -> bool:
-        """Test if a specific model is available"""
+        """Test if a specific model is available - FIXED VERSION"""
+        # FIXED: Comprehensive API key validation
         if not self.api_key:
+            log.debug(f"API key is None - cannot test model availability: {model_name}")
+            return False
+            
+        if isinstance(self.api_key, str) and not self.api_key.strip():
+            log.debug(f"API key is empty or whitespace - cannot test model availability: {model_name}")
             return False
         
         try:
             import openai
+            
+            # Additional validation - ensure we can create the client
+            if not self.api_key:
+                return False
+                
             client = openai.AsyncOpenAI(api_key=self.api_key, base_url=self.api_base)
             
             # Get family info for proper parameters
@@ -495,6 +525,9 @@ class OpenAIModelDiscoverer(BaseModelDiscoverer):
             await client.close()
             return True
             
+        except ImportError as e:
+            log.debug(f"OpenAI package not available for testing model availability: {e}")
+            return False
         except Exception as e:
             log.debug(f"Model {model_name} availability test failed: {e}")
             return False

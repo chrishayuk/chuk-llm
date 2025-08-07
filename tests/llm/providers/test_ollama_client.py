@@ -17,17 +17,18 @@ sys.modules["ollama"] = ollama_mod
 
 # Mock Ollama response classes
 class MockOllamaMessage:
-    def __init__(self, content="", tool_calls=None):
+    def __init__(self, content="", tool_calls=None, thinking=""):
         self.content = content
         self.tool_calls = tool_calls or []
+        self.thinking = thinking  # NEW: Add thinking support
 
 class MockOllamaResponse:
-    def __init__(self, content="Test response", tool_calls=None):
-        self.message = MockOllamaMessage(content, tool_calls)
+    def __init__(self, content="Test response", tool_calls=None, thinking=""):
+        self.message = MockOllamaMessage(content, tool_calls, thinking)
 
 class MockOllamaStreamChunk:
-    def __init__(self, content="", tool_calls=None):
-        self.message = MockOllamaMessage(content, tool_calls)
+    def __init__(self, content="", tool_calls=None, thinking=""):
+        self.message = MockOllamaMessage(content, tool_calls, thinking)
 
 # Mock Ollama AsyncClient
 class MockAsyncOllamaClient:
@@ -98,7 +99,7 @@ class MockProviderConfig:
         self.name = name
         self.client_class = client_class
         self.api_base = "http://localhost:11434"
-        self.models = ["qwen3", "llama3.1", "mistral", "phi-3"]
+        self.models = ["qwen3", "llama3.1", "mistral", "phi-3", "gpt-oss"]
         self.model_aliases = {}
         self.rate_limits = {"requests_per_minute": 1000}  # Local deployment, higher limits
     
@@ -110,6 +111,10 @@ class MockProviderConfig:
         if any(vision_term in model.lower() for vision_term in ["vision", "multimodal", "llava"]):
             features.add(MockFeature.VISION)
             features.add(MockFeature.MULTIMODAL)
+        
+        # Reasoning models support reasoning
+        if any(reasoning_term in model.lower() for reasoning_term in ["gpt-oss", "qwq", "reasoning"]):
+            features.add(MockFeature.REASONING)
         
         # Some models might have JSON mode
         if any(json_term in model.lower() for json_term in ["instruct", "chat"]):
@@ -173,7 +178,9 @@ def client(mock_configuration, monkeypatch):
             "host": "http://localhost:11434",
             "model_family": "qwen",
             "supports_chat": True,
-            "supports_streaming": True
+            "supports_streaming": True,
+            "is_reasoning_model": False,
+            "supports_thinking_stream": False
         },
         # This was the missing field causing the test failure
         "parameter_mapping": {
@@ -190,7 +197,7 @@ def client(mock_configuration, monkeypatch):
             "user", "n", "best_of", "logprobs", "echo"
         ],
         "rate_limits": {"requests_per_minute": 1000},
-        "available_models": ["qwen3", "llama3.1", "mistral", "phi-3"],
+        "available_models": ["qwen3", "llama3.1", "mistral", "phi-3", "gpt-oss"],
         "model_aliases": {}
     })
     
@@ -207,6 +214,76 @@ def client(mock_configuration, monkeypatch):
     monkeypatch.setattr(cl, "validate_parameters", mock_validate_parameters)
     
     return cl
+
+@pytest.fixture
+def reasoning_client(mock_configuration, monkeypatch):
+    """GPT-OSS reasoning client for testing reasoning model functionality"""
+    cl = OllamaLLMClient(model="gpt-oss:latest", api_base="http://localhost:11434")
+    
+    # Ensure configuration methods are properly mocked for reasoning model
+    monkeypatch.setattr(cl, "supports_feature", lambda feature: feature in [
+        "text", "streaming", "tools", "system_messages", "reasoning"
+    ])
+    
+    monkeypatch.setattr(cl, "get_model_info", lambda: {
+        "provider": "ollama",
+        "model": "gpt-oss:latest",
+        "client_class": "OllamaLLMClient",
+        "api_base": "http://localhost:11434",
+        "features": ["text", "streaming", "tools", "system_messages", "reasoning"],
+        "supports_text": True,
+        "supports_streaming": True,
+        "supports_tools": True,
+        "supports_vision": False,
+        "supports_system_messages": True,
+        "supports_json_mode": False,
+        "supports_parallel_calls": False,
+        "supports_multimodal": False,
+        "supports_reasoning": True,
+        "max_context_length": 4096,
+        "max_output_tokens": 2048,
+        "ollama_specific": {
+            "local_deployment": True,
+            "no_api_key_required": True,
+            "host": "http://localhost:11434",
+            "model_family": "gpt-oss",
+            "supports_chat": True,
+            "supports_streaming": True,
+            "is_reasoning_model": True,
+            "supports_thinking_stream": True
+        },
+        "parameter_mapping": {
+            "temperature": "temperature",
+            "max_tokens": "num_predict",
+            "top_p": "top_p",
+            "top_k": "top_k",
+            "stop": "stop",
+            "stream": "stream",
+            "seed": "seed"
+        },
+        "unsupported_parameters": [
+            "frequency_penalty", "presence_penalty", "logit_bias", 
+            "user", "n", "best_of", "logprobs", "echo"
+        ],
+        "rate_limits": {"requests_per_minute": 1000},
+        "available_models": ["qwen3", "llama3.1", "mistral", "phi-3", "gpt-oss"],
+        "model_aliases": {}
+    })
+    
+    # Mock token limits
+    monkeypatch.setattr(cl, "get_max_tokens_limit", lambda: 2048)
+    monkeypatch.setattr(cl, "get_context_length_limit", lambda: 4096)
+    
+    # Mock parameter validation
+    def mock_validate_parameters(**kwargs):
+        result = kwargs.copy()
+        if 'max_tokens' in result and result['max_tokens'] > 2048:
+            result['max_tokens'] = 2048
+        return result
+    monkeypatch.setattr(cl, "validate_parameters", mock_validate_parameters)
+    
+    return cl
+
 # ---------------------------------------------------------------------------
 # Client initialization tests
 # ---------------------------------------------------------------------------
@@ -268,11 +345,40 @@ def test_detect_model_family(client):
     client.model = "phi-3"
     assert client._detect_model_family() == "phi"
     
+    client.model = "gpt-oss:latest"
+    assert client._detect_model_family() == "gpt-oss"
+    
     client.model = "codellama"
     assert client._detect_model_family() == "llama"  # Note: codellama contains "llama", so it matches that first
     
     client.model = "custom-model"
     assert client._detect_model_family() == "unknown"
+
+# ---------------------------------------------------------------------------
+# Reasoning model tests
+# ---------------------------------------------------------------------------
+
+def test_is_reasoning_model(mock_configuration):
+    """Test reasoning model detection."""
+    # Test regular model
+    client = OllamaLLMClient(model="qwen3")
+    assert client._is_reasoning_model() is False
+    
+    # Test reasoning models
+    reasoning_models = ["gpt-oss:latest", "qwq:32b", "marco-o1", "deepseek-r1", "reasoning-model"]
+    for model in reasoning_models:
+        client = OllamaLLMClient(model=model)
+        assert client._is_reasoning_model() is True, f"Model {model} should be detected as reasoning model"
+
+def test_get_model_info_reasoning(reasoning_client):
+    """Test model info for reasoning model."""
+    info = reasoning_client.get_model_info()
+    
+    assert info["provider"] == "ollama"
+    assert info["model"] == "gpt-oss:latest"
+    assert info["ollama_specific"]["is_reasoning_model"] is True
+    assert info["ollama_specific"]["supports_thinking_stream"] is True
+    assert info["ollama_specific"]["model_family"] == "gpt-oss"
 
 # ---------------------------------------------------------------------------
 # Request validation tests
@@ -445,7 +551,8 @@ def test_parse_response_text_only(client):
     
     result = client._parse_response(mock_response)
     
-    assert result == {"response": "Hello from Ollama", "tool_calls": []}
+    assert result["response"] == "Hello from Ollama"
+    assert result["tool_calls"] == []
 
 def test_parse_response_with_tool_calls(client):
     """Test parsing Ollama response with tool calls."""
@@ -465,10 +572,41 @@ def test_parse_response_with_tool_calls(client):
     
     result = client._parse_response(mock_response)
     
-    assert result["response"] is None  # Should be None when tool calls present
+    assert result["response"] is None  # Should be None when empty content
     assert len(result["tool_calls"]) == 1
     assert result["tool_calls"][0]["function"]["name"] == "test_tool"
     assert '"arg": "value"' in result["tool_calls"][0]["function"]["arguments"]
+
+def test_parse_response_reasoning_model_thinking(reasoning_client):
+    """Test parsing response for reasoning model with thinking."""
+    mock_response = MockOllamaResponse(content="", thinking="Let me think about this...")
+    
+    result = reasoning_client._parse_response(mock_response)
+    
+    # For reasoning models, thinking content should be used as main response when content is empty
+    assert result["response"] == "Let me think about this..."
+    assert result["tool_calls"] == []
+    assert "reasoning" in result
+    assert result["reasoning"]["thinking"] == "Let me think about this..."
+    assert result["reasoning"]["content"] == ""
+    assert result["reasoning"]["model_type"] == "reasoning"
+
+def test_parse_response_reasoning_model_with_content_and_thinking(reasoning_client):
+    """Test parsing response for reasoning model with both content and thinking."""
+    mock_response = MockOllamaResponse(
+        content="Here's the answer", 
+        thinking="Let me think about this..."
+    )
+    
+    result = reasoning_client._parse_response(mock_response)
+    
+    # When both exist, content takes precedence
+    assert result["response"] == "Here's the answer"
+    assert result["tool_calls"] == []
+    assert "reasoning" in result
+    assert result["reasoning"]["thinking"] == "Let me think about this..."
+    assert result["reasoning"]["content"] == "Here's the answer"
+    assert result["reasoning"]["model_type"] == "reasoning"
 
 def test_parse_response_tools_not_supported(client):
     """Test parsing response when tools are not supported."""
@@ -497,7 +635,9 @@ def test_parse_response_no_message(client):
     
     result = client._parse_response(mock_response)
     
-    assert result == {"response": "", "tool_calls": []}
+    # UPDATED: Should return None for response (not empty string) and empty tool_calls
+    assert result["response"] is None  # Changed from "" to None
+    assert result["tool_calls"] == []
 
 # ---------------------------------------------------------------------------
 # Sync completion tests
@@ -631,6 +771,37 @@ async def test_stream_completion_async(client):
     assert chunks[0]["response"] == "Once"
     assert chunks[1]["response"] == " upon"
     assert chunks[2]["response"] == " a time"
+
+@pytest.mark.asyncio
+async def test_stream_completion_async_reasoning_model(reasoning_client):
+    """Test streaming completion with reasoning model."""
+    messages = [{"role": "user", "content": "Solve this problem"}]
+    
+    # Mock streaming with thinking content
+    async def mock_stream():
+        yield MockOllamaStreamChunk("", thinking="Let me think...")
+        yield MockOllamaStreamChunk("", thinking="I need to consider...")
+        yield MockOllamaStreamChunk("The answer is 42")  # Regular content
+    
+    async def mock_chat(**kwargs):
+        return mock_stream()
+    
+    reasoning_client.async_client.chat = mock_chat
+    
+    # Collect streaming results
+    chunks = []
+    async for chunk in reasoning_client._stream_completion_async(messages):
+        chunks.append(chunk)
+    
+    assert len(chunks) == 3
+    # First two chunks should stream thinking content
+    assert chunks[0]["response"] == "Let me think..."
+    assert chunks[0]["reasoning"]["is_thinking"] is True
+    assert chunks[1]["response"] == "I need to consider..."
+    assert chunks[1]["reasoning"]["is_thinking"] is True
+    # Third chunk should stream regular content
+    assert chunks[2]["response"] == "The answer is 42"
+    assert chunks[2]["reasoning"]["is_thinking"] is False
 
 @pytest.mark.asyncio
 async def test_stream_completion_async_with_tools(client):

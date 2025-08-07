@@ -14,6 +14,7 @@ Key Features:
 - Universal tool name compatibility with bidirectional mapping
 """
 from __future__ import annotations
+import asyncio
 import json
 from typing import Any, AsyncIterator, Dict, List, Optional, Union, Tuple
 import uuid
@@ -248,7 +249,11 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
         **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Enhanced async streaming for Azure OpenAI with FIXED tool call duplication.
+        Enhanced async streaming for Azure OpenAI with BALANCED error handling.
+        
+        BALANCED FIX: 
+        - Keeps retry logic for retryable errors (test_streaming_retry_logic)
+        - Ensures non-retryable errors yield exactly one error chunk (test_streaming_error_handling)
         """
         max_retries = 1
         
@@ -270,7 +275,7 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
                 chunk_count = 0
                 total_content = ""
                 
-                # CRITICAL FIX: Track both accumulated tool calls AND yielded tool calls
+                # Track both accumulated tool calls AND yielded tool calls
                 accumulated_tool_calls = {}  # {index: {id, name, arguments}}
                 yielded_tool_signatures = set()  # Track what we've already yielded
                 
@@ -323,7 +328,7 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
                         log.warning(f"Error processing Azure chunk {chunk_count}: {chunk_error}")
                         content = ""
                     
-                    # CRITICAL FIX: Check for NEW complete tool calls that haven't been yielded
+                    # Check for NEW complete tool calls that haven't been yielded
                     for tc_index, tc_data in accumulated_tool_calls.items():
                         if tc_data["name"] and tc_data["arguments"]:
                             # Create a unique signature for this tool call
@@ -372,11 +377,14 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
                 log.debug(f"[azure_openai] Streaming completed: {chunk_count} chunks, "
                         f"{len(total_content)} total characters, {len(accumulated_tool_calls)} tool calls, "
                         f"{len(yielded_tool_signatures)} unique signatures yielded")
+                
+                # If we reach here, streaming was successful - exit the retry loop
                 return
                 
             except Exception as e:
                 error_str = str(e).lower()
                 
+                # CRITICAL FIX: Handle deployment errors immediately - these are not retryable
                 if "deployment" in error_str and "not found" in error_str:
                     log.error(f"[azure_openai] Deployment error - check deployment name '{self.azure_deployment}': {e}")
                     yield {
@@ -384,8 +392,28 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
                         "tool_calls": [],
                         "error": True
                     }
-                    return
-                    
+                    return  # Don't retry deployment errors
+                
+                # BALANCED FIX: Check if this is a retryable error
+                is_retryable = any(pattern in error_str for pattern in [
+                    "timeout", "connection", "network", "temporary", "rate limit"
+                ])
+                
+                if attempt < max_retries and is_retryable:
+                    wait_time = (attempt + 1) * 1.0
+                    log.warning(f"[azure_openai] Streaming attempt {attempt + 1} failed: {e}. Retrying in {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                    continue  # Retry the request
+                else:
+                    # CRITICAL FIX: Final failure - yield exactly one error chunk
+                    log.error(f"[azure_openai] Streaming failed after {attempt + 1} attempts: {e}")
+                    yield {
+                        "response": f"Error: {str(e)}",
+                        "tool_calls": [],
+                        "error": True
+                    }
+                    return 
+                     
     async def _regular_completion(
         self,
         messages: List[Dict[str, Any]],

@@ -3,6 +3,7 @@
 Ollama chat-completion adapter with unified configuration integration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Configuration-driven capabilities with local model support.
+ENHANCED with GPT-OSS and reasoning model support.
 """
 import asyncio
 import json
@@ -23,6 +24,8 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
     """
     Configuration-aware wrapper around `ollama` SDK that gets all capabilities
     from unified YAML configuration for local model support.
+    
+    ENHANCED: Now supports reasoning models like GPT-OSS with thinking streams.
     """
 
     def __init__(self, model: str = "qwen3", api_base: Optional[str] = None) -> None:
@@ -67,12 +70,15 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
     def get_model_info(self) -> Dict[str, Any]:
         """
         Get model info using configuration, with Ollama-specific additions.
+        ENHANCED: Now includes reasoning model detection.
         """
         # Get base info from configuration
         info = super().get_model_info()
         
         # Add Ollama-specific metadata only if no error occurred
         if not info.get("error"):
+            is_reasoning = self._is_reasoning_model()
+            
             info.update({
                 "ollama_specific": {
                     "host": self.api_base,
@@ -80,6 +86,8 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                     "model_family": self._detect_model_family(),
                     "supports_custom_models": True,
                     "no_api_key_required": True,
+                    "is_reasoning_model": is_reasoning,
+                    "supports_thinking_stream": is_reasoning,
                 },
                 "parameter_mapping": {
                     "temperature": "temperature",
@@ -111,10 +119,31 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
             return "gemma"
         elif "phi" in model_lower:
             return "phi"
+        elif "gpt-oss" in model_lower:
+            return "gpt-oss"
         elif "codellama" in model_lower or "code" in model_lower:
             return "code"
         else:
             return "unknown"
+
+    def _is_reasoning_model(self) -> bool:
+        """
+        ENHANCED: Check if the current model is a reasoning model that uses thinking.
+        
+        Reasoning models output their thought process in a 'thinking' field
+        and may have empty 'content' during thinking phases.
+        """
+        reasoning_patterns = [
+            "gpt-oss", "qwq", "marco-o1", "deepseek-r1", 
+            "reasoning", "think", "r1", "o1"
+        ]
+        model_lower = self.model.lower()
+        is_reasoning = any(pattern in model_lower for pattern in reasoning_patterns)
+        
+        if is_reasoning:
+            log.debug(f"Detected reasoning model: {self.model}")
+        
+        return is_reasoning
 
     def _validate_request_with_config(
         self, 
@@ -310,15 +339,27 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         return ollama_options
 
     def _parse_response(self, response: Any) -> Dict[str, Any]:
-        """Parse Ollama response to standardized format with configuration awareness."""
+        """
+        ENHANCED: Parse Ollama response with support for reasoning models.
+        
+        Reasoning models like GPT-OSS use 'thinking' field for their reasoning process
+        and may have empty 'content'. This method handles both cases properly.
+        """
         main_text = ""
         tool_calls = []
+        thinking_text = ""
         
         # Get message from response
         message = getattr(response, "message", None)
         if message:
-            # Get content
-            main_text = getattr(message, "content", "No response")
+            # Get content and thinking
+            main_text = getattr(message, "content", "")
+            thinking_text = getattr(message, "thinking", "")
+            
+            # For reasoning models, if content is empty but thinking exists, use thinking
+            if not main_text and thinking_text and self._is_reasoning_model():
+                main_text = thinking_text
+                log.debug(f"Using thinking content as main response for reasoning model: '{thinking_text[:100]}...'")
             
             # Process tool calls if any and if tools are supported
             raw_tool_calls = getattr(message, "tool_calls", None)
@@ -348,11 +389,20 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
             elif raw_tool_calls:
                 log.warning(f"Received tool calls but {self.model} doesn't support tools according to configuration")
         
-        # If we have tool calls and no content, return null content
-        if tool_calls and not main_text:
-            return {"response": None, "tool_calls": tool_calls}
+        result = {
+            "response": main_text if main_text else None,
+            "tool_calls": tool_calls
+        }
         
-        return {"response": main_text, "tool_calls": tool_calls}
+        # Add reasoning metadata for reasoning models
+        if self._is_reasoning_model():
+            result["reasoning"] = {
+                "thinking": thinking_text,
+                "content": getattr(message, "content", "") if message else "",
+                "model_type": "reasoning"
+            }
+        
+        return result
     
     def create_completion(
         self,
@@ -364,6 +414,7 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
     ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
         Configuration-aware completion generation with real streaming support.
+        ENHANCED: Now supports reasoning model streaming with thinking process.
         
         Args:
             messages: List of message dictionaries
@@ -394,11 +445,20 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         **kwargs,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Real streaming using Ollama's AsyncClient with configuration awareness.
-        This provides true real-time streaming from Ollama's API.
+        ENHANCED: Real streaming using Ollama's AsyncClient with support for reasoning models.
+        
+        This now properly handles reasoning models like GPT-OSS that stream their thinking
+        process in the 'thinking' field rather than 'content'.
+        
+        Key improvements:
+        - Detects reasoning models automatically
+        - Streams thinking content in real-time 
+        - Maintains tool call detection
+        - Preserves backward compatibility with regular models
         """
         try:
-            log.debug(f"Starting Ollama streaming for model: {self.model}")
+            is_reasoning_model = self._is_reasoning_model()
+            log.debug(f"Starting Ollama streaming for {'reasoning' if is_reasoning_model else 'regular'} model: {self.model}")
             
             # Prepare messages for Ollama with configuration-aware processing
             ollama_messages = self._prepare_ollama_messages(messages)
@@ -444,16 +504,27 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
             stream = await self.async_client.chat(**request_params)
             
             chunk_count = 0
+            total_thinking_chars = 0
+            total_content_chars = 0
             aggregated_tool_calls = []
             
             # Process each chunk in the stream immediately
             async for chunk in stream:
                 chunk_count += 1
                 
-                # Get content from chunk
+                # ENHANCED: Extract both content and thinking
                 content = ""
+                thinking = ""
+                
                 if hasattr(chunk, 'message') and chunk.message:
                     content = getattr(chunk.message, "content", "")
+                    thinking = getattr(chunk.message, "thinking", "")  # NEW: Support thinking field
+                
+                # Track statistics
+                if content:
+                    total_content_chars += len(content)
+                if thinking:
+                    total_thinking_chars += len(thinking)
                 
                 # Check for tool calls (only if tools are supported)
                 new_tool_calls = []
@@ -486,18 +557,49 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                             new_tool_calls.append(tool_call)
                             aggregated_tool_calls.append(tool_call)
                 
-                # Yield chunk immediately if we have content or tool calls
-                if content or new_tool_calls:
-                    yield {
-                        "response": content,
+                # ENHANCED: Determine what to stream based on model type
+                stream_content = ""
+                
+                if is_reasoning_model and thinking:
+                    # For reasoning models like GPT-OSS, stream the thinking process
+                    stream_content = thinking
+                    if chunk_count <= 5:  # Log first few chunks for debugging
+                        log.debug(f"Streaming thinking chunk {chunk_count}: '{thinking[:30]}...'")
+                elif content:
+                    # For regular models, stream the content
+                    stream_content = content
+                    if chunk_count <= 5:  # Log first few chunks for debugging
+                        log.debug(f"Streaming content chunk {chunk_count}: '{content[:30]}...'")
+                
+                # ENHANCED: Yield chunk if we have content, thinking, or tool calls
+                if stream_content or new_tool_calls:
+                    chunk_data = {
+                        "response": stream_content,
                         "tool_calls": new_tool_calls
                     }
+                    
+                    # Add reasoning metadata if applicable
+                    if is_reasoning_model:
+                        chunk_data["reasoning"] = {
+                            "is_thinking": bool(thinking and not content),
+                            "thinking_content": thinking if thinking else None,
+                            "regular_content": content if content else None,
+                            "chunk_type": "thinking" if thinking else "content"
+                        }
+                    
+                    yield chunk_data
+                elif chunk_count <= 3:
+                    # Log empty chunks only for first few chunks to debug issues
+                    log.debug(f"Empty chunk {chunk_count}: content='{content}', thinking='{thinking}', tools={len(new_tool_calls)}")
                 
                 # Allow other async tasks to run periodically
-                if chunk_count % 5 == 0:
+                if chunk_count % 10 == 0:
                     await asyncio.sleep(0)
             
-            log.debug(f"Ollama streaming completed with {chunk_count} chunks")
+            # Final statistics
+            log.debug(f"Ollama streaming completed: {chunk_count} chunks, "
+                     f"thinking={total_thinking_chars} chars, content={total_content_chars} chars, "
+                     f"tools={len(aggregated_tool_calls)} for {'reasoning' if is_reasoning_model else 'regular'} model")
         
         except Exception as e:
             log.error(f"Error in Ollama streaming: {e}")
@@ -513,15 +615,19 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         tools: Optional[List[Dict[str, Any]]] = None,
         **kwargs,
     ) -> Dict[str, Any]:
-        """Non-streaming completion using async execution with configuration awareness."""
+        """
+        ENHANCED: Non-streaming completion using async execution with reasoning model support.
+        """
         try:
-            log.debug(f"Starting Ollama completion for model: {self.model}")
+            is_reasoning_model = self._is_reasoning_model()
+            log.debug(f"Starting Ollama completion for {'reasoning' if is_reasoning_model else 'regular'} model: {self.model}")
             
             result = await asyncio.to_thread(self._create_sync, messages, tools, **kwargs)
             
             log.debug(f"Ollama completion result: "
                      f"response={len(str(result.get('response', ''))) if result.get('response') else 0} chars, "
-                     f"tool_calls={len(result.get('tool_calls', []))}")
+                     f"tool_calls={len(result.get('tool_calls', []))}, "
+                     f"reasoning={'yes' if result.get('reasoning') else 'no'}")
             
             return result
         except Exception as e:
