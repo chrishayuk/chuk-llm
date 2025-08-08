@@ -510,12 +510,21 @@ class TestStreamFunction:
                     mock_config_manager.supports_feature.return_value = True
                     mock_get_config.return_value = mock_config_manager
                     
-                    chunks = []
-                    async for chunk in stream("Test"):
-                        chunks.append(chunk)
-                    
-                    assert len(chunks) == 1
-                    assert "[Streaming Error: Connection failed]" in chunks[0]
+                    with patch('chuk_llm.api.core.ask') as mock_ask:
+                        # Mock the fallback ask function to return a fallback response
+                        mock_ask.return_value = "Fallback response"
+                        
+                        chunks = []
+                        async for chunk in stream("Test"):
+                            chunks.append(chunk)
+                        
+                        # The stream function should fall back to non-streaming mode
+                        # when streaming fails, so we expect the fallback response
+                        assert len(chunks) == 1
+                        assert chunks[0] == "Fallback response"
+                        
+                        # Verify fallback was called
+                        mock_ask.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_streaming_non_dict_chunks(self, mock_client, mock_config):

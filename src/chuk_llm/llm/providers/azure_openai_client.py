@@ -14,6 +14,7 @@ Key Features:
 - Universal tool name compatibility with bidirectional mapping
 """
 from __future__ import annotations
+import asyncio
 import json
 from typing import Any, AsyncIterator, Dict, List, Optional, Union, Tuple
 import uuid
@@ -248,7 +249,13 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
         **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Enhanced async streaming for Azure OpenAI with FIXED tool call duplication.
+        FIXED: Azure OpenAI streaming with proper JSON completion testing.
+        
+        Key fixes:
+        - Only yield tool calls when JSON arguments are complete and parseable
+        - Removed complex signature tracking system
+        - Added completion status tracking
+        - Prevents JSON parsing errors in downstream code
         """
         max_retries = 1
         
@@ -270,15 +277,14 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
                 chunk_count = 0
                 total_content = ""
                 
-                # CRITICAL FIX: Track both accumulated tool calls AND yielded tool calls
-                accumulated_tool_calls = {}  # {index: {id, name, arguments}}
-                yielded_tool_signatures = set()  # Track what we've already yielded
+                # FIXED: Simple completion-based tracking instead of signature system
+                accumulated_tool_calls = {}  # {index: {id, name, arguments, complete}}
                 
                 async for chunk in response_stream:
                     chunk_count += 1
                     
                     content = ""
-                    current_complete_tools = []
+                    completed_tool_calls = []  # Only completed tool calls this chunk
                     
                     try:
                         if hasattr(chunk, 'choices') and chunk.choices and len(chunk.choices) > 0:
@@ -287,33 +293,72 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
                             if hasattr(choice, 'delta') and choice.delta:
                                 delta = choice.delta
                                 
-                                # Handle content
+                                # Handle content - this works fine
                                 if hasattr(delta, 'content') and delta.content is not None:
                                     content = str(delta.content)
                                     total_content += content
                                 
-                                # Handle tool calls with proper accumulation
+                                # FIXED: Handle tool calls with proper completion testing
                                 if hasattr(delta, 'tool_calls') and delta.tool_calls:
                                     for tc in delta.tool_calls:
                                         try:
                                             tc_index = getattr(tc, 'index', 0)
                                             
+                                            # Initialize accumulator with completion tracking
                                             if tc_index not in accumulated_tool_calls:
                                                 accumulated_tool_calls[tc_index] = {
                                                     "id": getattr(tc, 'id', f"call_{uuid.uuid4().hex[:8]}"),
                                                     "name": "",
-                                                    "arguments": ""
+                                                    "arguments": "",
+                                                    "complete": False  # ADDED: Track completion status
                                                 }
+                                            
+                                            tool_call_data = accumulated_tool_calls[tc_index]
+                                            
+                                            # Update data
+                                            if hasattr(tc, 'id') and tc.id:
+                                                tool_call_data["id"] = tc.id
                                             
                                             if hasattr(tc, 'function') and tc.function:
                                                 if hasattr(tc.function, 'name') and tc.function.name:
-                                                    accumulated_tool_calls[tc_index]["name"] += tc.function.name
+                                                    tool_call_data["name"] += tc.function.name
                                                 
                                                 if hasattr(tc.function, 'arguments') and tc.function.arguments:
-                                                    accumulated_tool_calls[tc_index]["arguments"] += tc.function.arguments
+                                                    tool_call_data["arguments"] += tc.function.arguments
+                                            
+                                            # CRITICAL FIX: Only yield when JSON is complete and valid
+                                            if (tool_call_data["name"] and 
+                                                tool_call_data["arguments"] and 
+                                                not tool_call_data["complete"]):
                                                 
-                                                if hasattr(tc, 'id') and tc.id:
-                                                    accumulated_tool_calls[tc_index]["id"] = tc.id
+                                                try:
+                                                    # Handle Azure-specific argument formatting
+                                                    args_str = tool_call_data["arguments"]
+                                                    if args_str.startswith('""') and args_str.endswith('""'):
+                                                        args_str = args_str[2:-2]
+                                                    
+                                                    # Test if JSON is complete and valid
+                                                    parsed_args = json.loads(args_str)
+                                                    
+                                                    # Mark as complete and add to current chunk
+                                                    tool_call_data["complete"] = True
+                                                    
+                                                    tool_call = {
+                                                        "id": tool_call_data["id"],
+                                                        "type": "function",
+                                                        "function": {
+                                                            "name": tool_call_data["name"],
+                                                            "arguments": json.dumps(parsed_args)
+                                                        }
+                                                    }
+                                                    
+                                                    completed_tool_calls.append(tool_call)
+                                                    log.debug(f"Azure tool call {tc_index} completed: {tool_call_data['name']}")
+                                                
+                                                except json.JSONDecodeError:
+                                                    # JSON incomplete - keep accumulating
+                                                    log.debug(f"Azure tool call {tc_index} JSON incomplete, continuing accumulation")
+                                                    pass
                                         
                                         except Exception as e:
                                             log.debug(f"Error processing Azure streaming tool call chunk: {e}")
@@ -323,60 +368,30 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
                         log.warning(f"Error processing Azure chunk {chunk_count}: {chunk_error}")
                         content = ""
                     
-                    # CRITICAL FIX: Check for NEW complete tool calls that haven't been yielded
-                    for tc_index, tc_data in accumulated_tool_calls.items():
-                        if tc_data["name"] and tc_data["arguments"]:
-                            # Create a unique signature for this tool call
-                            tool_signature = f"{tc_data['name']}:{tc_data['arguments']}"
-                            
-                            # Only process if we haven't yielded this exact tool call before
-                            if tool_signature not in yielded_tool_signatures:
-                                try:
-                                    # Handle Azure-specific argument formatting
-                                    args_str = tc_data["arguments"]
-                                    if args_str.startswith('""') and args_str.endswith('""'):
-                                        args_str = args_str[2:-2]
-                                    
-                                    parsed_args = json.loads(args_str)
-                                    
-                                    tool_call = {
-                                        "id": tc_data["id"],
-                                        "type": "function",
-                                        "function": {
-                                            "name": tc_data["name"],
-                                            "arguments": json.dumps(parsed_args)
-                                        }
-                                    }
-                                    
-                                    current_complete_tools.append(tool_call)
-                                    yielded_tool_signatures.add(tool_signature)  # Mark as yielded
-                                    
-                                except json.JSONDecodeError:
-                                    # Arguments incomplete, skip for now
-                                    pass
-                    
                     # Prepare result
                     result = {
                         "response": content,
-                        "tool_calls": current_complete_tools,
+                        "tool_calls": completed_tool_calls if completed_tool_calls else None,
                     }
                     
                     # Restore tool names using universal restoration
-                    if name_mapping and current_complete_tools:
+                    if name_mapping and completed_tool_calls:
                         result = self._restore_tool_names_in_response(result, name_mapping)
                     
-                    # Only yield if we have content or NEW tool calls
-                    if content or current_complete_tools:
+                    # Only yield if we have content or completed tool calls
+                    if content or completed_tool_calls:
                         yield result
                 
                 log.debug(f"[azure_openai] Streaming completed: {chunk_count} chunks, "
-                        f"{len(total_content)} total characters, {len(accumulated_tool_calls)} tool calls, "
-                        f"{len(yielded_tool_signatures)} unique signatures yielded")
+                        f"{len(total_content)} total characters, {len(accumulated_tool_calls)} tool calls")
+                
+                # If we reach here, streaming was successful - exit the retry loop
                 return
                 
             except Exception as e:
                 error_str = str(e).lower()
                 
+                # Handle deployment errors immediately - these are not retryable
                 if "deployment" in error_str and "not found" in error_str:
                     log.error(f"[azure_openai] Deployment error - check deployment name '{self.azure_deployment}': {e}")
                     yield {
@@ -384,8 +399,28 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
                         "tool_calls": [],
                         "error": True
                     }
+                    return  # Don't retry deployment errors
+                
+                # Check if this is a retryable error
+                is_retryable = any(pattern in error_str for pattern in [
+                    "timeout", "connection", "network", "temporary", "rate limit"
+                ])
+                
+                if attempt < max_retries and is_retryable:
+                    wait_time = (attempt + 1) * 1.0
+                    log.warning(f"[azure_openai] Streaming attempt {attempt + 1} failed: {e}. Retrying in {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                    continue  # Retry the request
+                else:
+                    # Final failure - yield exactly one error chunk
+                    log.error(f"[azure_openai] Streaming failed after {attempt + 1} attempts: {e}")
+                    yield {
+                        "response": f"Error: {str(e)}",
+                        "tool_calls": [],
+                        "error": True
+                    }
                     return
-                    
+                               
     async def _regular_completion(
         self,
         messages: List[Dict[str, Any]],

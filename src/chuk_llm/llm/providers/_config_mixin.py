@@ -1,6 +1,7 @@
 # chuk_llm/llm/providers/_config_mixin.py
 """
-Configuration-aware mixin for all provider clients.
+Configuration-aware mixin with smart fallback to provider clients.
+ENHANCED: Now defers to provider client expertise for unknown models.
 """
 
 import logging
@@ -11,8 +12,8 @@ log = logging.getLogger(__name__)
 
 class ConfigAwareProviderMixin:
     """
-    Mixin that provides configuration-aware capabilities for any provider client.
-    Use this instead of hardcoding capabilities in each provider.
+    Mixin that provides configuration-aware capabilities with smart fallback.
+    ENHANCED: Defers to provider client for unknown models.
     """
     
     def __init__(self, provider_name: str, model: str):
@@ -42,20 +43,44 @@ class ConfigAwareProviderMixin:
                 self._cached_model_caps = provider_config.get_model_capabilities(self.model)
         return self._cached_model_caps
     
+    def _has_explicit_model_config(self) -> bool:
+        """Check if this model has explicit configuration"""
+        provider_config = self._get_provider_config()
+        if not provider_config:
+            return False
+        
+        # Check if any model capability pattern matches this model
+        try:
+            for capability in provider_config.model_capabilities:
+                if capability.matches(self.model):
+                    return True
+        except Exception:
+            pass
+        
+        # Check if model is in the explicit models list
+        try:
+            return self.model in provider_config.models
+        except Exception:
+            return False
+    
     def get_model_info(self) -> Dict[str, Any]:
         """
         Universal get_model_info that works for all providers using configuration.
-        Override this in provider clients if you need provider-specific info.
+        ENHANCED: Includes fallback information when config is unavailable.
         """
         try:
             from chuk_llm.configuration import Feature
             
             provider_config = self._get_provider_config()
+            has_explicit_config = self._has_explicit_model_config()
+            
             if not provider_config:
                 return {
                     "provider": self.provider_name,
                     "model": self.model,
                     "error": "Configuration not available",
+                    "has_explicit_config": False,
+                    "using_fallback": True,
                     "features": [],
                     "supports_text": False,
                     "supports_streaming": False,
@@ -75,6 +100,10 @@ class ConfigAwareProviderMixin:
                 "model": self.model,
                 "client_class": provider_config.client_class,
                 "api_base": getattr(provider_config, 'api_base', None),
+                
+                # Configuration metadata
+                "has_explicit_config": has_explicit_config,
+                "using_fallback": not has_explicit_config,
                 
                 # All capabilities from configuration
                 "features": [f.value if hasattr(f, 'value') else str(f) for f in model_caps.features],
@@ -103,7 +132,9 @@ class ConfigAwareProviderMixin:
             return {
                 "provider": self.provider_name,
                 "model": self.model,
-                "error": "Configuration not available",
+                "error": f"Configuration error: {e}",
+                "has_explicit_config": False,
+                "using_fallback": True,
                 "features": [],
                 "supports_text": False,
                 "supports_streaming": False,
@@ -117,23 +148,34 @@ class ConfigAwareProviderMixin:
             }
     
     def supports_feature(self, feature_name) -> bool:
-        """Check if this provider/model supports a specific feature"""
+        """
+        Check if this provider/model supports a specific feature.
+        ENHANCED: Falls back to provider client for unknown models.
+        """
         try:
             from chuk_llm.configuration import Feature
             
+            # First try explicit configuration
             model_caps = self._get_model_capabilities()
-            if not model_caps:
-                return False
+            if model_caps:
+                if isinstance(feature_name, str):
+                    feature = Feature.from_string(feature_name)
+                else:
+                    feature = feature_name
+                
+                config_supports = feature in model_caps.features
+                log.debug(f"Configuration says {self.provider_name}/{self.model} supports {feature_name}: {config_supports}")
+                return config_supports
             
-            if isinstance(feature_name, str):
-                feature = Feature.from_string(feature_name)
-            else:
-                feature = feature_name
+            # No explicit config found - this is where we would defer to provider client
+            # But since we're in the mixin, we can't access the client directly
+            # Instead, we'll return None to indicate "unknown" so the client can decide
+            log.debug(f"No explicit config for {self.provider_name}/{self.model} - deferring to client")
+            return None  # Let the calling client handle this
             
-            return feature in model_caps.features
-            
-        except Exception:
-            return False
+        except Exception as e:
+            log.warning(f"Feature support check failed for {feature_name}: {e}")
+            return None  # Let the calling client handle this
     
     def get_max_tokens_limit(self) -> Optional[int]:
         """Get the max output tokens limit for this model"""

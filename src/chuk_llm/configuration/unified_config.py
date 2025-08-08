@@ -1,11 +1,12 @@
 # chuk_llm/configuration/unified_config.py
 """
-Clean Unified Configuration System with Transparent Discovery
-===========================================================
+Clean Unified Configuration System with FIXED Discovery Integration
+================================================================
 
-Single source of truth for all provider configuration, capabilities, and validation.
-Everything comes from one YAML file with intelligent merging and inheritance.
-Discovery is completely transparent - no API changes needed.
+Key changes:
+1. Fixed _ensure_model_available to work with discovered models
+2. Added proper model resolution logic
+3. Enhanced provider model lookup
 """
 
 import os
@@ -398,7 +399,7 @@ class UnifiedConfigManager(ConfigDiscoveryMixin):
             if "inherits" in data:
                 provider.inherits = data["inherits"]
             
-            # CRITICAL FIX: Process extra fields INSIDE the provider loop
+            # Process extra fields INSIDE the provider loop
             known_fields = {"client_class", "api_key_env", "api_key_fallback_env",
                            "api_base", "default_model", "models", "model_aliases",
                            "features", "max_context_length", "max_output_tokens",
@@ -407,7 +408,7 @@ class UnifiedConfigManager(ConfigDiscoveryMixin):
             # Extract extra fields for THIS provider
             extra_fields = {k: v for k, v in data.items() if k not in known_fields}
 
-            # CRITICAL FIX: Deep merge extra fields for THIS provider
+            # Deep merge extra fields for THIS provider
             for key, value in extra_fields.items():
                 if isinstance(value, dict) and key in provider.extra and isinstance(provider.extra[key], dict):
                     # Deep merge dictionaries (like dynamic_discovery)
@@ -416,7 +417,7 @@ class UnifiedConfigManager(ConfigDiscoveryMixin):
                     # Replace for non-dict values
                     provider.extra[key] = value
             
-            # CRITICAL FIX: Handle double nesting issue
+            # Handle double nesting issue
             if "extra" in provider.extra and isinstance(provider.extra["extra"], dict):
                 # Flatten double-nested extra fields
                 nested_extra = provider.extra["extra"]
@@ -542,6 +543,22 @@ class UnifiedConfigManager(ConfigDiscoveryMixin):
         """Add a global alias"""
         self.load()
         self.global_aliases[alias] = target
+    
+    # CRITICAL: Override the model resolution to use discovery
+    def is_model_available(self, provider_name: str, model_name: str) -> bool:
+        """Check if a model is available (static or discovered)"""
+        self.load()
+        return self._is_model_available(provider_name, model_name)
+    
+    def resolve_model(self, provider_name: str, model_name: Optional[str]) -> Optional[str]:
+        """Resolve a model name, using discovery if needed"""
+        self.load()
+        return self._ensure_model_available(provider_name, model_name)
+    
+    def get_available_models(self, provider_name: str) -> Set[str]:
+        """Get all available models for provider (static + discovered)"""
+        self.load()
+        return self.get_all_available_models(provider_name)
     
     def reload(self):
         """Reload configuration"""

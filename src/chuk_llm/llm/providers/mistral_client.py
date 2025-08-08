@@ -399,11 +399,16 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
         name_mapping: Dict[str, str] = None
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        CRITICAL FIX: Real streaming using Mistral's async streaming API with 
-        tool call duplication prevention.
+        COMPLETELY FIXED: Mistral streaming with proper JSON completion testing.
         
-        Uses the same successful pattern from Groq: track yielded tool call signatures
-        to prevent emitting the same tool call multiple times across different chunks.
+        Uses the same successful completion-based approach from OpenAI/Azure,
+        not the problematic signature-based approach.
+        
+        Key fixes:
+        - Only yield tool calls when JSON arguments are complete and parseable
+        - Added completion status tracking (like OpenAI/Azure fix)
+        - Removed signature tracking system entirely
+        - Prevents both JSON parsing errors and tool call duplication
         """
         try:
             log.debug(f"Starting Mistral streaming for model: {self.model}")
@@ -411,9 +416,8 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
             # Use Mistral's streaming endpoint
             stream = self.client.chat.stream(**request_params)
             
-            # CRITICAL FIX: Tool call accumulation WITH duplication prevention
-            accumulated_tool_calls = {}  # {index: {id, name, arguments}}
-            yielded_tool_signatures = set()  # Track what we've already yielded (SAME AS GROQ FIX)
+            # FIXED: Simple completion-based tracking (like OpenAI/Azure)
+            accumulated_tool_calls = {}  # {index: {id, name, arguments, complete}}
             chunk_count = 0
             total_content = ""
             
@@ -422,7 +426,7 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                 chunk_count += 1
                 
                 content = ""
-                new_complete_tools = []  # Only NEW complete tools for this chunk
+                completed_tool_calls = []  # Only completed tool calls this chunk
                 
                 try:
                     if hasattr(chunk, 'data') and hasattr(chunk.data, 'choices'):
@@ -433,39 +437,69 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                             if hasattr(choice, 'delta'):
                                 delta = choice.delta
                                 
-                                # Handle content
+                                # Handle content - this works fine
                                 if hasattr(delta, 'content') and delta.content:
                                     content = delta.content
                                     total_content += content
                                 
-                                # CRITICAL FIX: Handle tool calls with proper accumulation
+                                # FIXED: Handle tool calls with proper completion testing
                                 if (hasattr(delta, 'tool_calls') and delta.tool_calls and 
                                     self.supports_feature("tools")):
                                     
                                     for tc in delta.tool_calls:
                                         try:
-                                            # Get tool call index (Mistral may use index for accumulation)
                                             tc_index = getattr(tc, 'index', 0)
                                             
-                                            # Initialize accumulator for this tool call if needed
+                                            # Initialize accumulator with completion tracking
                                             if tc_index not in accumulated_tool_calls:
                                                 accumulated_tool_calls[tc_index] = {
                                                     "id": getattr(tc, 'id', f"call_{uuid.uuid4().hex[:8]}"),
                                                     "name": "",
-                                                    "arguments": ""
+                                                    "arguments": "",
+                                                    "complete": False  # ADDED: Track completion status
                                                 }
                                             
-                                            # Accumulate function data
+                                            tool_call_data = accumulated_tool_calls[tc_index]
+                                            
+                                            # Update data
+                                            if hasattr(tc, 'id') and tc.id:
+                                                tool_call_data["id"] = tc.id
+                                            
                                             if hasattr(tc, 'function') and tc.function:
                                                 if hasattr(tc.function, 'name') and tc.function.name:
-                                                    accumulated_tool_calls[tc_index]["name"] += tc.function.name
+                                                    tool_call_data["name"] += tc.function.name
                                                 
                                                 if hasattr(tc.function, 'arguments') and tc.function.arguments:
-                                                    accumulated_tool_calls[tc_index]["arguments"] += tc.function.arguments
+                                                    tool_call_data["arguments"] += tc.function.arguments
+                                            
+                                            # CRITICAL FIX: Only yield when JSON is complete and valid
+                                            if (tool_call_data["name"] and 
+                                                tool_call_data["arguments"] and 
+                                                not tool_call_data["complete"]):
                                                 
-                                                # Update ID if provided in this chunk
-                                                if hasattr(tc, 'id') and tc.id:
-                                                    accumulated_tool_calls[tc_index]["id"] = tc.id
+                                                try:
+                                                    # Test if JSON is complete and valid
+                                                    parsed_args = json.loads(tool_call_data["arguments"])
+                                                    
+                                                    # Mark as complete and add to current chunk
+                                                    tool_call_data["complete"] = True
+                                                    
+                                                    tool_call = {
+                                                        "id": tool_call_data["id"],
+                                                        "type": "function",
+                                                        "function": {
+                                                            "name": tool_call_data["name"],
+                                                            "arguments": json.dumps(parsed_args)
+                                                        }
+                                                    }
+                                                    
+                                                    completed_tool_calls.append(tool_call)
+                                                    log.debug(f"Mistral tool call {tc_index} completed: {tool_call_data['name']}")
+                                                
+                                                except json.JSONDecodeError:
+                                                    # JSON incomplete - keep accumulating
+                                                    log.debug(f"Mistral tool call {tc_index} JSON incomplete, continuing accumulation")
+                                                    pass
                                         
                                         except Exception as e:
                                             log.debug(f"Error processing Mistral streaming tool call chunk: {e}")
@@ -475,93 +509,26 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                     log.warning(f"Error processing Mistral chunk {chunk_count}: {chunk_error}")
                     content = ""
                 
-                # CRITICAL FIX: Only yield NEW complete tool calls that haven't been yielded before
-                for tc_index, tc_data in accumulated_tool_calls.items():
-                    if tc_data["name"] and tc_data["arguments"]:
-                        # Create unique signature for this tool call (SAME AS GROQ FIX)
-                        tool_signature = f"{tc_data['name']}:{tc_data['arguments']}"
-                        
-                        # CRITICAL FIX: Only yield if we haven't yielded this exact tool call before
-                        if tool_signature not in yielded_tool_signatures:
-                            # Try to parse arguments to ensure they're complete JSON
-                            try:
-                                parsed_args = json.loads(tc_data["arguments"])
-                                new_complete_tools.append({
-                                    "id": tc_data["id"],
-                                    "type": "function",
-                                    "function": {
-                                        "name": tc_data["name"],
-                                        "arguments": json.dumps(parsed_args)  # Re-serialize for consistency
-                                    }
-                                })
-                                
-                                # Mark this tool call as yielded
-                                yielded_tool_signatures.add(tool_signature)
-                                log.debug(f"[Mistral] Yielding NEW tool call: {tc_data['name']}")
-                                
-                            except json.JSONDecodeError:
-                                # Arguments incomplete, wait for more chunks
-                                pass
-                        else:
-                            log.debug(f"[Mistral] Skipping duplicate tool call: {tc_data['name']}")
-                
                 # Create chunk response
                 chunk_response = {
                     "response": content,
-                    "tool_calls": new_complete_tools  # Only NEW tools, no duplicates
+                    "tool_calls": completed_tool_calls if completed_tool_calls else None
                 }
                 
-                # CRITICAL: Restore tool names using universal restoration
-                if name_mapping and new_complete_tools:
+                # Restore tool names using universal restoration
+                if name_mapping and completed_tool_calls:
                     chunk_response = self._restore_tool_names_in_response(chunk_response, name_mapping)
                 
-                # IMPROVED: Yield content chunks immediately, but only yield NEW tool calls
-                if content or new_complete_tools:
+                # Only yield if we have content or completed tool calls
+                if content or completed_tool_calls:
                     yield chunk_response
                 
                 # Allow other async tasks to run
                 if chunk_count % 10 == 0:
                     await asyncio.sleep(0)
             
-            # FINAL CHECK: Ensure no incomplete tool calls are left (but avoid duplicates)
-            final_new_tools = []
-            for tc_index, tc_data in accumulated_tool_calls.items():
-                if tc_data["name"] and tc_data["arguments"]:
-                    tool_signature = f"{tc_data['name']}:{tc_data['arguments']}"
-                    
-                    # Only include if not already yielded
-                    if tool_signature not in yielded_tool_signatures:
-                        # Try to parse arguments one final time
-                        try:
-                            parsed_args = json.loads(tc_data["arguments"])
-                            final_args = json.dumps(parsed_args)
-                        except json.JSONDecodeError:
-                            final_args = tc_data["arguments"] or "{}"
-                        
-                        final_new_tools.append({
-                            "id": tc_data["id"],
-                            "type": "function", 
-                            "function": {
-                                "name": tc_data["name"],
-                                "arguments": final_args
-                            }
-                        })
-                        
-                        yielded_tool_signatures.add(tool_signature)
-            
-            if final_new_tools:
-                final_result = {
-                    "response": "",
-                    "tool_calls": final_new_tools,
-                }
-                
-                if name_mapping:
-                    final_result = self._restore_tool_names_in_response(final_result, name_mapping)
-                
-                yield final_result
-            
             log.debug(f"Mistral streaming completed with {chunk_count} chunks, "
-                    f"{len(total_content)} total characters, {len(yielded_tool_signatures)} unique tool calls yielded")
+                    f"{len(total_content)} total characters, {len(accumulated_tool_calls)} tool calls")
         
         except Exception as e:
             log.error(f"Error in Mistral streaming: {e}")
@@ -576,7 +543,7 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                 "tool_calls": [],
                 "error": True
             }
-
+            
     async def _regular_completion(
         self, 
         request_params: Dict[str, Any],

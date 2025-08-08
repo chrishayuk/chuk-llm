@@ -18,6 +18,60 @@ Session Storage:
     Configure with SESSION_PROVIDER environment variable
 """
 
+# Configure clean logging on import
+import logging
+import os
+
+def _configure_clean_logging():
+    """Configure clean logging with suppressed third-party noise and verbose ChukLLM internals"""
+    # Suppress noisy third-party loggers by default
+    third_party_loggers = [
+        'httpx',
+        'httpx._client', 
+        'urllib3',
+        'requests',
+    ]
+    
+    for logger_name in third_party_loggers:
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+    
+    # Suppress verbose ChukLLM internal logs (make them DEBUG level)
+    verbose_chuk_loggers = [
+        'chuk_llm.api.providers',  # Provider generation noise
+        'chuk_llm.configuration.unified_config',  # Config loading details
+        'chuk_llm.llm.discovery.ollama_discoverer',  # Discovery details
+        'chuk_llm.llm.discovery.openai_discoverer',  # Discovery details
+        'chuk_llm.llm.discovery.engine',  # Engine details
+        'chuk_llm.configuration.discovery',  # Discovery updates
+    ]
+    
+    for logger_name in verbose_chuk_loggers:
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+    
+    # Allow environment overrides for debugging
+    if os.getenv('CHUK_LLM_DEBUG_HTTP'):
+        logging.getLogger('httpx').setLevel(logging.DEBUG)
+    
+    if os.getenv('CHUK_LLM_DEBUG_PROVIDERS'):
+        logging.getLogger('chuk_llm.api.providers').setLevel(logging.DEBUG)
+    
+    if os.getenv('CHUK_LLM_DEBUG_DISCOVERY'):
+        for logger_name in ['chuk_llm.llm.discovery.ollama_discoverer', 
+                           'chuk_llm.llm.discovery.openai_discoverer',
+                           'chuk_llm.llm.discovery.engine',
+                           'chuk_llm.configuration.discovery']:
+            logging.getLogger(logger_name).setLevel(logging.DEBUG)
+    
+    if os.getenv('CHUK_LLM_DEBUG_CONFIG'):
+        logging.getLogger('chuk_llm.configuration.unified_config').setLevel(logging.DEBUG)
+    
+    # Allow full debug mode
+    if os.getenv('CHUK_LLM_DEBUG_ALL'):
+        logging.getLogger('chuk_llm').setLevel(logging.DEBUG)
+
+# Configure logging on import
+_configure_clean_logging()
+
 # Version - get from package metadata instead of hardcoding
 try:
     from importlib.metadata import version
