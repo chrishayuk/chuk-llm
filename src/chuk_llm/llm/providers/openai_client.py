@@ -1,22 +1,25 @@
-# chuk_llm/llm/providers/openai_client.py - COMPLETE VERSION WITH SMART DEFAULTS
+# chuk_llm/llm/providers/openai_client.py - COMPLETE VERSION WITH GPT-5 SUPPORT
 """
 OpenAI chat-completion adapter with unified configuration integration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Enhanced wrapper around the official `openai` SDK that uses the unified
 configuration system and universal tool name compatibility.
 
-COMPLETE FIXES:
+COMPLETE FIXES INCLUDING GPT-5 SUPPORT:
 1. Added ToolCompatibilityMixin inheritance for universal tool names
 2. Fixed conversation flow tool name handling 
 3. Enhanced content extraction to eliminate warnings
 4. Added bidirectional mapping throughout conversation
 5. FIXED streaming tool call duplication bug - MAJOR FIX
-6. ADDED comprehensive reasoning model support (o1, o3, o4)
-7. ADDED automatic parameter mapping (max_tokens -> max_completion_tokens)
-8. ADDED system message conversion for o1 models
-9. FIXED streaming chunk yielding to be properly incremental
-10. REMOVED o1-preview references (no longer available)
-11. ADDED smart defaults for newly discovered OpenAI models
+6. ADDED comprehensive reasoning model support (o1, o3, o4, o5)
+7. ADDED GPT-5 family support (gpt-5, gpt-5-mini, gpt-5-nano, gpt-5-chat)
+8. ADDED automatic parameter mapping (max_tokens -> max_completion_tokens)
+9. ADDED system message conversion for o1 models
+10. FIXED streaming chunk yielding to be properly incremental
+11. REMOVED o1-preview references (no longer available)
+12. ADDED smart defaults for newly discovered OpenAI models
+13. FIXED GPT-5 parameter restrictions (no temperature control)
+14. ADDED GPT-5 generation handling and proper defaults
 """
 from __future__ import annotations
 from typing import Any, AsyncIterator, Dict, List, Optional, Union, Tuple, Set
@@ -43,7 +46,8 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
     Configuration-driven wrapper around the official `openai` SDK that gets
     all capabilities from the unified YAML configuration.
     
-    COMPLETE VERSION: Now includes reasoning model support, FIXED streaming, and smart defaults.
+    COMPLETE VERSION: Now includes GPT-5 family support, reasoning model support, 
+    FIXED streaming, and smart defaults.
     """
 
     def __init__(
@@ -130,6 +134,10 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
             if any(v in model_lower for v in ['gpt-4', 'gpt-5']):
                 features.add("vision")
                 
+            # GPT-5 models use reasoning architecture
+            if 'gpt-5' in model_lower:
+                features.add("reasoning")
+                
             return features
         
         else:
@@ -144,10 +152,10 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
         model_lower = model_name.lower()
         
         # Reasoning model parameter handling
-        if any(pattern in model_lower for pattern in ['o1', 'o3', 'o4', 'o5']):
+        if any(pattern in model_lower for pattern in ['o1', 'o3', 'o4', 'o5', 'gpt-5']):
             return {
-                "max_context_length": 200000,
-                "max_output_tokens": 65536,
+                "max_context_length": 272000 if 'gpt-5' in model_lower else 200000,
+                "max_output_tokens": 128000 if 'gpt-5' in model_lower else 65536,
                 "requires_max_completion_tokens": True,
                 "parameter_mapping": {
                     "max_tokens": "max_completion_tokens"
@@ -220,15 +228,18 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
             return False
         
     # ================================================================
-    # REASONING MODEL SUPPORT METHODS
+    # REASONING MODEL SUPPORT METHODS - ENHANCED WITH GPT-5
     # ================================================================
     
     def _is_reasoning_model(self, model_name: str) -> bool:
         """Check if model is a reasoning model that needs special parameter handling"""
-        return any(pattern in model_name.lower() for pattern in ['o1', 'o3', 'o4'])
+        return any(pattern in model_name.lower() for pattern in [
+            'o1', 'o3', 'o4', 'o5',  # O-series reasoning models
+            'gpt-5'  # GPT-5 family also uses reasoning architecture
+        ])
 
     def _get_reasoning_model_generation(self, model_name: str) -> str:
-        """Get reasoning model generation (o1, o3, o4) - REMOVED o1-preview"""
+        """Get reasoning model generation (o1, o3, o4, o5, gpt5)"""
         model_lower = model_name.lower()
         if 'o1' in model_lower:
             return 'o1'
@@ -236,6 +247,10 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
             return 'o3'
         elif 'o4' in model_lower:
             return 'o4'
+        elif 'o5' in model_lower:
+            return 'o5'
+        elif 'gpt-5' in model_lower:
+            return 'gpt5'
         return 'unknown'
 
     def _prepare_reasoning_model_parameters(self, **kwargs) -> Dict[str, Any]:
@@ -246,6 +261,7 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
         - Use max_completion_tokens instead of max_tokens
         - Remove unsupported parameters like temperature, top_p
         - Handle streaming restrictions for o1
+        - Handle GPT-5 specific restrictions
         """
         if not self._is_reasoning_model(self.model):
             return kwargs
@@ -263,14 +279,27 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
         # Add default max_completion_tokens if not specified
         if 'max_completion_tokens' not in adjusted_kwargs:
             # Use reasonable defaults based on generation
-            default_tokens = 32768 if generation in ['o3', 'o4'] else 16384
+            if generation == 'gpt5':
+                default_tokens = 128000  # GPT-5 has higher output limits
+            elif generation in ['o3', 'o4', 'o5']:
+                default_tokens = 32768
+            else:
+                default_tokens = 16384
             adjusted_kwargs['max_completion_tokens'] = default_tokens
             log.debug(f"[{self.detected_provider}] Added default max_completion_tokens: {default_tokens}")
         
         # Remove parameters not supported by reasoning models
-        unsupported_params = ['temperature', 'top_p', 'frequency_penalty', 'presence_penalty', 'logit_bias']
-        removed_params = []
+        if generation == 'o1':
+            # O1 models have the most restrictions
+            unsupported_params = ['temperature', 'top_p', 'frequency_penalty', 'presence_penalty', 'logit_bias']
+        elif generation == 'gpt5':
+            # GPT-5 models have limited parameter restrictions (discovered: no temperature control)
+            unsupported_params = ['temperature', 'top_p', 'frequency_penalty', 'presence_penalty']
+        else:
+            # O3/O4/O5 models have fewer restrictions
+            unsupported_params = ['temperature', 'top_p', 'frequency_penalty', 'presence_penalty']
         
+        removed_params = []
         for param in unsupported_params:
             if param in adjusted_kwargs:
                 adjusted_kwargs.pop(param)
@@ -286,17 +315,18 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
         Prepare messages for reasoning models that may have restrictions.
         
         O1 models don't support system messages - need to convert them.
+        GPT-5 models support system messages.
         """
         if not self._is_reasoning_model(self.model):
             return messages
         
         generation = self._get_reasoning_model_generation(self.model)
         
-        # O1 models don't support system messages
+        # Only O1 models don't support system messages
         if generation == 'o1':
             return self._convert_system_messages_for_o1(messages)
         
-        # O3/O4 models support system messages
+        # GPT-5, O3, O4, O5 models support system messages
         return messages
 
     def _convert_system_messages_for_o1(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -373,27 +403,43 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
                 "supports_streaming": True,  # All current models support streaming
                 "supports_system_messages": not (reasoning_generation == 'o1') if is_reasoning else True,
                 
+                # GPT-5 specific info
+                "is_gpt5_family": reasoning_generation == 'gpt5' if is_reasoning else False,
+                "unified_reasoning": reasoning_generation == 'gpt5' if is_reasoning else False,
+                
                 # Universal tool compatibility info
                 **tool_compatibility,
                 
                 "parameter_mapping": {
-                    "temperature": "temperature",
+                    "temperature": "temperature" if reasoning_generation != 'gpt5' else None,  # GPT-5 doesn't support temperature
                     "max_tokens": "max_completion_tokens" if is_reasoning else "max_tokens",
-                    "top_p": "top_p",
-                    "frequency_penalty": "frequency_penalty",
-                    "presence_penalty": "presence_penalty",
+                    "top_p": "top_p" if reasoning_generation not in ['o1', 'gpt5'] else None,
+                    "frequency_penalty": "frequency_penalty" if reasoning_generation not in ['o1', 'gpt5'] else None,
+                    "presence_penalty": "presence_penalty" if reasoning_generation not in ['o1', 'gpt5'] else None,
                     "stop": "stop",
                     "stream": "stream"
                 },
                 
                 "reasoning_model_restrictions": {
-                    "unsupported_params": ["temperature", "top_p", "frequency_penalty", "presence_penalty"] if is_reasoning else [],
+                    "unsupported_params": self._get_unsupported_params_for_generation(reasoning_generation) if is_reasoning else [],
                     "requires_parameter_mapping": is_reasoning,
                     "system_message_conversion": reasoning_generation == 'o1' if is_reasoning else False,
+                    "temperature_fixed": reasoning_generation == 'gpt5' if is_reasoning else False,
                 } if is_reasoning else {}
             })
         
         return info
+
+    def _get_unsupported_params_for_generation(self, generation: str) -> List[str]:
+        """Get unsupported parameters for a specific reasoning model generation"""
+        if generation == 'o1':
+            return ["temperature", "top_p", "frequency_penalty", "presence_penalty"]
+        elif generation == 'gpt5':
+            return ["temperature", "top_p", "frequency_penalty", "presence_penalty"]
+        elif generation in ['o3', 'o4', 'o5']:
+            return ["temperature", "top_p", "frequency_penalty", "presence_penalty"]
+        else:
+            return []
 
     def _normalize_message(self, msg) -> Dict[str, Any]:
         """
@@ -534,7 +580,7 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
         return prepared_messages
 
     # ================================================================
-    # STREAMING SUPPORT - MAJOR FIX
+    # STREAMING SUPPORT - FIXED: Proper JSON accumulation
     # ================================================================
     async def _stream_from_async(
         self,
@@ -543,23 +589,23 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
         normalize_chunk: Optional[callable] = None
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        MAJOR FIX: Incremental tool call streaming to match raw OpenAI behavior.
+        FIXED: Proper incremental tool call streaming with complete JSON handling.
         
-        Instead of waiting for complete tool calls, we now yield incremental updates
-        to match the streaming behavior of raw OpenAI API.
+        The key fix: Only yield tool calls when JSON arguments are complete and parseable.
+        Stream content immediately, but accumulate tool call JSON until it's valid.
         """
         try:
             chunk_count = 0
             total_content_chars = 0
             
-            # Track tool calls for incremental streaming
-            accumulated_tool_calls = {}  # {index: {id, name, arguments}}
+            # Track tool calls for incremental streaming - FIXED structure
+            accumulated_tool_calls = {}  # {index: {id, name, arguments, complete}}
             
             async for chunk in async_stream:
                 chunk_count += 1
                 
                 content_delta = ""  # Only new content
-                tool_call_deltas = []  # Incremental tool call updates
+                completed_tool_calls = []  # Only complete, parseable tool calls
                 
                 try:
                     if hasattr(chunk, 'choices') and chunk.choices and len(chunk.choices) > 0:
@@ -568,12 +614,12 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
                         if hasattr(choice, 'delta') and choice.delta:
                             delta = choice.delta
                             
-                            # Handle content - yield immediately
+                            # Handle content - yield immediately (this works fine)
                             if hasattr(delta, 'content') and delta.content is not None:
                                 content_delta = str(delta.content)
                                 total_content_chars += len(content_delta)
                             
-                            # Handle tool calls - FIXED: yield incremental updates
+                            # Handle tool calls - FIXED: accumulate until complete
                             if hasattr(delta, 'tool_calls') and delta.tool_calls:
                                 for tc in delta.tool_calls:
                                     try:
@@ -585,7 +631,7 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
                                                 "id": getattr(tc, 'id', f"call_{uuid.uuid4().hex[:8]}"),
                                                 "name": "",
                                                 "arguments": "",
-                                                "last_yielded_args_length": 0
+                                                "complete": False
                                             }
                                         
                                         tool_call_data = accumulated_tool_calls[tc_index]
@@ -602,30 +648,34 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
                                             if hasattr(tc.function, 'arguments') and tc.function.arguments:
                                                 tool_call_data["arguments"] += tc.function.arguments
                                         
-                                        # CRITICAL FIX: Yield incremental tool call updates
-                                        # Check if we have new tool call information to stream
-                                        current_args_length = len(tool_call_data["arguments"])
-                                        
-                                        if (tool_call_data["name"] and 
-                                            current_args_length > tool_call_data["last_yielded_args_length"]):
-                                            
-                                            # Create incremental tool call update
-                                            new_args_portion = tool_call_data["arguments"][
-                                                tool_call_data["last_yielded_args_length"]:
-                                            ]
-                                            
-                                            if new_args_portion:  # Only yield if there's new content
-                                                tool_call_deltas.append({
-                                                    "id": tool_call_data["id"],
-                                                    "type": "function",
-                                                    "function": {
-                                                        "name": tool_call_data["name"],
-                                                        "arguments": new_args_portion  # Just the new portion
-                                                    },
-                                                    "incremental": True  # Mark as incremental
-                                                })
+                                        # CRITICAL FIX: Test if JSON is complete and valid
+                                        if tool_call_data["name"] and tool_call_data["arguments"]:
+                                            try:
+                                                # Try to parse the accumulated JSON
+                                                json.loads(tool_call_data["arguments"])
                                                 
-                                                tool_call_data["last_yielded_args_length"] = current_args_length
+                                                # If parsing succeeds, this tool call is complete
+                                                if not tool_call_data["complete"]:
+                                                    tool_call_data["complete"] = True
+                                                    
+                                                    # Add to completed tool calls for this chunk
+                                                    completed_tool_calls.append({
+                                                        "id": tool_call_data["id"],
+                                                        "type": "function",
+                                                        "function": {
+                                                            "name": tool_call_data["name"],
+                                                            "arguments": tool_call_data["arguments"]
+                                                        }
+                                                    })
+                                                    
+                                                    log.debug(f"[{self.detected_provider}] Tool call {tc_index} complete: "
+                                                            f"{tool_call_data['name']} with {len(tool_call_data['arguments'])} chars")
+                                            
+                                            except json.JSONDecodeError:
+                                                # JSON not complete yet, keep accumulating
+                                                log.debug(f"[{self.detected_provider}] Tool call {tc_index} JSON incomplete, "
+                                                        f"args so far: {len(tool_call_data['arguments'])} chars")
+                                                pass
                                     
                                     except Exception as e:
                                         log.debug(f"Error processing tool call delta: {e}")
@@ -635,11 +685,11 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
                     log.warning(f"Error processing chunk {chunk_count}: {chunk_error}")
                     continue
                 
-                # FIXED: Yield if we have content OR incremental tool call updates
-                if content_delta or tool_call_deltas:
+                # FIXED: Yield if we have content OR completed tool calls
+                if content_delta or completed_tool_calls:
                     result = {
                         "response": content_delta,
-                        "tool_calls": tool_call_deltas if tool_call_deltas else None,
+                        "tool_calls": completed_tool_calls if completed_tool_calls else None,
                     }
                     
                     # Restore tool names using universal restoration
@@ -648,17 +698,17 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
                     
                     yield result
             
-            log.debug(f"[{self.detected_provider}] Incremental streaming completed: {chunk_count} chunks, "
+            log.debug(f"[{self.detected_provider}] Streaming completed: {chunk_count} chunks, "
                     f"{total_content_chars} total characters, {len(accumulated_tool_calls)} tool calls")
                         
         except Exception as e:
-            log.error(f"Error in {self.detected_provider} incremental streaming: {e}")
+            log.error(f"Error in {self.detected_provider} streaming: {e}")
             yield {
                 "response": f"Streaming error: {str(e)}",
                 "tool_calls": None,
                 "error": True
             }
-            
+
     # ================================================================
     # REQUEST VALIDATION AND PREPARATION WITH SMART DEFAULTS
     # ================================================================
@@ -724,7 +774,7 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
     ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
         ENHANCED: Now includes universal tool name compatibility with conversation flow handling,
-        complete reasoning model support with FIXED streaming, and smart defaults for new models.
+        complete reasoning model support (including GPT-5) with FIXED streaming, and smart defaults for new models.
         """
         # Validate request against configuration (with smart defaults)
         validated_messages, validated_tools, validated_stream, validated_kwargs = self._validate_request_with_config(
@@ -758,26 +808,31 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
         **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Enhanced async streaming with reasoning model support and FIXED streaming logic.
+        Enhanced async streaming with reasoning model support (including GPT-5) and FIXED streaming logic.
         """
         max_retries = 1
         
         for attempt in range(max_retries + 1):
             try:
-                # Prepare messages and parameters for reasoning models
+                # Prepare messages and parameters for reasoning models (including GPT-5)
                 prepared_messages = self._prepare_reasoning_model_messages(messages)
                 prepared_kwargs = self._prepare_reasoning_model_parameters(**kwargs)
                 
                 log.debug(f"[{self.detected_provider}] Starting streaming (attempt {attempt + 1}): "
                          f"model={self.model}, messages={len(prepared_messages)}, "
                          f"tools={len(tools) if tools else 0}, "
-                         f"reasoning_model={self._is_reasoning_model(self.model)}")
+                         f"reasoning_model={self._is_reasoning_model(self.model)}, "
+                         f"generation={self._get_reasoning_model_generation(self.model)}")
                 
                 # Log reasoning model adjustments
                 if self._is_reasoning_model(self.model):
                     param_changes = []
                     if 'max_completion_tokens' in prepared_kwargs:
                         param_changes.append(f"max_completion_tokens={prepared_kwargs['max_completion_tokens']}")
+                    
+                    generation = self._get_reasoning_model_generation(self.model)
+                    if generation == 'gpt5':
+                        param_changes.append("GPT-5 family (unified reasoning)")
                     
                     if param_changes:
                         log.debug(f"[{self.detected_provider}] Reasoning model adjustments: {', '.join(param_changes)}")
@@ -801,9 +856,11 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
             except Exception as e:
                 error_str = str(e).lower()
                 
-                # Check for reasoning model parameter errors
+                # Check for reasoning model parameter errors (including GPT-5)
                 if "max_tokens" in error_str and "max_completion_tokens" in error_str:
                     log.error(f"[{self.detected_provider}] CRITICAL: Reasoning model parameter error not handled: {e}")
+                elif "temperature" in error_str and "gpt-5" in self.model.lower():
+                    log.error(f"[{self.detected_provider}] GPT-5 temperature restriction not handled: {e}")
                 
                 is_retryable = any(pattern in error_str for pattern in [
                     "timeout", "connection", "network", "temporary", "rate limit"
@@ -830,22 +887,27 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
         name_mapping: Dict[str, str] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        """Enhanced non-streaming completion with reasoning model support and universal tool name restoration."""
+        """Enhanced non-streaming completion with reasoning model support (including GPT-5) and universal tool name restoration."""
         try:
-            # Prepare messages and parameters for reasoning models
+            # Prepare messages and parameters for reasoning models (including GPT-5)
             prepared_messages = self._prepare_reasoning_model_messages(messages)
             prepared_kwargs = self._prepare_reasoning_model_parameters(**kwargs)
             
             log.debug(f"[{self.detected_provider}] Starting completion: "
                      f"model={self.model}, messages={len(prepared_messages)}, "
                      f"tools={len(tools) if tools else 0}, "
-                     f"reasoning_model={self._is_reasoning_model(self.model)}")
+                     f"reasoning_model={self._is_reasoning_model(self.model)}, "
+                     f"generation={self._get_reasoning_model_generation(self.model)}")
             
             # Log reasoning model adjustments for debugging
             if self._is_reasoning_model(self.model):
                 param_changes = []
                 if 'max_completion_tokens' in prepared_kwargs:
                     param_changes.append(f"max_completion_tokens={prepared_kwargs['max_completion_tokens']}")
+                
+                generation = self._get_reasoning_model_generation(self.model)
+                if generation == 'gpt5':
+                    param_changes.append("GPT-5 family (unified reasoning)")
                 
                 if param_changes:
                     log.debug(f"[{self.detected_provider}] Reasoning model adjustments: {', '.join(param_changes)}")
@@ -879,6 +941,10 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
                 log.error(f"[{self.detected_provider}] REASONING MODEL PARAMETER ERROR: "
                          f"This appears to be a reasoning model that requires max_completion_tokens. "
                          f"The parameter conversion should have handled this automatically.")
+            elif "temperature" in error_msg and "gpt-5" in self.model.lower():
+                log.error(f"[{self.detected_provider}] GPT-5 TEMPERATURE RESTRICTION: "
+                         f"GPT-5 models only support default temperature (1.0). "
+                         f"The parameter filtering should have handled this automatically.")
             
             return {
                 "response": f"Error: {str(e)}",

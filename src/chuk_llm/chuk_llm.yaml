@@ -45,7 +45,7 @@ __discovery_defaults__:
       - reasoning
       patterns:
       - .*reasoning.*
-      - o[1-4].*
+      - o[1-5].*
       - magistral.*
       - gpt-oss.*
       - gpt-5.*
@@ -73,7 +73,7 @@ __discovery_defaults__:
       - parallel_calls
       min_size_bytes: 10000000000
 __global__:
-  active_model: gpt-4o-mini
+  active_model: gpt-5
   active_provider: openai
   default_timeout: 30
   dynamic_discovery:
@@ -90,29 +90,30 @@ __global_aliases__:
   deepseek_reasoning: deepseek/deepseek-reasoner
   gemini: gemini/gemini-2.0-flash
   gemini_pro: gemini/gemini-1.5-pro
-  gpt: openai/gpt-4.1
-  gpt_mini: openai/gpt-4.1-mini
+  gpt: openai/gpt-5
+  gpt_mini: openai/gpt-5-mini
+  gpt_nano: openai/gpt-5-nano
   granite: ollama/granite3.3
   llama: groq/llama-3.3-70b-versatile
   mistral: mistral/magistral-medium-2506
   mixtral: groq/mixtral-8x7b-32768
-  opus: anthropic/claude-opus-4-20250514
+  opus: anthropic/claude-opus-4-1-20250805
   phi: ollama/phi3
   qwen: ollama/qwen3
-  reasoning: mistral/magistral-medium-2506
+  reasoning: openai/gpt-5
   reasoning_advanced: deepseek/deepseek-reasoner
   reasoning_free: mistral/magistral-small-2506
   sonnet: anthropic/claude-sonnet-4-20250514
   watsonx: watsonx/ibm/granite-3-3-8b-instruct
-  azure_gpt: azure_openai/gpt-4o-mini
-  azure_vision: azure_openai/gpt-4o
+  azure_gpt: azure_openai/gpt-5
+  azure_vision: azure_openai/gpt-5
   azure_reasoning: azure_openai/o3-mini
   azure_turbo: azure_openai/gpt-4-turbo
-  azure_latest: azure_openai/gpt-4o-mini
+  azure_latest: azure_openai/gpt-5
 anthropic:
   api_key_env: ANTHROPIC_API_KEY
   client_class: chuk_llm.llm.providers.anthropic_client.AnthropicLLMClient
-  default_model: claude-sonnet-4-20250514
+  default_model: claude-opus-4-1-20250805
   extra:
     dynamic_discovery:
       discoverer_type: anthropic
@@ -164,7 +165,7 @@ anthropic:
             - claude-3-7-
           claude4:
             base_context_length: 200000
-            base_max_output_tokens: 8192
+            base_max_output_tokens: 32000
             features:
             - text
             - streaming
@@ -175,26 +176,40 @@ anthropic:
             - json_mode
             patterns:
             - claude-.*-4-
+          claude4_1:
+            base_context_length: 200000
+            base_max_output_tokens: 32000
+            features:
+            - text
+            - streaming
+            - tools
+            - vision
+            - parallel_calls
+            - reasoning
+            - json_mode
+            patterns:
+            - claude-.*-4-1-
   features:
   - text
   - streaming
   - system_messages
   - reasoning
   max_context_length: 200000
-  max_output_tokens: 4096
+  max_output_tokens: 32000
   model_aliases:
     haiku: claude-3-5-haiku-20241022
     haiku35: claude-3-5-sonnet-20241022
     haiku37: claude-3-5-haiku-20241022
-    latest: claude-sonnet-4-20250514
-    opus: claude-opus-4-20250514
+    latest: claude-opus-4-1-20250805
+    opus: claude-opus-4-1-20250805
     opus4: claude-opus-4-20250514
-    reasoning: claude-opus-4-20250514
+    opus41: claude-opus-4-1-20250805
+    reasoning: claude-opus-4-1-20250805
     sonnet: claude-sonnet-4-20250514
     sonnet35: claude-3-5-sonnet-20241022
     sonnet37: claude-3-7-sonnet-20250219
     sonnet4: claude-sonnet-4-20250514
-    thinking: claude-sonnet-4-20250514
+    thinking: claude-opus-4-1-20250805
   model_capabilities:
   - features:
     - text
@@ -205,7 +220,18 @@ anthropic:
     - reasoning
     - json_mode
     max_context_length: 200000
-    max_output_tokens: 8192
+    max_output_tokens: 32000
+    pattern: claude-opus-4-1-.*
+  - features:
+    - text
+    - streaming
+    - tools
+    - vision
+    - parallel_calls
+    - reasoning
+    - json_mode
+    max_context_length: 200000
+    max_output_tokens: 32000
     pattern: claude-(opus|sonnet)-4-.*
   - features:
     - text
@@ -239,6 +265,7 @@ anthropic:
     max_output_tokens: 4096
     pattern: claude-3-.*
   models:
+  - claude-opus-4-1-20250805
   - claude-opus-4-20250514
   - claude-sonnet-4-20250514
   - claude-3-7-sonnet-20250219
@@ -1033,24 +1060,37 @@ ollama:
   - gpt-oss:120b
   rate_limits: {}
 openai:
-  # CRITICAL: These were missing and causing the configuration errors
+  # Updated configuration for GPT-5 and enhanced model support
   client_class: chuk_llm.llm.providers.openai_client.OpenAILLMClient
   api_key_env: OPENAI_API_KEY
-  default_model: gpt-4o-mini
+  default_model: gpt-5
   
-  # Updated features to include reasoning
+  # Enhanced features including unified reasoning
   features:
     - text
     - streaming
     - system_messages
     - json_mode
-    - reasoning  # Added for reasoning models
+    - reasoning
+    - tools
+    - vision
+    - parallel_calls
   
-  max_context_length: 128000
-  max_output_tokens: 4096
+  max_context_length: 272000  # Updated for GPT-5
+  max_output_tokens: 128000   # Updated for GPT-5
   
-  # REALISTIC model list - only include actually available models
+  # Updated model list with GPT-5 family and GPT-OSS
   models:
+    # GPT-5 series (Latest - Unified reasoning models)
+    - gpt-5
+    - gpt-5-mini
+    - gpt-5-nano
+    # gpt-5-chat  # Not yet available in API
+    
+    # GPT-OSS series (Open source models) - Currently available via Hugging Face/local only
+    # - gpt-oss-120b  # Not yet in OpenAI API
+    # - gpt-oss-20b   # Not yet in OpenAI API
+    
     # Standard GPT models (confirmed available)
     - gpt-4.1
     - gpt-4.1-mini
@@ -1066,26 +1106,44 @@ openai:
     - o1               # Requires Tier 5 ($1000+ spent, 30+ days)
     - o1-2024-12-17    # Requires Tier 5
     - o3-mini          # Requires Tier 3+ (moderate usage)
-    # NOTE: o3, o4, o4-mini are not available in API yet
 
-  # Enhanced model capabilities with reasoning model support
+  # Enhanced model capabilities with GPT-5 and GPT-OSS support
   model_capabilities:
-    # O1 reasoning models (FIXED with proper parameters)
-    - pattern: "o1.*"
+    # GPT-5 series - Unified reasoning models
+    - pattern: "gpt-5(-chat|-mini|-nano)?$"
       features:
         - text
+        - streaming
         - tools
+        - vision
+        - parallel_calls
         - reasoning
-        # Note: o1 models don't support streaming or system messages
-      max_context_length: 200000
-      max_output_tokens: 100000
+        - json_mode
+        - system_messages
+      max_context_length: 272000
+      max_output_tokens: 128000
       special_handling:
         parameter_mapping:
-          max_tokens: max_completion_tokens  # CRITICAL FIX
-        restrictions:
-          no_streaming: true
-          no_system_messages: true
-          unsupported_params: [temperature, top_p, frequency_penalty, presence_penalty]
+          max_tokens: max_completion_tokens
+        verbosity_parameter: true
+        reasoning_effort_parameter: true
+        unified_reasoning: true
+    
+    # GPT-OSS series - Open source reasoning models
+    - pattern: "gpt-oss-(120b|20b)"
+      features:
+        - text
+        - streaming
+        - tools
+        - reasoning
+        - system_messages
+      max_context_length: 272000
+      max_output_tokens: 128000
+      special_handling:
+        open_source: true
+        apache_license: true
+        reasoning_effort_levels: ["low", "medium", "high"]
+        chain_of_thought_access: true
     
     # O3 reasoning models
     - pattern: "o3.*"
@@ -1099,8 +1157,25 @@ openai:
       max_output_tokens: 100000
       special_handling:
         parameter_mapping:
-          max_tokens: max_completion_tokens  # CRITICAL FIX
+          max_tokens: max_completion_tokens
         restrictions:
+          unsupported_params: [temperature, top_p, frequency_penalty, presence_penalty]
+    
+    # O1 reasoning models (FIXED with proper parameters)
+    - pattern: "o1.*"
+      features:
+        - text
+        - tools
+        - reasoning
+        # Note: o1 models don't support streaming or system messages
+      max_context_length: 200000
+      max_output_tokens: 100000
+      special_handling:
+        parameter_mapping:
+          max_tokens: max_completion_tokens
+        restrictions:
+          no_streaming: true
+          no_system_messages: true
           unsupported_params: [temperature, top_p, frequency_penalty, presence_penalty]
     
     # GPT-4.1 series (existing, working)
@@ -1153,18 +1228,30 @@ openai:
       max_context_length: 16384
       max_output_tokens: 4096
 
-  # Model aliases including reasoning models
+  # Enhanced model aliases including GPT-5 and GPT-OSS
   model_aliases:
+    # GPT-5 aliases (primary models)
+    latest: gpt-5
+    gpt5: gpt-5
+    mini: gpt-5-mini
+    nano: gpt-5-nano
+    #chat: gpt-5-chat
+    
     # Standard aliases
-    latest: gpt-4.1
-    mini: gpt-4.1-mini
     turbo: gpt-4-turbo
     
     # Reasoning model aliases
-    reasoning: o1-mini         # Most accessible reasoning model
-    reasoning_mini: o1-mini    # Same as above
-    reasoning_full: o1         # Requires Tier 5
-    reasoning_latest: o3-mini  # Requires Tier 3+
+    reasoning: gpt-5         # Primary unified reasoning
+    reasoning_mini: gpt-5-mini # GPT-5 mini with unified reasoning
+    reasoning_nano: gpt-5-nano # Ultra low latency reasoning
+    reasoning_full: o1       # Requires Tier 5
+    reasoning_latest: o3-mini # Requires Tier 3+
+    
+    # GPT-OSS aliases (when available)
+    # oss: gpt-oss-120b
+    # oss_large: gpt-oss-120b  
+    # oss_small: gpt-oss-20b
+    # open_source: gpt-oss-120b
     
     # Specific model aliases
     o1_mini: o1-mini
@@ -1172,30 +1259,86 @@ openai:
     o1_latest: o1-2024-12-17
     o3_mini: o3-mini
 
-  # Rate limits
+  # Enhanced rate limits
   rate_limits:
     default: 3500
     tier_1: 500
     tier_5: 10000  # Higher limits for reasoning model users
+    gpt_5: 5000    # Special limits for GPT-5
 
-  # Enhanced dynamic discovery for reasoning models
+  # Enhanced dynamic discovery for GPT-5 and reasoning models
   extra:
     dynamic_discovery:
       cache_timeout: 600
       discoverer_type: openai
       enabled: true
       inference_config:
-        default_context_length: 128000
+        default_context_length: 272000  # Updated for GPT-5
         default_features:
           - text
           - streaming
           - system_messages
           - json_mode
-        default_max_output_tokens: 4096
+          - reasoning
+          - tools
+          - vision
+          - parallel_calls
+        default_max_output_tokens: 128000  # Updated for GPT-5
         
-        # Model-specific overrides for reasoning models
+        # Model-specific overrides for new models
         model_overrides:
-          # O1 series overrides
+          # GPT-5 series overrides
+          gpt-5:
+            features: [text, streaming, tools, vision, parallel_calls, reasoning, json_mode, system_messages]
+            context_length: 272000
+            max_output_tokens: 128000
+            family: gpt5_unified
+            unified_reasoning: true
+            verbosity_parameter: true
+            reasoning_effort_parameter: true
+          
+          gpt-5-mini:
+            features: [text, streaming, tools, vision, parallel_calls, reasoning, json_mode, system_messages]
+            context_length: 272000
+            max_output_tokens: 128000
+            family: gpt5_unified
+            cost_optimized: true
+          
+          gpt-5-nano:
+            features: [text, streaming, tools, reasoning, json_mode, system_messages]
+            context_length: 272000
+            max_output_tokens: 128000
+            family: gpt5_unified
+            ultra_low_latency: true
+          
+          gpt-5-chat:
+            features: [text, streaming, tools, vision, parallel_calls, reasoning, json_mode, system_messages]
+            context_length: 272000
+            max_output_tokens: 128000
+            family: gpt5_unified
+            conversation_optimized: true
+          
+          # GPT-OSS series overrides
+          gpt-oss-120b:
+            features: [text, streaming, tools, reasoning, system_messages]
+            context_length: 272000
+            max_output_tokens: 128000
+            family: gpt_oss
+            open_source: true
+            apache_license: true
+            reasoning_effort_levels: ["low", "medium", "high"]
+            chain_of_thought_access: true
+            
+          gpt-oss-20b:
+            features: [text, streaming, tools, reasoning, system_messages]
+            context_length: 272000
+            max_output_tokens: 128000
+            family: gpt_oss
+            open_source: true
+            apache_license: true
+            edge_optimized: true
+          
+          # O1 series overrides (existing)
           o1-mini:
             features: [text, tools, reasoning]
             context_length: 128000
@@ -1243,8 +1386,42 @@ openai:
             restrictions:
               unsupported_params: [temperature, top_p, frequency_penalty, presence_penalty]
         
-        # Family rules for reasoning models
+        # Enhanced family rules for new models
         family_rules:
+          gpt5_unified:
+            base_context_length: 272000
+            base_max_output_tokens: 128000
+            features:
+              - text
+              - streaming
+              - tools
+              - vision
+              - parallel_calls
+              - reasoning
+              - json_mode
+              - system_messages
+            unified_reasoning: true
+            patterns:
+              - gpt-5
+              - gpt-5-mini
+              - gpt-5-nano
+              - gpt-5-chat
+          
+          gpt_oss:
+            base_context_length: 272000
+            base_max_output_tokens: 128000
+            features:
+              - text
+              - streaming
+              - tools
+              - reasoning
+              - system_messages
+            open_source: true
+            apache_license: true
+            patterns:
+              - gpt-oss-120b
+              - gpt-oss-20b
+          
           o1_series:
             base_context_length: 200000
             base_max_output_tokens: 65536
@@ -1645,7 +1822,7 @@ azure_openai:
   client_class: chuk_llm.llm.providers.azure_openai_client.AzureOpenAILLMClient
   api_key_env: AZURE_OPENAI_API_KEY
   api_key_fallback_env: AZURE_OPENAI_KEY
-  default_model: gpt-4o-mini
+  default_model: gpt-5
   
   # Azure-specific configuration
   extra:
@@ -1659,16 +1836,35 @@ azure_openai:
       discoverer_type: azure_openai
       cache_timeout: 600
       inference_config:
-        default_context_length: 128000
+        default_context_length: 272000  # Updated for GPT-5
         default_features:
           - text
           - streaming
           - system_messages
           - json_mode
-        default_max_output_tokens: 4096
+          - reasoning
+          - tools
+          - vision
+          - parallel_calls
+        default_max_output_tokens: 128000  # Updated for GPT-5
         
         # Azure deployment patterns
         deployment_rules:
+          gpt5_deployments:
+            base_context_length: 272000
+            base_max_output_tokens: 128000
+            features:
+              - text
+              - streaming
+              - tools
+              - vision
+              - parallel_calls
+              - reasoning
+              - json_mode
+              - system_messages
+            patterns:
+              - gpt-5
+              
           gpt4_deployments:
             base_context_length: 128000
             base_max_output_tokens: 8192
@@ -1712,35 +1908,61 @@ azure_openai:
               - o3
               - o4
   
-  # Baseline features (inherited by all models unless overridden)
+  # Enhanced baseline features
   features:
     - text
     - streaming
     - system_messages
     - json_mode
+    - reasoning
+    - tools
+    - vision
+    - parallel_calls
   
-  max_context_length: 128000
-  max_output_tokens: 4096
+  max_context_length: 272000  # Updated for GPT-5
+  max_output_tokens: 128000   # Updated for GPT-5
   
-  # Model aliases (can map to deployment names)
+  # Enhanced model aliases
   model_aliases:
+    # GPT-5 aliases
+    gpt5: gpt-5
+    gpt5_mini: gpt-5-mini
+    gpt5_nano: gpt-5-nano
+    latest: gpt-5
+    mini: gpt-5-mini
+    nano: gpt-5-nano
+    
+    # Standard aliases
     gpt4: gpt-4
     gpt4o: gpt-4o
     gpt4o_mini: gpt-4o-mini
     gpt35: gpt-3.5-turbo
-    latest: gpt-4o-mini
-    mini: gpt-4o-mini
     turbo: gpt-4-turbo
-    reasoning: o3-mini
-    vision: gpt-4o
+    reasoning: gpt-5
+    vision: gpt-5
     
     # Azure deployment examples (customize for your deployments)
+    my_gpt5_deployment: gpt-5
     my_gpt4_deployment: gpt-4
     my_gpt4o_deployment: gpt-4o
-    my_vision_deployment: gpt-4o
+    my_vision_deployment: gpt-5
   
-  # Model-specific capabilities
+  # Enhanced model-specific capabilities
   model_capabilities:
+    # GPT-5 series
+    - pattern: "gpt-5.*"
+      features:
+        - text
+        - streaming
+        - tools
+        - vision
+        - parallel_calls
+        - reasoning
+        - json_mode
+        - system_messages
+      max_context_length: 272000
+      max_output_tokens: 128000
+    
     # O-series reasoning models
     - pattern: "o[1-4].*"
       features:
@@ -1803,8 +2025,15 @@ azure_openai:
       max_context_length: 16384
       max_output_tokens: 4096
   
-  # Available models (these would typically be discovered or configured per deployment)
+  # Enhanced models list
   models:
+    # GPT-5 series
+    - gpt-5
+    - gpt-5-mini
+    - gpt-5-nano
+    - gpt-5-chat
+    
+    # Standard models
     - gpt-4.1
     - gpt-4.1-mini
     - gpt-4o
@@ -1812,15 +2041,18 @@ azure_openai:
     - gpt-4-turbo
     - gpt-4
     - gpt-3.5-turbo
+    
+    # Reasoning models
     - o1
     - o1-mini
     - o3
     - o3-mini
     - o4-mini
   
-  # Rate limits (adjust based on your Azure subscription)
+  # Enhanced rate limits
   rate_limits:
     default: 3000
     tier_1: 1000
     tier_2: 5000
     premium: 10000
+    gpt_5: 5000

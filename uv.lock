@@ -152,7 +152,7 @@ redis = [
 
 [[package]]
 name = "chuk-llm"
-version = "0.8.13"
+version = "0.9"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
