@@ -219,7 +219,16 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                     message = {"role": "user", "content": f"System: {content}"}
             else:
                 message = {"role": role, "content": content}
-            
+                if role == "assistant" and (tool_calls := m.get("tool_calls")):
+                    for tool_call in tool_calls:
+                        tool_call.pop("id", "")
+                        tool_call.pop("type", "")
+                        # Sometimes, the arguments are presented as a serialized
+                        # json string
+                        if isinstance(args := tool_call.get("function", {}).get("arguments"), str):
+                            tool_call["function"]["arguments"] = json.loads(args)
+                    message["tool_calls"] = tool_calls
+
             # Handle images if present in the message content and vision is supported
             if isinstance(content, list):
                 has_images = any(item.get("type") in ["image", "image_url"] for item in content)
