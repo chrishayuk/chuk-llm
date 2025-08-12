@@ -4,10 +4,10 @@ Core ask/stream functions with unified configuration and automatic session track
 ==================================================================================
 
 Main API functions using the unified configuration system with integrated session management.
-FIXED VERSION - Corrected streaming implementation and reasoning model support.
+FIXED VERSION - Enhanced streaming with full tool call support.
 """
 
-from typing import List, Dict, Any, Optional, AsyncIterator
+from typing import List, Dict, Any, Optional, AsyncIterator, Union
 import logging
 import os
 
@@ -57,7 +57,24 @@ def _get_session_manager() -> Optional['SessionManager']:
     return _global_session_manager
 
 
-
+def _supports_tools_by_model(model_name: str) -> bool:
+    """Check if a model supports tools based on model name patterns."""
+    if not model_name:
+        return True  # Assume support if unknown
+    
+    model_lower = model_name.lower()
+    
+    # Old reasoning models that don't support tools
+    old_reasoning_models = [
+        "o1-preview-2024-09-12",
+        "o1-mini-2024-09-12"
+    ]
+    
+    for old_model in old_reasoning_models:
+        if old_model in model_lower:
+            return False
+    
+    return True
 
 
 async def _track_user_message(session_manager, prompt: str):
@@ -303,20 +320,33 @@ async def ask(
         raise
 
 
-async def stream(prompt: str, context: str = None, previous_messages: List[Dict[str, str]] = None, **kwargs) -> AsyncIterator[str]:
+async def stream(
+    prompt: str, 
+    context: str = None, 
+    previous_messages: List[Dict[str, str]] = None,
+    return_tool_calls: bool = None,  # NEW: Control whether to return tool calls
+    **kwargs
+) -> AsyncIterator[Union[str, Dict[str, Any]]]:
     """
     Stream a response token by token with unified configuration and automatic session tracking.
-    FIXED VERSION - Properly handles streaming from OpenAI client and reasoning models.
+    ENHANCED VERSION - Now properly handles tool calls when requested.
     
     Args:
         prompt: The question/prompt to send
         context: Additional context for the question (stateless)
         previous_messages: Previous messages for context (stateless)
+        return_tool_calls: Whether to return full chunks with tool calls (auto-detected if None)
         **kwargs: Same arguments as ask() plus streaming-specific options
         
     Yields:
-        str: Individual tokens/chunks from the LLM response
+        When return_tool_calls=False or no tools: str chunks
+        When return_tool_calls=True or tools provided: Dict with 'response' and 'tool_calls'
     """
+    # Auto-detect whether to return tool calls
+    tools = kwargs.get('tools')
+    if return_tool_calls is None:
+        return_tool_calls = bool(tools)
+    
     # Get session manager
     session_manager = _get_session_manager()
     
@@ -325,6 +355,7 @@ async def stream(prompt: str, context: str = None, previous_messages: List[Dict[
     
     # Collect full response for session tracking
     full_response = ""
+    all_tool_calls = []
     
     # Get base configuration
     config = get_current_config()
@@ -393,7 +424,10 @@ async def stream(prompt: str, context: str = None, previous_messages: List[Dict[
             # Track the response if session is available
             await _track_ai_response(session_manager, response, effective_model, effective_provider)
             
-            yield response
+            if return_tool_calls:
+                yield {"response": response, "tool_calls": []}
+            else:
+                yield response
             return
     except Exception:
         pass  # Unknown provider, proceed anyway
@@ -410,7 +444,7 @@ async def stream(prompt: str, context: str = None, previous_messages: List[Dict[
     messages = _build_messages(
         prompt=prompt,
         system_prompt=effective_config.get("system_prompt"),
-        tools=kwargs.get("tools"),
+        tools=tools,
         provider=effective_provider,
         model=effective_model,
         context=context,
@@ -428,8 +462,7 @@ async def stream(prompt: str, context: str = None, previous_messages: List[Dict[
         "stream": True,
     }
     
-    # Add tools if supported - Let the provider client handle tool support logic
-    tools = kwargs.get("tools")
+    # Add tools if supported
     if tools:
         try:
             # Check configuration-based tool support
@@ -458,49 +491,82 @@ async def stream(prompt: str, context: str = None, previous_messages: List[Dict[
             if effective_provider == "openai":
                 completion_args["response_format"] = {"type": "json_object"}
     
-    # Add temperature and max_tokens - Let provider client handle parameter mapping
+    # Add temperature and max_tokens
     if effective_config.get("max_tokens") is not None:
         completion_args["max_tokens"] = effective_config["max_tokens"]
     if effective_config.get("temperature") is not None:
         completion_args["temperature"] = effective_config["temperature"]
     
     # Remove parameters that we've already handled from completion_kwargs
-    for param in ['provider', 'model', 'system_prompt', 'max_tokens', 'temperature', 'tools', 'json_mode', 'max_completion_tokens']:
+    for param in ['provider', 'model', 'system_prompt', 'max_tokens', 'temperature', 'tools', 'json_mode', 'max_completion_tokens', 'return_tool_calls']:
         completion_kwargs.pop(param, None)
     
     # Add remaining kwargs
     completion_args.update(completion_kwargs)
     
-    # FIXED: Stream the response with proper error handling
+    # Stream the response with proper error handling
     try:
-        logger.debug(f"Starting streaming with {effective_provider}/{effective_model}")
+        logger.debug(f"Starting streaming with {effective_provider}/{effective_model}, return_tool_calls={return_tool_calls}")
         
         # Call client.create_completion with stream=True - this returns an async generator
         response_stream = client.create_completion(**completion_args)
         
-        # The response_stream from OpenAI client is already an async generator
         chunk_count = 0
         
         async for chunk in response_stream:
             chunk_count += 1
             
             try:
-                # Extract content from the chunk - this handles the OpenAI client's response format
-                content = _extract_streaming_content(chunk)
-                
-                if content:
-                    full_response += content
-                    yield content
+                if return_tool_calls:
+                    # ENHANCED: Return full chunks with tool calls preserved
+                    if isinstance(chunk, dict):
+                        # Track response text for session
+                        response_text = chunk.get("response", "")
+                        if response_text:
+                            full_response += response_text
+                        
+                        # Track tool calls
+                        chunk_tool_calls = chunk.get("tool_calls", [])
+                        if chunk_tool_calls:
+                            all_tool_calls.extend(chunk_tool_calls)
+                        
+                        # Yield the full chunk
+                        yield chunk
+                    else:
+                        # Convert non-dict chunks to proper format
+                        chunk_str = str(chunk)
+                        full_response += chunk_str
+                        yield {"response": chunk_str, "tool_calls": []}
+                else:
+                    # BACKWARD COMPATIBLE: Text-only streaming
+                    content = _extract_streaming_content(chunk)
+                    
+                    if content:
+                        full_response += content
+                        yield content
                     
             except Exception as chunk_error:
                 logger.debug(f"Error processing chunk {chunk_count}: {chunk_error}")
                 continue  # Skip problematic chunks
         
-        logger.debug(f"Streaming completed: {chunk_count} chunks, {len(full_response)} total chars")
+        logger.debug(f"Streaming completed: {chunk_count} chunks, {len(full_response)} total chars, {len(all_tool_calls)} tool calls")
         
         # Track complete response if session is available
         if full_response:
             await _track_ai_response(session_manager, full_response, effective_model, effective_provider)
+        
+        # Track tool calls if any
+        if all_tool_calls and session_manager:
+            try:
+                for tool_call in all_tool_calls:
+                    func_info = tool_call.get("function", {})
+                    await session_manager.tool_used(
+                        tool_name=func_info.get("name", "unknown"),
+                        arguments=func_info.get("arguments", "{}"),
+                        result={}
+                    )
+            except Exception as e:
+                logger.debug(f"Session tool tracking error: {e}")
                 
     except Exception as e:
         logger.error(f"Streaming failed: {e}")
@@ -510,11 +576,37 @@ async def stream(prompt: str, context: str = None, previous_messages: List[Dict[
             logger.info("Attempting fallback to non-streaming mode")
             fallback_kwargs = {k: v for k, v in kwargs.items() if k != 'stream'}
             fallback_response = await ask(prompt, context=context, previous_messages=previous_messages, **fallback_kwargs)
-            yield fallback_response
+            
+            if return_tool_calls:
+                yield {"response": fallback_response, "tool_calls": []}
+            else:
+                yield fallback_response
         except Exception as fallback_error:
             logger.error(f"Fallback also failed: {fallback_error}")
             error_msg = f"[Error: {str(e)}]"
-            yield error_msg
+            
+            if return_tool_calls:
+                yield {"response": error_msg, "tool_calls": [], "error": True}
+            else:
+                yield error_msg
+
+
+async def stream_with_tools(prompt: str, **kwargs) -> AsyncIterator[Dict[str, Any]]:
+    """
+    Convenience function for streaming with tool calls always returned.
+    
+    This is a wrapper around stream() that ensures tool calls are included
+    in the output, making it easier to work with function calling.
+    
+    Args:
+        prompt: The question/prompt to send
+        **kwargs: Same arguments as stream()
+        
+    Yields:
+        Dict with 'response' (str) and 'tool_calls' (list) keys
+    """
+    async for chunk in stream(prompt, return_tool_calls=True, **kwargs):
+        yield chunk
 
 
 def _extract_streaming_content(chunk) -> str:
