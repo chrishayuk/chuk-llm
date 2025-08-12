@@ -3,7 +3,7 @@
 Ollama chat-completion adapter with unified configuration integration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Configuration-driven capabilities with local model support.
-ENHANCED with GPT-OSS and reasoning model support.
+ENHANCED with GPT-OSS and reasoning model support - FIXED DUPLICATE TOOL CALLS.
 """
 import asyncio
 import json
@@ -26,6 +26,7 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
     from unified YAML configuration for local model support.
     
     ENHANCED: Now supports reasoning models like GPT-OSS with thinking streams.
+    FIXED: Deduplicates tool calls that appear in multiple locations in chunks.
     """
 
     def __init__(self, model: str = "qwen3", api_base: Optional[str] = None) -> None:
@@ -309,6 +310,25 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         if ollama_options:
             request_params["options"] = ollama_options
         
+        # Handle think parameter for sync client
+        if 'think' in kwargs:
+            think_value = kwargs.get('think')
+            if isinstance(think_value, bool) and think_value:
+                think_value = 'medium'
+            
+            if think_value in ['low', 'medium', 'high']:
+                try:
+                    # Check if sync client supports think parameter
+                    import inspect
+                    chat_signature = inspect.signature(self.sync_client.chat)
+                    if 'think' in chat_signature.parameters:
+                        request_params["think"] = think_value
+                        log.debug(f"Enabled thinking mode ({think_value}) for sync call")
+                    else:
+                        log.debug(f"Think parameter not supported by sync client")
+                except Exception as e:
+                    log.debug(f"Could not check think parameter support: {e}")
+        
         # Make the non-streaming sync call
         response = self.sync_client.chat(**request_params)
         
@@ -320,6 +340,7 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         Build Ollama options dict from OpenAI-style parameters.
         
         Ollama parameters go in an 'options' dict, not directly in chat().
+        Special parameters like 'think' are handled separately at the request level.
         """
         ollama_options = {}
         
@@ -344,6 +365,12 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         # Handle any Ollama-specific options passed directly
         if "options" in kwargs and isinstance(kwargs["options"], dict):
             ollama_options.update(kwargs["options"])
+        
+        # List of special parameters that are handled at request level, not in options
+        special_params = ['think', 'stream', 'tools', 'messages', 'model']
+        for param in special_params:
+            if param in kwargs:
+                log.debug(f"Parameter '{param}' will be handled at request level, not in options")
         
         return ollama_options
 
@@ -455,15 +482,13 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
     ) -> AsyncIterator[Dict[str, Any]]:
         """
         ENHANCED: Real streaming using Ollama's AsyncClient with support for reasoning models.
+        FIXED: Deduplicates tool calls that appear in multiple locations in the same chunk.
         
-        This now properly handles reasoning models like GPT-OSS that stream their thinking
-        process in the 'thinking' field rather than 'content'.
-        
-        Key improvements:
-        - Detects reasoning models automatically
-        - Streams thinking content in real-time 
-        - Maintains tool call detection
-        - Preserves backward compatibility with regular models
+        This now properly handles:
+        - Granite models that send tool calls in early chunks with no content
+        - Regular models that send content and tool calls together
+        - Reasoning models that stream thinking content
+        - Duplicate tool calls in the same chunk (GPT-OSS issue)
         """
         try:
             is_reasoning_model = self._is_reasoning_model()
@@ -509,6 +534,20 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
             if ollama_options:
                 request_params["options"] = ollama_options
             
+            # Add think parameter if specified (supported in latest Ollama)
+            if 'think' in kwargs:
+                think_value = kwargs.get('think')
+                if isinstance(think_value, bool) and think_value:
+                    think_value = 'medium'
+                
+                if think_value in ['low', 'medium', 'high']:
+                    request_params["think"] = think_value
+                    log.debug(f"Enabled thinking mode ({think_value}) for model: {self.model}")
+                elif think_value:
+                    # Pass through any other think value
+                    request_params["think"] = think_value
+                    log.debug(f"Using think parameter: {think_value}")
+            
             # Use async client for real streaming
             stream = await self.async_client.chat(**request_params)
             
@@ -516,6 +555,18 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
             total_thinking_chars = 0
             total_content_chars = 0
             aggregated_tool_calls = []
+            empty_chunk_count = 0
+            
+            # Track if we've seen tool calls to avoid duplicates
+            seen_tool_call_keys = set()
+            
+            # CRITICAL FIX: Track if we've already yielded tool calls
+            tool_calls_yielded = False
+            
+            # Helper function to create unique key for tool call
+            def make_tool_call_key(tc_dict):
+                """Create a unique key for a tool call based on its content"""
+                return f"{tc_dict['function']['name']}:{tc_dict['function']['arguments']}"
             
             # Process each chunk in the stream immediately
             async for chunk in stream:
@@ -524,10 +575,136 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                 # ENHANCED: Extract both content and thinking
                 content = ""
                 thinking = ""
+                chunk_tool_calls = []
                 
+                # Helper function to extract tool calls from various formats
+                def extract_tool_calls(tc_list):
+                    extracted = []
+                    if tc_list:
+                        for tc in tc_list:
+                            # Generate or get ID
+                            tc_id = None
+                            if hasattr(tc, 'id'):
+                                tc_id = tc.id
+                            elif hasattr(tc, 'Id'):
+                                tc_id = tc.Id
+                            
+                            if not tc_id:
+                                tc_id = f"call_{uuid.uuid4().hex[:8]}"
+                            
+                            # Try multiple ways to get the function
+                            func = None
+                            fn_name = ""
+                            fn_args = {}
+                            
+                            # Try different attribute names
+                            for func_attr in ['function', 'Function', 'func', 'Func']:
+                                if hasattr(tc, func_attr):
+                                    func = getattr(tc, func_attr)
+                                    break
+                            
+                            if func:
+                                # Try different ways to get name
+                                for name_attr in ['name', 'Name', 'function_name', 'FunctionName']:
+                                    if hasattr(func, name_attr):
+                                        fn_name = getattr(func, name_attr, "")
+                                        break
+                                
+                                # Try different ways to get arguments
+                                for args_attr in ['arguments', 'Arguments', 'args', 'Args', 'parameters', 'Parameters']:
+                                    if hasattr(func, args_attr):
+                                        fn_args = getattr(func, args_attr, {})
+                                        break
+                            
+                            # Also check if tc itself has name/arguments directly
+                            if not fn_name:
+                                for name_attr in ['name', 'Name']:
+                                    if hasattr(tc, name_attr):
+                                        fn_name = getattr(tc, name_attr, "")
+                                        break
+                            
+                            if not fn_args:
+                                for args_attr in ['arguments', 'Arguments', 'args', 'Args']:
+                                    if hasattr(tc, args_attr):
+                                        fn_args = getattr(tc, args_attr, {})
+                                        break
+                            
+                            if fn_name:  # Only add if we found a function name
+                                # Process arguments
+                                if isinstance(fn_args, dict):
+                                    fn_args_str = json.dumps(fn_args)
+                                elif isinstance(fn_args, str):
+                                    fn_args_str = fn_args
+                                else:
+                                    fn_args_str = str(fn_args)
+                                
+                                tool_call = {
+                                    "id": tc_id,
+                                    "type": "function",
+                                    "function": {
+                                        "name": fn_name,
+                                        "arguments": fn_args_str
+                                    }
+                                }
+                                
+                                # Check for duplicates based on content
+                                tc_key = make_tool_call_key(tool_call)
+                                if tc_key not in seen_tool_call_keys:
+                                    seen_tool_call_keys.add(tc_key)
+                                    extracted.append(tool_call)
+                    return extracted
+                
+                # Track what tool calls we get from message to avoid duplicates
+                message_tool_calls = None
+                
+                # Extract content and thinking from message
                 if hasattr(chunk, 'message') and chunk.message:
                     content = getattr(chunk.message, "content", "")
-                    thinking = getattr(chunk.message, "thinking", "")  # NEW: Support thinking field
+                    thinking = getattr(chunk.message, "thinking", "")
+                    
+                    # Check for tool calls in message
+                    if self.supports_feature("tools"):
+                        message_tool_calls = getattr(chunk.message, "tool_calls", None)
+                        if message_tool_calls:
+                            extracted = extract_tool_calls(message_tool_calls)
+                            chunk_tool_calls.extend(extracted)
+                            aggregated_tool_calls.extend(extracted)
+                
+                # Also check for tool calls at the chunk level (some models put them here)
+                # BUT skip if they're the same object as message.tool_calls
+                if hasattr(chunk, 'tool_calls') and self.supports_feature("tools"):
+                    chunk_level_tool_calls = chunk.tool_calls
+                    
+                    # Only process if this is a different object from message.tool_calls
+                    if chunk_level_tool_calls is not message_tool_calls:
+                        extracted = extract_tool_calls(chunk_level_tool_calls)
+                        chunk_tool_calls.extend(extracted)
+                        aggregated_tool_calls.extend(extracted)
+                
+                # Check if this is a final chunk with additional data
+                if hasattr(chunk, 'done') and chunk.done:
+                    # Some models send tool calls only in the final chunk
+                    # Check multiple possible locations
+                    final_tool_calls = None
+                    
+                    # Try message.tool_calls
+                    if hasattr(chunk, 'message') and chunk.message:
+                        final_tool_calls = getattr(chunk.message, "tool_calls", None)
+                    
+                    # Try chunk.tool_calls if not found in message and not same object
+                    if not final_tool_calls and hasattr(chunk, 'tool_calls'):
+                        potential_final = chunk.tool_calls
+                        if potential_final is not message_tool_calls:
+                            final_tool_calls = potential_final
+                    
+                    # Process any final tool calls found
+                    if final_tool_calls:
+                        extracted = extract_tool_calls(final_tool_calls)
+                        # Only add if we haven't already processed them
+                        for tc in extracted:
+                            if tc not in chunk_tool_calls:
+                                chunk_tool_calls.append(tc)
+                                aggregated_tool_calls.append(tc)
                 
                 # Track statistics
                 if content:
@@ -535,56 +712,35 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                 if thinking:
                     total_thinking_chars += len(thinking)
                 
-                # Check for tool calls (only if tools are supported)
-                new_tool_calls = []
-                if (hasattr(chunk, 'message') and chunk.message and 
-                    self.supports_feature("tools")):
-                    chunk_tool_calls = getattr(chunk.message, "tool_calls", None)
-                    if chunk_tool_calls:
-                        for tc in chunk_tool_calls:
-                            tc_id = getattr(tc, "id", None) or f"call_{uuid.uuid4().hex[:8]}"
-                            
-                            fn_name = getattr(tc.function, "name", "")
-                            fn_args = getattr(tc.function, "arguments", {})
-                            
-                            # Process arguments
-                            if isinstance(fn_args, dict):
-                                fn_args_str = json.dumps(fn_args)
-                            elif isinstance(fn_args, str):
-                                fn_args_str = fn_args
-                            else:
-                                fn_args_str = str(fn_args)
-                            
-                            tool_call = {
-                                "id": tc_id,
-                                "type": "function",
-                                "function": {
-                                    "name": fn_name,
-                                    "arguments": fn_args_str
-                                }
-                            }
-                            new_tool_calls.append(tool_call)
-                            aggregated_tool_calls.append(tool_call)
-                
-                # ENHANCED: Determine what to stream based on model type
+                # FIXED: Determine what to stream based on what we have
                 stream_content = ""
                 
                 if is_reasoning_model and thinking:
                     # For reasoning models like GPT-OSS, stream the thinking process
                     stream_content = thinking
                     if chunk_count <= 5:  # Log first few chunks for debugging
-                        log.debug(f"Streaming thinking chunk {chunk_count}: '{thinking[:30]}...'")
+                        log.debug(f"Streaming thinking chunk {chunk_count}: '{thinking[:50]}...'")
                 elif content:
-                    # For regular models, stream the content
+                    # For regular models or when content is available, stream the content
                     stream_content = content
                     if chunk_count <= 5:  # Log first few chunks for debugging
-                        log.debug(f"Streaming content chunk {chunk_count}: '{content[:30]}...'")
+                        log.debug(f"Streaming content chunk {chunk_count}: '{content[:50]}...'")
                 
-                # ENHANCED: Yield chunk if we have content, thinking, or tool calls
-                if stream_content or new_tool_calls:
+                # CRITICAL FIX: Check if chunk has meaningful data
+                has_content = bool(stream_content)
+                has_tools = bool(chunk_tool_calls)
+                
+                # CRITICAL FIX FOR GRANITE:
+                # Granite sends tool calls in first chunk with empty content,
+                # then sends content in subsequent chunks.
+                # We need to yield the tool calls immediately when we see them,
+                # even if there's no content yet.
+                
+                if has_tools and not tool_calls_yielded:
+                    # Yield tool calls immediately when we first see them
                     chunk_data = {
-                        "response": stream_content,
-                        "tool_calls": new_tool_calls
+                        "response": stream_content if stream_content else "",  # Empty string instead of None
+                        "tool_calls": chunk_tool_calls
                     }
                     
                     # Add reasoning metadata if applicable
@@ -597,18 +753,43 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                         }
                     
                     yield chunk_data
-                elif chunk_count <= 3:
-                    # Log empty chunks only for first few chunks to debug issues
-                    log.debug(f"Empty chunk {chunk_count}: content='{content}', thinking='{thinking}', tools={len(new_tool_calls)}")
+                    tool_calls_yielded = True
+                    
+                    # Log tool calls
+                    log.debug(f"Model yielded {len(chunk_tool_calls)} tool calls in chunk {chunk_count}")
+                    
+                elif has_content:
+                    # Yield content chunks (without repeating tool calls)
+                    chunk_data = {
+                        "response": stream_content,
+                        "tool_calls": []  # Don't repeat tool calls in content chunks
+                    }
+                    
+                    # Add reasoning metadata if applicable
+                    if is_reasoning_model:
+                        chunk_data["reasoning"] = {
+                            "is_thinking": bool(thinking and not content),
+                            "thinking_content": thinking if thinking else None,
+                            "regular_content": content if content else None,
+                            "chunk_type": "thinking" if thinking else "content"
+                        }
+                    
+                    yield chunk_data
+                else:
+                    empty_chunk_count += 1
+                    # Accurate debug logging
+                    if empty_chunk_count <= 3:
+                        log.debug(f"Empty chunk {empty_chunk_count}: content='{content}', thinking='{thinking}', tools={len(chunk_tool_calls)}")
                 
                 # Allow other async tasks to run periodically
                 if chunk_count % 10 == 0:
                     await asyncio.sleep(0)
             
-            # Final statistics
-            log.debug(f"Ollama streaming completed: {chunk_count} chunks, "
-                     f"thinking={total_thinking_chars} chars, content={total_content_chars} chars, "
-                     f"tools={len(aggregated_tool_calls)} for {'reasoning' if is_reasoning_model else 'regular'} model")
+            # FIXED: Final statistics with accurate counts
+            log.debug(f"Ollama streaming completed: {chunk_count} total chunks, "
+                    f"{empty_chunk_count} empty chunks, "
+                    f"thinking={total_thinking_chars} chars, content={total_content_chars} chars, "
+                    f"tools={len(aggregated_tool_calls)} for {'reasoning' if is_reasoning_model else 'regular'} model")
         
         except Exception as e:
             log.error(f"Error in Ollama streaming: {e}")
@@ -617,7 +798,7 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                 "tool_calls": [],
                 "error": True
             }
-
+            
     async def _regular_completion(
         self,
         messages: List[Dict[str, Any]],
