@@ -70,6 +70,19 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
             else:
                 log.debug(f"Ollama using default host (localhost:11434)")
 
+        # Look up model capabilities reported by Ollama
+        self._model_capabilities = []
+        try:
+            model_info = self.sync_client.show(model=self.model)
+            self._model_capabilities = model_info.capabilities
+        except ollama.ResponseError:
+            log.debug("Unable to get model capabilities from Ollama")
+
+    def supports_feature(self, feature_name: str) -> bool:
+        if feature_name in self._model_capabilities:
+            return True
+        return super().supports_feature(feature_name)
+
     def get_model_info(self) -> Dict[str, Any]:
         """
         Get model info using configuration, with Ollama-specific additions.
