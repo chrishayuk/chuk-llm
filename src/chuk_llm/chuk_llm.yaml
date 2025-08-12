@@ -504,80 +504,291 @@ gemini:
     default: 1500
     tier_1: 1000
     tier_2: 2000
+
 groq:
-  api_base: https://api.groq.com
+  api_base: https://api.groq.com/openai/v1
   api_key_env: GROQ_API_KEY
   client_class: chuk_llm.llm.providers.groq_client.GroqAILLMClient
   default_model: llama-3.3-70b-versatile
-  extra:
-    dynamic_discovery:
-      discoverer_type: groq
-      enabled: true
-      inference_config:
-        default_context_length: 32768
-        default_features:
-        - text
-        - streaming
-        - tools
-        family_rules:
-          gemma_series:
-            base_context_length: 8192
-            features:
-            - text
-            - streaming
-            - tools
-            - system_messages
-            patterns:
-            - gemma
-          llama_series:
-            base_context_length: 32768
-            features:
-            - text
-            - streaming
-            - tools
-            - system_messages
-            patterns:
-            - llama
-          mixtral_series:
-            base_context_length: 32768
-            features:
-            - text
-            - streaming
-            - tools
-            - system_messages
-            patterns:
-            - mixtral
+  
+  # Enhanced features based on actual capabilities
   features:
-  - text
-  - streaming
-  - tools
-  - parallel_calls
-  inherits: openai
-  max_context_length: 32768
-  max_output_tokens: 8192
-  model_aliases:
-    fast: llama-3.1-8b-instant
-    latest: llama-3.3-70b-versatile
-    llama: llama-3.3-70b-versatile
-    llama_fast: llama-3.1-8b-instant
-    mixtral: mixtral-8x7b-32768
-    powerful: llama-3.3-70b-versatile
-  model_capabilities:
-  - features:
     - text
     - streaming
     - tools
-    max_context_length: 32768
-    max_output_tokens: 8192
-    pattern: .*
+    - parallel_calls
+    - system_messages
+    - json_mode
+  
+  inherits: openai
+  
+  # Actual Groq limits (131k context!)
+  max_context_length: 131072
+  max_output_tokens: 32768
+  
+  # Model aliases for convenience
+  model_aliases:
+    # Primary aliases
+    latest: llama-3.3-70b-versatile
+    fast: llama-3.1-8b-instant
+    powerful: llama-3.3-70b-versatile
+    
+    # Model family aliases
+    llama: llama-3.3-70b-versatile
+    llama_fast: llama-3.1-8b-instant
+    llama_guard: meta-llama/llama-guard-4-12b
+    
+    # GPT-OSS aliases
+    gpt_oss: openai/gpt-oss-120b
+    gpt_oss_large: openai/gpt-oss-120b
+    gpt_oss_small: openai/gpt-oss-20b
+    reasoning: openai/gpt-oss-120b
+    
+    # Other models
+    deepseek: deepseek-r1-distill-llama-70b
+    qwen: qwen/qwen3-32b
+    kimi: moonshotai/kimi-k2-instruct
+    
+    # System models
+    compound: compound-beta
+    compound_mini: compound-beta-mini
+  
+  # Production models (stable, recommended for production)
   models:
-  - llama-3.3-70b-versatile
-  - llama-3.1-8b-instant
-  - llama-3.1-70b-versatile
-  - mixtral-8x7b-32768
-  - gemma2-9b-it
+    - llama-3.3-70b-versatile
+    - llama-3.1-8b-instant
+  
+  # Preview models (evaluation only, may be discontinued)
+  preview_models:
+    - deepseek-r1-distill-llama-70b
+    - meta-llama/llama-4-maverick-17b-128e-instruct
+    - meta-llama/llama-4-scout-17b-16e-instruct
+    - moonshotai/kimi-k2-instruct
+    - openai/gpt-oss-120b
+    - openai/gpt-oss-20b
+    - qwen/qwen3-32b
+    - compound-beta
+    - compound-beta-mini
+  
+  # Model-specific capabilities with actual Groq limits
+  model_capabilities:
+    # Llama 3.3 70B - Most capable
+    - pattern: "llama-3\\.3-70b-versatile"
+      features:
+        - text
+        - streaming
+        - tools
+        - system_messages
+        - json_mode
+        - parallel_calls
+      max_context_length: 131072
+      max_output_tokens: 32768
+    
+    # Llama 3.1 8B - Fast
+    - pattern: "llama-3\\.1-8b-instant"
+      features:
+        - text
+        - streaming
+        - tools
+        - system_messages
+        - json_mode
+      max_context_length: 131072
+      max_output_tokens: 131072  # 8B model has huge output!
+    
+    # GPT-OSS models - Reasoning
+    - pattern: "openai/gpt-oss-120b"
+      features:
+        - text
+        - streaming
+        - tools
+        - system_messages
+        - json_mode
+        - reasoning
+      max_context_length: 131072
+      max_output_tokens: 32766
+    
+    - pattern: "openai/gpt-oss-20b"
+      features:
+        - text
+        - streaming
+        - tools
+        - system_messages
+        - json_mode
+        - reasoning
+      max_context_length: 131072
+      max_output_tokens: 32768
+    
+    # DeepSeek reasoning
+    - pattern: "deepseek-r1-distill-llama-70b"
+      features:
+        - text
+        - streaming
+        - tools
+        - system_messages
+        - json_mode
+        - reasoning
+      max_context_length: 131072
+      max_output_tokens: 131072
+    
+    # Llama 4 models
+    - pattern: "meta-llama/llama-4-.*"
+      features:
+        - text
+        - streaming
+        - tools
+        - system_messages
+        - json_mode
+      max_context_length: 131072
+      max_output_tokens: 8192
+    
+    # Qwen model
+    - pattern: "qwen/qwen3-32b"
+      features:
+        - text
+        - streaming
+        - tools
+        - system_messages
+        - json_mode
+        - reasoning
+      max_context_length: 131072
+      max_output_tokens: 40960  # Qwen has 40k output!
+    
+    # Kimi model
+    - pattern: "moonshotai/kimi-.*"
+      features:
+        - text
+        - streaming
+        - tools
+        - system_messages
+        - json_mode
+      max_context_length: 131072
+      max_output_tokens: 16384
+    
+    # Compound systems
+    - pattern: "compound-.*"
+      features:
+        - text
+        - streaming
+        - tools
+        - system_messages
+        - reasoning
+      max_context_length: 131072
+      max_output_tokens: 8192
+    
+    # Default for unknown models (generous Groq defaults)
+    - pattern: ".*"
+      features:
+        - text
+        - streaming
+        - tools
+        - system_messages
+      max_context_length: 131072  # Groq standard
+      max_output_tokens: 32768
+  
+  # Rate limits
   rate_limits:
     default: 30
+    tier_1: 14400  # Requests per day
+    tier_2: 28800  # Requests per day
+  
+  # Extra configuration
+  extra:
+    # Performance characteristics
+    ultra_fast_inference: true
+    openai_compatible: true
+    
+    # Dynamic discovery
+    dynamic_discovery:
+      enabled: true
+      discoverer_type: groq
+      cache_timeout: 300
+      
+      # Inference configuration for discovery
+      inference_config:
+        default_context_length: 131072  # Groq standard
+        default_features:
+          - text
+          - streaming
+          - tools
+          - system_messages
+          - json_mode
+        
+        # Family rules for pattern matching
+        family_rules:
+          llama_series:
+            base_context_length: 131072
+            features:
+              - text
+              - streaming
+              - tools
+              - system_messages
+              - json_mode
+            patterns:
+              - llama
+          
+          gpt_oss_series:
+            base_context_length: 131072
+            features:
+              - text
+              - streaming
+              - tools
+              - system_messages
+              - json_mode
+              - reasoning
+            patterns:
+              - gpt-oss
+          
+          deepseek_series:
+            base_context_length: 131072
+            features:
+              - text
+              - streaming
+              - tools
+              - system_messages
+              - json_mode
+              - reasoning
+            patterns:
+              - deepseek
+          
+          qwen_series:
+            base_context_length: 131072
+            features:
+              - text
+              - streaming
+              - tools
+              - system_messages
+              - json_mode
+              - reasoning
+            patterns:
+              - qwen
+          
+          whisper_series:
+            features:
+              - audio
+              - transcription
+            patterns:
+              - whisper
+          
+          guard_series:
+            base_context_length: 131072
+            features:
+              - text
+              - streaming
+              - system_messages
+            patterns:
+              - guard
+          
+          compound_series:
+            base_context_length: 131072
+            features:
+              - text
+              - streaming
+              - tools
+              - system_messages
+              - reasoning
+            patterns:
+              - compound
+
 mistral:
   api_key_env: MISTRAL_API_KEY
   client_class: chuk_llm.llm.providers.mistral_client.MistralLLMClient

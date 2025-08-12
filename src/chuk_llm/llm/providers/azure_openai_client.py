@@ -5,18 +5,17 @@ Azure OpenAI chat-completion adapter with unified configuration integration
 Enhanced wrapper around the official `openai` SDK configured for Azure OpenAI
 that uses the unified configuration system for all capabilities.
 
-Key Features:
-- Azure-specific authentication and endpoint handling
-- Deployment name to model mapping
-- Azure API versioning support
-- Full compatibility with existing OpenAI provider features
-- Configuration-driven capabilities
+COMPLETE VERSION WITH SMART DISCOVERY SUPPORT:
+- Supports ANY Azure deployment name (no validation against static list)
+- Smart defaults for discovered deployments
+- Pattern-based capability detection
+- Full compatibility with custom deployment names like "scribeflowgpt4o"
 - Universal tool name compatibility with bidirectional mapping
 """
 from __future__ import annotations
 import asyncio
 import json
-from typing import Any, AsyncIterator, Dict, List, Optional, Union, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Union, Tuple, Set
 import uuid
 import openai
 import logging
@@ -38,13 +37,15 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
     Configuration-driven wrapper around the official `openai` SDK for Azure OpenAI
     that gets all capabilities from the unified YAML configuration.
     
+    ENHANCED: Now supports discovered deployments with smart defaults!
+    - ANY deployment name is valid (no static list validation)
+    - Smart capability detection based on deployment name patterns
+    - Automatic feature inference for unknown deployments
+    
     Uses universal tool name compatibility system to handle any naming convention:
     - stdio.read_query -> stdio_read_query (if needed)
     - web.api:search -> web_api_search (if needed)  
     - database.sql.execute -> database_sql_execute (if needed)
-    
-    Note: Azure OpenAI typically supports more flexible tool names than Mistral/Anthropic,
-    but universal compatibility ensures consistent behavior across all providers.
     """
 
     def __init__(
@@ -95,17 +96,199 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
         
         log.debug(f"Azure OpenAI client initialized: endpoint={azure_endpoint}, deployment={self.azure_deployment}, model={self.model}")
 
+    # ================================================================
+    # SMART DEFAULTS FOR DISCOVERED AZURE DEPLOYMENTS
+    # ================================================================
+    
+    @staticmethod
+    def _get_smart_default_features(deployment_name: str) -> Set[str]:
+        """
+        Get smart default features for an Azure deployment based on naming patterns.
+        
+        This allows discovered deployments to work even if not in static config.
+        For example, "scribeflowgpt4o" will be detected as a GPT-4 variant with full capabilities.
+        """
+        deployment_lower = deployment_name.lower()
+        
+        # Base features that ALL modern Azure OpenAI deployments should have
+        base_features = {"text", "streaming", "system_messages"}
+        
+        # Pattern-based feature detection for Azure deployments
+        if any(pattern in deployment_lower for pattern in ['o1', 'o3', 'o4', 'o5']):
+            # Reasoning model deployments
+            if 'o1' in deployment_lower:
+                # O1 models are legacy - no tools, limited capabilities
+                return {"text", "reasoning"}
+            else:
+                # O3+ models are modern reasoning - assume full tool support
+                return {"text", "streaming", "tools", "reasoning", "system_messages"}
+        
+        elif any(pattern in deployment_lower for pattern in ['gpt-4', 'gpt4', 'gpt-5', 'gpt5', 'gpt-3', 'gpt3']):
+            # Standard GPT model deployments - assume modern capabilities
+            features = base_features | {"tools", "json_mode"}
+            
+            # Vision support for GPT-4+ models (not 3.5)
+            if any(v in deployment_lower for v in ['gpt-4', 'gpt4', 'gpt-5', 'gpt5']):
+                features.add("vision")
+                features.add("parallel_calls")
+                
+            # GPT-5 models use reasoning architecture
+            if any(v in deployment_lower for v in ['gpt-5', 'gpt5']):
+                features.add("reasoning")
+                
+            return features
+        
+        elif 'embedding' in deployment_lower or 'ada' in deployment_lower:
+            # Embedding models don't support chat features
+            return {"text"}
+        
+        elif 'whisper' in deployment_lower:
+            # Audio models
+            return {"audio", "transcription"}
+        
+        elif 'dall-e' in deployment_lower or 'dalle' in deployment_lower:
+            # Image generation models
+            return {"image_generation"}
+        
+        else:
+            # Unknown Azure deployment patterns - be optimistic about capabilities
+            # Azure deployments of unknown models likely support standard features
+            log.info(f"Unknown Azure deployment pattern '{deployment_name}' - assuming modern chat capabilities including tools")
+            return base_features | {"tools", "json_mode"}
+    
+    @staticmethod
+    def _get_smart_default_parameters(deployment_name: str) -> Dict[str, Any]:
+        """Get smart default parameters for an Azure deployment"""
+        deployment_lower = deployment_name.lower()
+        
+        # Reasoning model parameter handling
+        if any(pattern in deployment_lower for pattern in ['o1', 'o3', 'o4', 'o5', 'gpt-5', 'gpt5']):
+            return {
+                "max_context_length": 272000 if 'gpt-5' in deployment_lower or 'gpt5' in deployment_lower else 200000,
+                "max_output_tokens": 128000 if 'gpt-5' in deployment_lower or 'gpt5' in deployment_lower else 65536,
+                "requires_max_completion_tokens": True,
+                "parameter_mapping": {
+                    "max_tokens": "max_completion_tokens"
+                },
+                "unsupported_params": ["temperature", "top_p", "frequency_penalty", "presence_penalty"],
+                "supports_tools": "o1" not in deployment_lower
+            }
+        
+        # Standard model defaults - generous assumptions for new deployments
+        return {
+            "max_context_length": 128000,
+            "max_output_tokens": 8192,
+            "supports_tools": True  # Assume new deployments support tools
+        }
+    
+    def _has_explicit_deployment_config(self, deployment: str) -> bool:
+        """Check if deployment has explicit configuration"""
+        try:
+            from chuk_llm.configuration import get_config
+            config_manager = get_config()
+            provider_config = config_manager.get_provider("azure_openai")
+            
+            # Check if deployment is in the models list
+            if deployment in provider_config.models:
+                return True
+            
+            # Check if any model capability pattern matches this deployment
+            for capability in provider_config.model_capabilities:
+                if hasattr(capability, 'matches') and capability.matches(deployment):
+                    return True
+                elif hasattr(capability, 'pattern'):
+                    import re
+                    if re.match(capability.pattern, deployment):
+                        return True
+            
+            return False
+            
+        except Exception:
+            return False
+    
+    def validate_model(self, model_name: str) -> bool:
+        """
+        Override model validation for Azure.
+        
+        KEY FIX: Azure deployments can have ANY name, so we should NOT validate
+        against a static list. This allows "scribeflowgpt4o" and any other custom
+        deployment name to work!
+        """
+        # For Azure, ANY deployment name is potentially valid
+        # The actual validation happens when we try to use it
+        log.debug(f"[azure_openai] Deployment '{model_name}' - skipping static validation (Azure allows any deployment name)")
+        return True
+    
+    def supports_feature(self, feature_name: str) -> bool:
+        """
+        Enhanced feature support with smart defaults for unknown Azure deployments.
+        
+        This is the KEY METHOD that enables discovered deployments to work!
+        """
+        try:
+            # First try the configuration system
+            config_supports = super().supports_feature(feature_name)
+            
+            # If configuration gives a definitive answer, trust it
+            if config_supports is not None:
+                return config_supports
+            
+            # Configuration returned None (unknown deployment) - use smart defaults
+            # This is where we handle "scribeflowgpt4o" and other custom deployments!
+            smart_features = self._get_smart_default_features(self.azure_deployment)
+            supports_smart = feature_name in smart_features
+            
+            if supports_smart:
+                log.info(f"[azure_openai] No config for deployment '{self.azure_deployment}' - "
+                        f"using smart default: supports {feature_name}")
+            else:
+                log.debug(f"[azure_openai] No config for deployment '{self.azure_deployment}' - "
+                         f"smart default: doesn't support {feature_name}")
+            
+            return supports_smart
+            
+        except Exception as e:
+            log.warning(f"Feature support check failed for {feature_name}: {e}")
+            
+            # For Azure, be optimistic about unknown features for chat models
+            deployment_lower = self.azure_deployment.lower()
+            if any(pattern in deployment_lower for pattern in ['gpt', 'chat', 'turbo']):
+                log.info(f"[azure_openai] Error checking config - assuming deployment '{self.azure_deployment}' "
+                        f"supports {feature_name} (optimistic fallback)")
+                return True
+            
+            return False
+
     def get_model_info(self) -> Dict[str, Any]:
         """
-        Get model info using configuration, with Azure OpenAI-specific additions.
+        Enhanced model info with smart defaults for discovered deployments.
         """
         # Get base info from configuration
         info = super().get_model_info()
         
-        # Add tool compatibility info
+        # Check if using smart defaults
+        using_smart_defaults = not self._has_explicit_deployment_config(self.azure_deployment)
+        
+        # Get tool compatibility info
         tool_compatibility = self.get_tool_compatibility_info()
         
-        # Add Azure OpenAI-specific metadata only if no error
+        # Add smart defaults info if applicable
+        if using_smart_defaults:
+            smart_features = self._get_smart_default_features(self.azure_deployment)
+            smart_params = self._get_smart_default_parameters(self.azure_deployment)
+            
+            # Override with smart defaults
+            info.update({
+                "using_smart_defaults": True,
+                "smart_default_features": list(smart_features),
+                "smart_default_parameters": smart_params,
+                "discovery_note": f"Deployment '{self.azure_deployment}' not in static config - using smart defaults",
+                "features": list(smart_features),
+                "max_context_length": smart_params.get("max_context_length", 128000),
+                "max_output_tokens": smart_params.get("max_output_tokens", 8192),
+            })
+        
+        # Add Azure-specific metadata
         if not info.get("error"):
             info.update({
                 "azure_specific": {
@@ -114,9 +297,9 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
                     "api_version": self.api_version,
                     "authentication_type": self._get_auth_type(),
                     "deployment_to_model_mapping": True,
+                    "supports_custom_deployments": True,  # Key feature!
                 },
                 "openai_compatible": True,
-                # Universal tool compatibility info
                 **tool_compatibility,
                 "parameter_mapping": {
                     "temperature": "temperature",
@@ -154,22 +337,28 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
         **kwargs
     ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]], bool, Dict[str, Any]]:
         """
-        Validate request against configuration before processing.
+        Enhanced validation that uses smart defaults for unknown deployments.
+        FIXED: Actually disable streaming when not supported.
         """
         validated_messages = messages
         validated_tools = tools
         validated_stream = stream
         validated_kwargs = kwargs.copy()
         
-        # Check streaming support
+        # Check streaming support (use smart defaults if needed)
         if stream and not self.supports_feature("streaming"):
-            log.warning(f"Streaming requested but {self.model} doesn't support streaming according to configuration")
+            log.warning(f"Streaming requested but deployment '{self.azure_deployment}' doesn't support streaming")
+            # FIXED: Actually disable streaming when not supported
             validated_stream = False
         
-        # Check tool support
-        if tools and not self.supports_feature("tools"):
-            log.warning(f"Tools provided but {self.model} doesn't support tools according to configuration")
-            validated_tools = None
+        # Check tool support (use smart defaults for unknown deployments)
+        if tools:
+            if not self.supports_feature("tools"):
+                log.warning(f"Tools provided but deployment '{self.azure_deployment}' doesn't support tools")
+                validated_tools = None
+            elif not self._has_explicit_deployment_config(self.azure_deployment):
+                # Log when using smart defaults for tool support
+                log.info(f"Using smart default: assuming deployment '{self.azure_deployment}' supports tools")
         
         # Check vision support
         has_vision = any(
@@ -178,15 +367,28 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
             for msg in messages
         )
         if has_vision and not self.supports_feature("vision"):
-            log.warning(f"Vision content detected but {self.model} doesn't support vision according to configuration")
+            log.warning(f"Vision content detected but deployment '{self.azure_deployment}' doesn't support vision")
         
         # Check JSON mode
         if kwargs.get("response_format", {}).get("type") == "json_object":
             if not self.supports_feature("json_mode"):
-                log.warning(f"JSON mode requested but {self.model} doesn't support JSON mode according to configuration")
+                log.warning(f"JSON mode requested but deployment '{self.azure_deployment}' doesn't support JSON mode")
                 validated_kwargs.pop("response_format", None)
         
-        # Validate parameters using configuration
+        # Use smart parameter defaults if no config
+        if not self._has_explicit_deployment_config(self.azure_deployment):
+            smart_params = self._get_smart_default_parameters(self.azure_deployment)
+            
+            # Apply smart defaults for max_tokens if not set
+            if 'max_tokens' not in validated_kwargs and 'max_completion_tokens' not in validated_kwargs:
+                if smart_params.get("requires_max_completion_tokens"):
+                    validated_kwargs['max_completion_tokens'] = smart_params.get("max_output_tokens", 8192)
+                else:
+                    validated_kwargs['max_tokens'] = smart_params.get("max_output_tokens", 8192)
+            
+            log.debug(f"[azure_openai] Applied smart parameter defaults for '{self.azure_deployment}'")
+        
+        # Validate parameters using configuration or smart defaults
         validated_kwargs = self.validate_parameters(**validated_kwargs)
         
         return validated_messages, validated_tools, validated_stream, validated_kwargs
@@ -207,7 +409,7 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
         return params
 
     # ------------------------------------------------------------------ #
-    # Enhanced public API using configuration                            #
+    # Enhanced public API using configuration and smart defaults         #
     # ------------------------------------------------------------------ #
     def create_completion(
         self,
@@ -220,8 +422,9 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
         """
         Configuration-aware completion that validates capabilities before processing.
         Uses universal tool name compatibility with bidirectional mapping.
+        Supports discovered deployments with smart defaults!
         """
-        # Validate request against configuration
+        # Validate request against configuration (with smart defaults for unknown deployments)
         validated_messages, validated_tools, validated_stream, validated_kwargs = self._validate_request_with_config(
             messages, tools, stream, **kwargs
         )
@@ -393,9 +596,9 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
                 
                 # Handle deployment errors immediately - these are not retryable
                 if "deployment" in error_str and "not found" in error_str:
-                    log.error(f"[azure_openai] Deployment error - check deployment name '{self.azure_deployment}': {e}")
+                    log.error(f"[azure_openai] Deployment error - deployment '{self.azure_deployment}' not found: {e}")
                     yield {
-                        "response": f"Azure deployment error: {str(e)}",
+                        "response": f"Azure deployment error: Deployment '{self.azure_deployment}' not found",
                         "tool_calls": [],
                         "error": True
                     }
@@ -472,6 +675,16 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
             
         except Exception as e:
             error_str = str(e).lower()
+            
+            # Check for deployment not found errors
+            if "deployment" in error_str and "not found" in error_str:
+                log.error(f"[azure_openai] Deployment '{self.azure_deployment}' not found. "
+                         f"Please check your Azure OpenAI resource for available deployments.")
+                return {
+                    "response": f"Deployment error: '{self.azure_deployment}' not found in your Azure OpenAI resource",
+                    "tool_calls": [],
+                    "error": True
+                }
             
             # Check for tool naming errors
             if "function" in error_str and ("name" in error_str or "invalid" in error_str):
@@ -595,12 +808,26 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
     def _adjust_parameters_for_provider(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         """
         Adjust parameters using configuration instead of hardcoded rules.
+        Now with smart defaults for unknown deployments!
         """
         adjusted = kwargs.copy()
         
         try:
             # Use the configuration-aware parameter validation
             adjusted = self.validate_parameters(**adjusted)
+            
+            # If no explicit config, use smart defaults
+            if not self._has_explicit_deployment_config(self.azure_deployment):
+                smart_params = self._get_smart_default_parameters(self.azure_deployment)
+                
+                # Apply smart defaults if not already set
+                if 'max_tokens' not in adjusted and 'max_completion_tokens' not in adjusted:
+                    max_output = smart_params.get("max_output_tokens", 8192)
+                    if smart_params.get("requires_max_completion_tokens"):
+                        adjusted['max_completion_tokens'] = max_output
+                    else:
+                        adjusted['max_tokens'] = max_output
+                    log.debug(f"[azure_openai] Applied smart default max_tokens={max_output} for '{self.azure_deployment}'")
             
             # Additional Azure OpenAI-specific parameter handling
             model_caps = self._get_model_capabilities()
