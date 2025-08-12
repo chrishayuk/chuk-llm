@@ -499,6 +499,32 @@ def test_prepare_ollama_messages_vision_not_supported(client):
     assert "Look at this" in prepared[0]["content"]
     assert "images" not in prepared[0]
 
+def test_prepare_ollama_messages_multi_turn_tools(client):
+    """Test message preparation when there are tool calls in historical messages
+    that need to be resent to the server.
+    """
+    messages = [
+        {"role": "user", "content": "list products"},
+        {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "some-id",
+            "type": "function",
+            "function": {
+                "name": "stdio.list_tables",
+                # NOTE: value is a serialized json string
+                "arguments": "{\"query\": null}",
+            }
+        }]},
+    ]
+
+    prepared = client._prepare_ollama_messages(messages)
+
+    assert len(prepared) == 2
+    assert prepared[0]["role"] == "user"
+    assert prepared[1]["role"] == "assistant"
+    assert prepared[1]["tool_calls"] == [
+        {"function": {"name": "stdio.list_tables", "arguments": {"query": None}}}
+    ]
+
 # ---------------------------------------------------------------------------
 # Parameter building tests
 # ---------------------------------------------------------------------------
