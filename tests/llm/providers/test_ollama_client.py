@@ -5,6 +5,7 @@ import types
 import json
 import base64
 import pytest
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # ---------------------------------------------------------------------------
@@ -26,6 +27,10 @@ class MockOllamaStreamChunk:
     def __init__(self, content="", tool_calls=None, thinking=""):
         self.message = MockOllamaMessage(content, tool_calls, thinking)
 
+class MockOllamaShowResponse:
+    def __init__(self, capabilities: list[str]):
+        self.capabilities = capabilities
+
 # Mock Ollama AsyncClient
 class MockAsyncOllamaClient:
     def __init__(self, host=None, **kwargs):
@@ -45,12 +50,18 @@ class MockAsyncOllamaClient:
 
 # Mock Ollama sync Client
 class MockOllamaClient:
+
+    # Global map of model capabilities that will be updated in a context manager
+    model_features = {}
+
     def __init__(self, host=None, **kwargs):
         self.host = host
-        
+
     def chat(self, **kwargs):
         return MockOllamaResponse("Hello from Ollama!")
 
+    def show(self, model: str):
+        return MockOllamaShowResponse(self.__class__.model_features.get(model, []))
 
 # Fixture to patch the main ollama module for all tests
 @pytest.fixture(autouse=True)
@@ -62,6 +73,17 @@ def patch_ollama_module():
         patch("ollama.client", create=True),
     ):
         yield
+
+# Context manager to set the model features for a specific model
+@contextmanager
+def set_model_features(model: str, features: list[str]):
+    prev_features = MockOllamaClient.model_features.get(model)
+    MockOllamaClient.model_features[model] = features
+    try:
+        yield
+    finally:
+        if prev_features is not None:
+            MockOllamaClient.model_features[model] = prev_features
 
 # ---------------------------------------------------------------------------
 # Now import the client (will see the stub).
@@ -309,6 +331,18 @@ def test_client_initialization(mock_configuration):
     )
     assert client3.model == "mistral"
     assert client3.api_base == "http://remote-ollama:11434"
+
+def test_client_initialization_with_model_features(mock_configuration):
+    """Test client initialization with a model that has reported features from
+    the show endpoint
+    """
+    model = "foo-bar:latest"
+    with set_model_features(model, ["tools", "thinking"]):
+        client = OllamaLLMClient(model=model)
+
+    assert client.supports_feature("tools")
+    assert client.supports_feature("thinking")
+    assert client._is_reasoning_model()
 
 def test_client_initialization_with_host_support(mock_configuration):
     """Test client initialization with host parameter support."""
