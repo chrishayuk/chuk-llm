@@ -148,7 +148,15 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         
         Reasoning models output their thought process in a 'thinking' field
         and may have empty 'content' during thinking phases.
+        
+        First checks model capabilities reported by Ollama, then falls back to name patterns.
         """
+        # Check if model has "thinking" capability reported by Ollama
+        if "thinking" in self._model_capabilities:
+            log.debug(f"Detected reasoning model from capabilities: {self.model}")
+            return True
+        
+        # Fall back to pattern matching in model name
         reasoning_patterns = [
             "gpt-oss", "qwq", "marco-o1", "deepseek-r1", 
             "reasoning", "think", "r1", "o1"
@@ -157,7 +165,7 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         is_reasoning = any(pattern in model_lower for pattern in reasoning_patterns)
         
         if is_reasoning:
-            log.debug(f"Detected reasoning model: {self.model}")
+            log.debug(f"Detected reasoning model from name pattern: {self.model}")
         
         return is_reasoning
 
