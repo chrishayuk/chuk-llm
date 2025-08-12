@@ -11,10 +11,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # Stub the `ollama` SDK before importing the adapter.
 # ---------------------------------------------------------------------------
 
-# Create the main ollama module
-ollama_mod = types.ModuleType("ollama")
-sys.modules["ollama"] = ollama_mod
-
 # Mock Ollama response classes
 class MockOllamaMessage:
     def __init__(self, content="", tool_calls=None, thinking=""):
@@ -55,10 +51,17 @@ class MockOllamaClient:
     def chat(self, **kwargs):
         return MockOllamaResponse("Hello from Ollama!")
 
-# Expose classes and functions
-ollama_mod.AsyncClient = MockAsyncOllamaClient
-ollama_mod.Client = MockOllamaClient
-ollama_mod.chat = MagicMock()  # For backwards compatibility
+
+# Fixture to patch the main ollama module for all tests
+@pytest.fixture(autouse=True)
+def patch_ollama_module():
+    with (
+        patch("ollama.AsyncClient", new=MockAsyncOllamaClient),
+        patch("ollama.Client", new=MockOllamaClient),
+        # For backwards compatibility
+        patch("ollama.client", create=True),
+    ):
+        yield
 
 # ---------------------------------------------------------------------------
 # Now import the client (will see the stub).
@@ -1176,11 +1179,13 @@ async def test_unsupported_features_graceful_handling(client):
 
 def test_client_initialization_missing_chat(mock_configuration):
     """Test client initialization when ollama module doesn't have chat."""
+    import ollama
+
     # This test is less relevant with our mocking approach
     # The actual client would check for the chat attribute on the real ollama module
     # For now, we'll just verify that our mock client initializes correctly
-    assert hasattr(ollama_mod, 'AsyncClient')
-    assert hasattr(ollama_mod, 'Client')
+    assert hasattr(ollama, 'AsyncClient')
+    assert hasattr(ollama, 'Client')
     # The actual ValueError would only be raised with the real ollama module
 
 @pytest.mark.asyncio
