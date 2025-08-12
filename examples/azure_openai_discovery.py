@@ -10,8 +10,8 @@ from typing import Dict, List, Optional, Any
 import httpx
 import asyncio
 
-from .base import BaseModelDiscoverer, DiscoveredModel, DiscovererFactory
-from .openai_discoverer import OpenAIModelDiscoverer
+from chuk_llm.llm.discovery.base import BaseModelDiscoverer, DiscoveredModel, DiscovererFactory
+from chuk_llm.llm.discovery.openai_discoverer import OpenAIModelDiscoverer
 
 log = logging.getLogger(__name__)
 
