@@ -42,6 +42,27 @@ uv add chuk_llm[all]
 
 ### 30-Second Demo
 
+```bash
+# Zero installation required - try it instantly with uv!
+uvx chuk-llm stream_ollama_gpt_oss "What is Python?"
+```
+
+**Live Streaming Output** (see the AI thinking in real-time!):
+```
+The user asks: "What is Python?" Provide a clear, accurate, concise response. It's a general question. Likely want to describe Python programming language: its nature, usage, etc. Should be succinct. Could mention its design, general-purpose, high-level, interpreted, dynamic, etc. Use clear language. Probably mention its creators, history, uses, features. Let's produce a short answer.
+
+Python is a high‑level, general‑purpose programming language known for its readability and simplicity.  
+* **Designed by** Guido van Rossum (first released in 1991).  
+* **Interpreted, dynamically typed** – you run code directly without compiling.  
+* **Extensible** – can call C/C++ libraries and embed in other applications.  
+* **Wide ecosystem** – thousands of packages on PyPI for data science, web development, automation, AI, etc.  
+* **Community‑driven** – strong support, regular updates (currently Python 3.x).  
+In short, Python lets developers write clear, concise code that can tackle everything from quick scripts to large, complex systems.
+```
+
+**🧠 Notice**: You can see the AI's thinking process first, then the polished answer - this is the power of reasoning models!
+
+Or in Python:
 ```python
 from chuk_llm import quick_question
 
@@ -319,6 +340,8 @@ asyncio.run(stream_with_tools())
 
 #### Streaming Output Example
 ```bash
+🧠 Thinking: The user asks: "What is Python?" Provide a clear, accurate, concise response...
+
 🛠️  Streaming with tool calls:
 I'll help you calculate that and find information about compound interest.
 
@@ -332,7 +355,7 @@ Based on the search results, compound interest is...
 #### Advanced Streaming Features
 
 ```python
-# Stream reasoning models with tool calls
+# Stream reasoning models with tool calls and see the thinking process live
 async for chunk in stream(
     "Think through this problem step by step, then use tools as needed",
     provider="anthropic",
@@ -349,12 +372,14 @@ async for chunk in stream(
     if chunk.get("response"):
         print(chunk["response"], end="")
 
-# Stream GPT-OSS reasoning with tool integration
+# Stream GPT-OSS reasoning with complete thinking visibility
 async for chunk in stream_ollama_gpt_oss(
     "Analyze this data and create a report",
     tools=analysis_tools
 ):
-    # See the model's reasoning process AND tool usage live
+    # See the model's complete reasoning process live:
+    # "The user asks for data analysis. I should first understand the data structure, 
+    #  then identify key patterns, calculate relevant metrics, and present findings..."
     if chunk.get("reasoning", {}).get("is_thinking"):
         print(f"🧠 {chunk['reasoning']['thinking_content']}", end="")
     elif chunk.get("tool_calls"):
@@ -669,9 +694,16 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # Use chuk_llm with uv (much faster than pip!)
 uv add chuk_llm[all]
 
-# Run without installation using uvx
+# Run without installation using uvx - perfect for trying ChukLLM
 uvx chuk-llm ask "What is GPT-5?" --provider openai --model gpt-5
 uvx chuk-llm ask_ollama_gpt_oss "Think through this problem"
+
+# Real example - zero installation required:
+$ uv run chuk-llm stream_ollama_gpt_oss "What is Python?"
+🧠 Thinking: The user asks: "What is Python?" Provide a clear, accurate, concise response...
+Python is a high‑level, general‑purpose programming language known for its readability and simplicity.  
+* **Designed by** Guido van Rossum (first released in 1991).  
+* **Interpreted, dynamically typed** – you run code directly without compiling...
 
 # Create a new project with chuk_llm
 uv init my-ai-project
@@ -1017,3 +1049,5 @@ MIT License - see [LICENSE](LICENSE) for details.
 ---
 
 **⭐ Star us on GitHub if ChukLLM helps your AI projects!**
+
+**🚀 Try GPT-5 and reasoning models today with ChukLLM's seamless integration!**
