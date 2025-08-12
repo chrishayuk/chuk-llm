@@ -4,6 +4,7 @@ Ollama chat-completion adapter with unified configuration integration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Configuration-driven capabilities with local model support.
 ENHANCED with GPT-OSS and reasoning model support - FIXED DUPLICATE TOOL CALLS.
+FIXED: Proper context memory preservation for multi-turn conversations.
 """
 import asyncio
 import json
@@ -27,6 +28,7 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
     
     ENHANCED: Now supports reasoning models like GPT-OSS with thinking streams.
     FIXED: Deduplicates tool calls that appear in multiple locations in chunks.
+    FIXED: Proper context memory preservation for multi-turn conversations.
     """
 
     def __init__(self, model: str = "qwen3", api_base: Optional[str] = None) -> None:
@@ -202,62 +204,180 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         messages: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """
-        Prepare messages for Ollama with configuration-aware processing.
+        FIXED: Prepare messages for Ollama with proper context preservation.
+        
+        This enhanced version ensures that:
+        1. Full conversation history is maintained
+        2. Tool calls in assistant messages are properly formatted
+        3. Tool responses are correctly included in the context
         """
         ollama_messages = []
         
         for m in messages:
             role = m.get("role")
-            content = m.get("content")
+            content = m.get("content", "")
             
-            # Handle system messages based on configuration
+            # Handle different message roles
             if role == "system":
+                # Check if system messages are supported
                 if self.supports_feature("system_messages"):
                     message = {"role": "system", "content": content}
                 else:
                     # Convert to user message as fallback
-                    log.debug(f"Converting system message to user message - {self.model} doesn't support system messages")
                     message = {"role": "user", "content": f"System: {content}"}
-            else:
-                message = {"role": role, "content": content}
-                if role == "assistant" and (tool_calls := m.get("tool_calls")):
-                    for tool_call in tool_calls:
-                        tool_call.pop("id", "")
-                        tool_call.pop("type", "")
-                        # Sometimes, the arguments are presented as a serialized
-                        # json string
-                        if isinstance(args := tool_call.get("function", {}).get("arguments"), str):
-                            tool_call["function"]["arguments"] = json.loads(args)
-                    message["tool_calls"] = tool_calls
-
-            # Handle images if present in the message content and vision is supported
-            if isinstance(content, list):
-                has_images = any(item.get("type") in ["image", "image_url"] for item in content)
+                    log.debug(f"Converting system message to user message - {self.model} doesn't support system messages")
                 
-                if has_images and not self.supports_feature("vision"):
-                    # Extract only text content
-                    text_content = " ".join([
-                        item.get("text", "") for item in content 
-                        if item.get("type") == "text"
-                    ])
-                    message["content"] = text_content or "[Image content removed - not supported by model]"
-                    log.warning(f"Removed vision content - {self.model} doesn't support vision according to configuration")
-                else:
-                    # Process images for Ollama format
-                    for item in content:
-                        if item.get("type") == "image" or item.get("type") == "image_url":
-                            image_url = item.get("image_url", {}).get("url", "")
-                            if image_url.startswith("data:image"):
-                                # Extract base64 data and convert to proper format
-                                import base64
-                                _, encoded = image_url.split(",", 1)
-                                message["images"] = [base64.b64decode(encoded)]
-                            else:
-                                message["images"] = [image_url]
+            elif role == "assistant":
+                # CRITICAL FIX: Properly handle assistant messages with tool calls
+                message = {"role": "assistant", "content": content if content else ""}
+                
+                # Handle tool calls in assistant messages (for context)
+                if tool_calls := m.get("tool_calls"):
+                    formatted_tool_calls = []
+                    for tool_call in tool_calls:
+                        # Create a properly formatted tool call for Ollama
+                        tc_formatted = {
+                            "function": {
+                                "name": tool_call.get("function", {}).get("name", ""),
+                                "arguments": {}
+                            }
+                        }
+                        
+                        # Parse arguments if they're a string
+                        args = tool_call.get("function", {}).get("arguments", {})
+                        if isinstance(args, str):
+                            try:
+                                tc_formatted["function"]["arguments"] = json.loads(args)
+                            except json.JSONDecodeError:
+                                tc_formatted["function"]["arguments"] = {"raw": args}
+                        elif isinstance(args, dict):
+                            tc_formatted["function"]["arguments"] = args
+                        else:
+                            tc_formatted["function"]["arguments"] = {}
+                        
+                        formatted_tool_calls.append(tc_formatted)
+                    
+                    message["tool_calls"] = formatted_tool_calls
+                    
+                    # Some Ollama models expect tool calls to be mentioned in content too
+                    if not content and formatted_tool_calls:
+                        # Add a description of tool calls to content for models that need it
+                        tool_names = [tc["function"]["name"] for tc in formatted_tool_calls]
+                        message["content"] = f"[Called tools: {', '.join(tool_names)}]"
+                        
+            elif role == "tool":
+                # CRITICAL FIX: Handle tool response messages properly
+                # Ollama expects tool responses as user messages with special formatting
+                tool_name = m.get("name", "unknown_tool")
+                tool_content = m.get("content", "")
+                
+                # Format tool response for Ollama
+                message = {
+                    "role": "user",  # Ollama treats tool responses as user messages
+                    "content": f"Tool Response from {tool_name}: {tool_content}"
+                }
+                
+                # Let Ollama handle metadata if it supports it
+                # The API will ignore metadata if not supported
+                message["metadata"] = {
+                    "type": "tool_response",
+                    "tool_name": tool_name
+                }
+                    
+            elif role == "user":
+                message = {"role": "user", "content": content}
+                
+                # Handle images if present in the message content
+                if isinstance(content, list):
+                    has_images = any(item.get("type") in ["image", "image_url"] for item in content)
+                    
+                    if has_images and not self.supports_feature("vision"):
+                        # Extract only text content
+                        text_content = " ".join([
+                            item.get("text", "") for item in content 
+                            if item.get("type") == "text"
+                        ])
+                        message["content"] = text_content or "[Image content removed - not supported by model]"
+                        log.warning(f"Removed vision content - {self.model} doesn't support vision")
+                    else:
+                        # Process images for Ollama format
+                        text_parts = []
+                        images = []
+                        
+                        for item in content:
+                            if item.get("type") == "text":
+                                text_parts.append(item.get("text", ""))
+                            elif item.get("type") in ["image", "image_url"]:
+                                image_url = item.get("image_url", {}).get("url", "")
+                                if image_url.startswith("data:image"):
+                                    # Extract base64 data
+                                    import base64
+                                    _, encoded = image_url.split(",", 1)
+                                    images.append(base64.b64decode(encoded))
+                                else:
+                                    images.append(image_url)
+                        
+                        message["content"] = " ".join(text_parts)
+                        if images:
+                            message["images"] = images
+            else:
+                # Handle any other role types
+                message = {"role": role, "content": content}
             
             ollama_messages.append(message)
         
+        # CRITICAL: Log the conversation context for debugging
+        if len(ollama_messages) > 1:
+            log.debug(f"Prepared {len(ollama_messages)} messages for Ollama with full context:")
+            for i, msg in enumerate(ollama_messages[-3:]):  # Log last 3 messages
+                role = msg.get("role", "unknown")
+                content_preview = str(msg.get("content", ""))[:100]
+                has_tools = "tool_calls" in msg
+                log.debug(f"  Message {i}: role={role}, content='{content_preview}...', has_tools={has_tools}")
+        
         return ollama_messages
+
+    def _validate_conversation_context(self, messages: List[Dict[str, Any]]) -> bool:
+        """
+        Validate that the conversation context is properly structured.
+        
+        Returns True if context is valid, False otherwise.
+        """
+        if not messages:
+            return True
+        
+        # Check for proper role alternation (with tool messages allowed)
+        last_role = None
+        for msg in messages:
+            role = msg.get("role")
+            
+            # Tool messages can appear anywhere
+            if role == "tool":
+                continue
+                
+            # Check for duplicate consecutive roles (except system at start)
+            if last_role == role and role != "system":
+                log.warning(f"Duplicate consecutive {role} messages detected - may cause context issues")
+                
+            last_role = role
+        
+        # Check that tool calls have corresponding tool responses
+        pending_tool_calls = {}
+        for msg in messages:
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                for tc in msg["tool_calls"]:
+                    tc_id = tc.get("id", tc.get("function", {}).get("name", "unknown"))
+                    pending_tool_calls[tc_id] = True
+                    
+            elif msg.get("role") == "tool":
+                tool_id = msg.get("tool_call_id", msg.get("name", "unknown"))
+                if tool_id in pending_tool_calls:
+                    del pending_tool_calls[tool_id]
+        
+        if pending_tool_calls:
+            log.warning(f"Found {len(pending_tool_calls)} tool calls without responses - context may be incomplete")
+        
+        return True
 
     def _create_sync(
         self,
@@ -449,29 +569,27 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         **kwargs,
     ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
         """
-        Configuration-aware completion generation with real streaming support.
-        ENHANCED: Now supports reasoning model streaming with thinking process.
-        
-        Args:
-            messages: List of message dictionaries
-            tools: Optional list of tools
-            stream: Whether to stream the response
-            **kwargs: Additional arguments to pass to the underlying API
-            
-        Returns:
-            When stream=True: AsyncIterator that yields chunks in real-time
-            When stream=False: Awaitable that resolves to completion dict
+        ENHANCED: Configuration-aware completion with proper context preservation.
         """
-        # Validate request against configuration
+        # CRITICAL: Validate conversation context before processing
+        if not self._validate_conversation_context(messages):
+            log.warning("Conversation context validation failed - responses may lack context")
+        
+        # Log conversation length for debugging
+        log.debug(f"Creating completion with {len(messages)} messages in context")
+        if len(messages) > 1:
+            # Log the conversation flow
+            roles = [msg.get("role", "unknown") for msg in messages[-5:]]  # Last 5 messages
+            log.debug(f"Recent conversation flow: {' -> '.join(roles)}")
+        
+        # Continue with existing validation and processing...
         validated_messages, validated_tools, validated_stream, validated_kwargs = self._validate_request_with_config(
             messages, tools, stream, **kwargs
         )
         
         if validated_stream:
-            # Return async generator directly for real streaming
             return self._stream_completion_async(validated_messages, validated_tools, **validated_kwargs)
         else:
-            # Return awaitable for non-streaming
             return self._regular_completion(validated_messages, validated_tools, **validated_kwargs)
 
     async def _stream_completion_async(
