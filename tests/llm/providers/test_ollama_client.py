@@ -1247,3 +1247,472 @@ def test_response_parsing_edge_cases(client):
     result = client._parse_response(mock_response)
     assert result["response"] is None
     assert result["tool_calls"][0]["function"]["arguments"] == '{"already": "json"}'
+
+# ---------------------------------------------------------------------------
+# Context Memory Preservation Tests
+# ---------------------------------------------------------------------------
+
+def test_prepare_ollama_messages_with_tool_responses(client):
+    """Test that tool responses are properly formatted for context preservation."""
+    messages = [
+        {"role": "user", "content": "What's the weather?"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {
+                "id": "call_123",
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "arguments": '{"location": "London"}'
+                }
+            }
+        ]},
+        {"role": "tool", "name": "get_weather", "content": "It's 20°C and sunny in London"},
+        {"role": "user", "content": "Is that warm?"}
+    ]
+    
+    prepared = client._prepare_ollama_messages(messages)
+    
+    assert len(prepared) == 4
+    
+    # Check assistant message with tool calls
+    assert prepared[1]["role"] == "assistant"
+    assert "tool_calls" in prepared[1]
+    assert len(prepared[1]["tool_calls"]) == 1
+    assert prepared[1]["tool_calls"][0]["function"]["name"] == "get_weather"
+    assert prepared[1]["tool_calls"][0]["function"]["arguments"] == {"location": "London"}
+    
+    # CRITICAL: Check tool response is converted to user message
+    assert prepared[2]["role"] == "user"
+    assert "Tool Response from get_weather:" in prepared[2]["content"]
+    assert "20°C and sunny in London" in prepared[2]["content"]
+    assert prepared[2]["metadata"]["type"] == "tool_response"
+    assert prepared[2]["metadata"]["tool_name"] == "get_weather"
+    
+    # Check final user message
+    assert prepared[3]["role"] == "user"
+    assert prepared[3]["content"] == "Is that warm?"
+
+
+def test_prepare_ollama_messages_empty_assistant_content_with_tools(client):
+    """Test that assistant messages with only tool calls get descriptive content."""
+    messages = [
+        {"role": "user", "content": "Calculate something"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {
+                "function": {
+                    "name": "calculator",
+                    "arguments": '{"expression": "2+2"}'
+                }
+            },
+            {
+                "function": {
+                    "name": "converter",
+                    "arguments": '{"value": 100, "from": "USD", "to": "EUR"}'
+                }
+            }
+        ]}
+    ]
+    
+    prepared = client._prepare_ollama_messages(messages)
+    
+    assert len(prepared) == 2
+    assert prepared[1]["role"] == "assistant"
+    # Should have added descriptive content for models that need it
+    assert prepared[1]["content"] == "[Called tools: calculator, converter]"
+    assert len(prepared[1]["tool_calls"]) == 2
+
+
+def test_validate_conversation_context_valid(client):
+    """Test conversation context validation with valid message flow."""
+    messages = [
+        {"role": "system", "content": "You are helpful"},
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi there!"},
+        {"role": "user", "content": "How are you?"},
+        {"role": "assistant", "content": "I'm doing well, thanks!"}
+    ]
+    
+    result = client._validate_conversation_context(messages)
+    assert result is True
+
+
+def test_validate_conversation_context_duplicate_roles(client, caplog):
+    """Test context validation detects duplicate consecutive roles."""
+    messages = [
+        {"role": "user", "content": "Hello"},
+        {"role": "user", "content": "Are you there?"},  # Duplicate user role
+        {"role": "assistant", "content": "Yes, I'm here!"}
+    ]
+    
+    result = client._validate_conversation_context(messages)
+    assert result is True  # Still returns True but logs warning
+    assert "Duplicate consecutive user messages detected" in caplog.text
+
+
+def test_validate_conversation_context_missing_tool_responses(client, caplog):
+    """Test context validation detects missing tool responses."""
+    messages = [
+        {"role": "user", "content": "What's the weather?"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {
+                "id": "call_123",
+                "function": {"name": "get_weather", "arguments": "{}"}
+            }
+        ]},
+        # Missing tool response here
+        {"role": "user", "content": "Never mind, tell me a joke instead"}
+    ]
+    
+    result = client._validate_conversation_context(messages)
+    assert result is True  # Still returns True but logs warning
+    assert "tool calls without responses" in caplog.text
+
+
+def test_validate_conversation_context_with_complete_tool_flow(client):
+    """Test context validation with complete tool call and response flow."""
+    messages = [
+        {"role": "user", "content": "What's 2+2?"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {
+                "id": "calc_1",
+                "function": {"name": "calculator", "arguments": '{"expr": "2+2"}'}
+            }
+        ]},
+        {"role": "tool", "name": "calculator", "tool_call_id": "calc_1", "content": "4"},
+        {"role": "assistant", "content": "2+2 equals 4"}
+    ]
+    
+    result = client._validate_conversation_context(messages)
+    assert result is True
+    # Should not log any warnings for this valid flow
+
+
+def test_prepare_messages_preserves_full_context(client):
+    """Test that full conversation context is preserved through message preparation."""
+    # Simulate a multi-turn conversation
+    messages = [
+        {"role": "system", "content": "You are a helpful weather assistant"},
+        {"role": "user", "content": "My name is Alice"},
+        {"role": "assistant", "content": "Nice to meet you, Alice!"},
+        {"role": "user", "content": "What's the weather in Paris?"},
+        {"role": "assistant", "content": "Let me check that for you.", "tool_calls": [
+            {
+                "function": {
+                    "name": "get_weather",
+                    "arguments": '{"location": "Paris"}'
+                }
+            }
+        ]},
+        {"role": "tool", "name": "get_weather", "content": "22°C, partly cloudy"},
+        {"role": "assistant", "content": "The weather in Paris is 22°C and partly cloudy."},
+        {"role": "user", "content": "What's my name?"}  # Tests context memory
+    ]
+    
+    prepared = client._prepare_ollama_messages(messages)
+    
+    # All messages should be preserved
+    assert len(prepared) == 8
+    
+    # Verify system message
+    assert prepared[0]["role"] == "system"
+    assert prepared[0]["content"] == "You are a helpful weather assistant"
+    
+    # Verify early context is preserved
+    assert prepared[1]["role"] == "user"
+    assert "Alice" in prepared[1]["content"]
+    assert prepared[2]["role"] == "assistant"
+    assert "Alice" in prepared[2]["content"]
+    
+    # Verify tool flow is preserved
+    assert prepared[4]["role"] == "assistant"
+    assert "tool_calls" in prepared[4]
+    assert prepared[5]["role"] == "user"  # Tool response converted to user
+    assert "Tool Response from get_weather" in prepared[5]["content"]
+    
+    # Verify final question that tests memory
+    assert prepared[7]["role"] == "user"
+    assert prepared[7]["content"] == "What's my name?"
+
+
+def test_prepare_messages_handles_mixed_content_types(client):
+    """Test context preservation with mixed content types (text, images, tools)."""
+    # Use valid base64 image data
+    valid_base64_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+    
+    messages = [
+        {"role": "user", "content": "I'm Bob"},
+        {"role": "assistant", "content": "Hello Bob!"},
+        {"role": "user", "content": [
+            {"type": "text", "text": "What do you see here?"},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{valid_base64_image}"}}
+        ]},
+        {"role": "assistant", "content": "I can see an image.", "tool_calls": [
+            {"function": {"name": "analyze_image", "arguments": "{}"}}
+        ]},
+        {"role": "tool", "name": "analyze_image", "content": "Image shows a cat"},
+        {"role": "assistant", "content": "The image shows a cat."},
+        {"role": "user", "content": "What's my name again?"}
+    ]
+    
+    # Mock vision support
+    client.supports_feature = lambda feature: feature in ["vision", "tools"]
+    
+    prepared = client._prepare_ollama_messages(messages)
+    
+    # Verify all context is preserved
+    assert len(prepared) == 7
+    
+    # Check that Bob's name from the first message is still in context
+    assert prepared[0]["content"] == "I'm Bob"
+    assert "Bob" in prepared[1]["content"]
+    
+    # Check image handling
+    assert "images" in prepared[2]
+    
+    # Check tool flow
+    assert "tool_calls" in prepared[3]
+    assert "Tool Response from analyze_image" in prepared[4]["content"]
+    
+    # Final question should have full context available
+    assert prepared[6]["content"] == "What's my name again?"
+
+
+def test_prepare_messages_tool_arguments_parsing(client):
+    """Test that tool arguments are properly parsed from strings to dicts."""
+    messages = [
+        {"role": "assistant", "content": "", "tool_calls": [
+            {
+                "function": {
+                    "name": "test_tool",
+                    "arguments": '{"key": "value", "number": 42}'  # JSON string
+                }
+            }
+        ]}
+    ]
+    
+    prepared = client._prepare_ollama_messages(messages)
+    
+    assert len(prepared) == 1
+    assert prepared[0]["role"] == "assistant"
+    assert "tool_calls" in prepared[0]
+    
+    # Arguments should be parsed to dict
+    tool_call = prepared[0]["tool_calls"][0]
+    assert tool_call["function"]["arguments"]["key"] == "value"
+    assert tool_call["function"]["arguments"]["number"] == 42
+
+
+def test_prepare_messages_malformed_tool_arguments(client):
+    """Test handling of malformed tool arguments."""
+    messages = [
+        {"role": "assistant", "content": "", "tool_calls": [
+            {
+                "function": {
+                    "name": "bad_tool",
+                    "arguments": "not valid json"  # Invalid JSON
+                }
+            }
+        ]}
+    ]
+    
+    prepared = client._prepare_ollama_messages(messages)
+    
+    assert len(prepared) == 1
+    assert prepared[0]["role"] == "assistant"
+    assert "tool_calls" in prepared[0]
+    
+    # Should handle gracefully by wrapping in raw field
+    tool_call = prepared[0]["tool_calls"][0]
+    assert "raw" in tool_call["function"]["arguments"]
+    assert tool_call["function"]["arguments"]["raw"] == "not valid json"
+
+
+@pytest.mark.asyncio
+async def test_create_completion_preserves_context(client):
+    """Test that create_completion preserves conversation context."""
+    # Multi-turn conversation
+    messages = [
+        {"role": "user", "content": "My favorite color is blue"},
+        {"role": "assistant", "content": "Blue is a nice color!"},
+        {"role": "user", "content": "What's my favorite color?"}
+    ]
+    
+    # Mock the sync client to verify messages are passed correctly
+    def mock_chat(**kwargs):
+        # Verify all messages are passed
+        assert len(kwargs["messages"]) == 3
+        # Return response that shows context was used
+        return MockOllamaResponse("Your favorite color is blue")
+    
+    client.sync_client.chat = mock_chat
+    
+    result = await client._regular_completion(messages)
+    
+    assert "blue" in result["response"].lower()
+
+
+@pytest.mark.asyncio
+async def test_streaming_preserves_context(client):
+    """Test that streaming preserves conversation context."""
+    messages = [
+        {"role": "user", "content": "I live in Tokyo"},
+        {"role": "assistant", "content": "Tokyo is a fascinating city!"},
+        {"role": "user", "content": "What city do I live in?"}
+    ]
+    
+    # Mock streaming response that uses context
+    async def mock_stream():
+        yield MockOllamaStreamChunk("You live in")
+        yield MockOllamaStreamChunk(" Tokyo")
+    
+    async def mock_chat(**kwargs):
+        # Verify all messages are passed
+        assert len(kwargs["messages"]) == 3
+        return mock_stream()
+    
+    client.async_client.chat = mock_chat
+    
+    chunks = []
+    async for chunk in client._stream_completion_async(messages):
+        chunks.append(chunk["response"])
+    
+    full_response = "".join(chunks)
+    assert "Tokyo" in full_response
+
+
+def test_context_logging(client, caplog):
+    """Test that context is properly logged for debugging."""
+    import logging
+    caplog.set_level(logging.DEBUG)
+    
+    messages = [
+        {"role": "system", "content": "System prompt"},
+        {"role": "user", "content": "First message"},
+        {"role": "assistant", "content": "First response"},
+        {"role": "user", "content": "Second message"}
+    ]
+    
+    prepared = client._prepare_ollama_messages(messages)
+    
+    # Should log context information
+    assert "Prepared 4 messages for Ollama with full context" in caplog.text
+    assert "role=user" in caplog.text
+    assert "role=assistant" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_conversation_flow_logging(client, caplog):
+    """Test that conversation flow is logged in create_completion."""
+    import logging
+    caplog.set_level(logging.DEBUG)
+    
+    messages = [
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi"},
+        {"role": "user", "content": "How are you?"},
+        {"role": "assistant", "content": "Good"},
+        {"role": "user", "content": "Great!"}
+    ]
+    
+    # Mock regular completion
+    async def mock_completion(messages, tools, **kwargs):
+        return {"response": "Response", "tool_calls": []}
+    
+    client._regular_completion = mock_completion
+    
+    await client.create_completion(messages, stream=False)
+    
+    # Should log conversation flow
+    assert "Creating completion with 5 messages in context" in caplog.text
+    assert "Recent conversation flow:" in caplog.text
+    assert "user -> assistant -> user -> assistant -> user" in caplog.text
+
+
+def test_tool_response_metadata(client):
+    """Test that tool response metadata is properly added."""
+    messages = [
+        {"role": "tool", "name": "calculator", "content": "Result: 42"}
+    ]
+    
+    prepared = client._prepare_ollama_messages(messages)
+    
+    assert len(prepared) == 1
+    assert prepared[0]["role"] == "user"  # Converted to user
+    assert "Tool Response from calculator" in prepared[0]["content"]
+    assert "Result: 42" in prepared[0]["content"]
+    
+    # Check metadata
+    assert "metadata" in prepared[0]
+    assert prepared[0]["metadata"]["type"] == "tool_response"
+    assert prepared[0]["metadata"]["tool_name"] == "calculator"
+
+
+def test_empty_messages_list(client):
+    """Test handling of empty message list."""
+    messages = []
+    
+    prepared = client._prepare_ollama_messages(messages)
+    assert prepared == []
+    
+    # Validation should pass for empty list
+    result = client._validate_conversation_context(messages)
+    assert result is True
+
+
+def test_system_message_passthrough(client):
+    """Test that system messages are passed through without conversion."""
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant"}
+    ]
+    
+    prepared = client._prepare_ollama_messages(messages)
+    
+    assert len(prepared) == 1
+    assert prepared[0]["role"] == "system"
+    assert prepared[0]["content"] == "You are a helpful assistant"
+    # Should NOT be converted to user message
+
+
+def test_complex_tool_call_preservation(client):
+    """Test preservation of complex tool calls with nested arguments."""
+    messages = [
+        {"role": "assistant", "content": "Let me search for that.", "tool_calls": [
+            {
+                "id": "call_complex",
+                "type": "function",
+                "function": {
+                    "name": "complex_search",
+                    "arguments": json.dumps({
+                        "query": "weather",
+                        "filters": {
+                            "location": ["Paris", "London"],
+                            "date_range": {
+                                "start": "2024-01-01",
+                                "end": "2024-01-31"
+                            }
+                        },
+                        "options": {
+                            "include_forecast": True,
+                            "units": "celsius"
+                        }
+                    })
+                }
+            }
+        ]}
+    ]
+    
+    prepared = client._prepare_ollama_messages(messages)
+    
+    assert len(prepared) == 1
+    assert prepared[0]["role"] == "assistant"
+    assert "tool_calls" in prepared[0]
+    
+    tool_call = prepared[0]["tool_calls"][0]
+    args = tool_call["function"]["arguments"]
+    
+    # Verify complex nested structure is preserved
+    assert args["query"] == "weather"
+    assert "filters" in args
+    assert args["filters"]["location"] == ["Paris", "London"]
+    assert args["filters"]["date_range"]["start"] == "2024-01-01"
+    assert args["options"]["include_forecast"] is True
