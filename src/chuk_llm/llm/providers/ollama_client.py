@@ -378,7 +378,7 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                 
             # Check for duplicate consecutive roles (except system at start)
             if last_role == role and role != "system":
-                log.warning(f"Duplicate consecutive {role} messages detected - may cause context issues")
+                log.debug(f"Duplicate consecutive {role} messages detected - may cause context issues")
                 
             last_role = role
         
