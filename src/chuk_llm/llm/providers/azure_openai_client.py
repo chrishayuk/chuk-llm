@@ -177,7 +177,7 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
         # Standard model defaults - generous assumptions for new deployments
         return {
             "max_context_length": 128000,
-            "max_output_tokens": 8192,
+            "max_output_tokens": 4096,
             "supports_tools": True  # Assume new deployments support tools
         }
     
@@ -210,14 +210,15 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
         """
         Override model validation for Azure.
         
-        KEY FIX: Azure deployments can have ANY name, so we should NOT validate
-        against a static list. This allows "scribeflowgpt4o" and any other custom
-        deployment name to work!
+        KEY FIX: Azure deployments can have ANY name, so we ALWAYS return True
+        for Azure OpenAI. This allows "scribeflowgpt4o" and any other custom
+        deployment name to work! The actual validation happens when we try 
+        to use the deployment with the Azure API.
         """
         # For Azure, ANY deployment name is potentially valid
         # The actual validation happens when we try to use it
-        log.debug(f"[azure_openai] Deployment '{model_name}' - skipping static validation (Azure allows any deployment name)")
-        return True
+        log.debug(f"[azure_openai] Deployment '{model_name}' - allowing custom deployment (Azure supports any name)")
+        return True  # ALWAYS return True for Azure deployments
     
     def supports_feature(self, feature_name: str) -> bool:
         """
@@ -229,7 +230,7 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
             # First try the configuration system
             config_supports = super().supports_feature(feature_name)
             
-            # If configuration gives a definitive answer, trust it
+            # If configuration gives a definitive answer (True/False), trust it
             if config_supports is not None:
                 return config_supports
             
@@ -252,7 +253,7 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
             
             # For Azure, be optimistic about unknown features for chat models
             deployment_lower = self.azure_deployment.lower()
-            if any(pattern in deployment_lower for pattern in ['gpt', 'chat', 'turbo']):
+            if any(pattern in deployment_lower for pattern in ['gpt', 'chat', 'turbo', 'o1', 'o3']):
                 log.info(f"[azure_openai] Error checking config - assuming deployment '{self.azure_deployment}' "
                         f"supports {feature_name} (optimistic fallback)")
                 return True
@@ -822,7 +823,7 @@ class AzureOpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, Ope
                 
                 # Apply smart defaults if not already set
                 if 'max_tokens' not in adjusted and 'max_completion_tokens' not in adjusted:
-                    max_output = smart_params.get("max_output_tokens", 8192)
+                    max_output = smart_params.get("max_output_tokens", 4096)
                     if smart_params.get("requires_max_completion_tokens"):
                         adjusted['max_completion_tokens'] = max_output
                     else:
