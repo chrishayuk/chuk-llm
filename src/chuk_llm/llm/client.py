@@ -7,6 +7,7 @@ Simple client factory using the unified configuration system with seamless disco
 API remains identical - discovery happens automatically when needed.
 """
 
+import os
 import importlib
 import inspect
 import logging
@@ -92,8 +93,7 @@ def get_client(
     """
     Enhanced client factory with transparent discovery support.
     
-    API remains identical to before - discovery happens automatically.
-    All provider/model information comes from config, nothing hardcoded.
+    FIXED: Skips model validation for Azure OpenAI to support custom deployments.
     
     Args:
         provider: Provider name (from YAML config)
@@ -113,7 +113,28 @@ def get_client(
     
     # Determine the model to use (with transparent discovery)
     target_model = model or provider_config.default_model
-    if target_model:
+    
+    # CRITICAL FIX: Skip validation for Azure OpenAI deployments
+    if provider == "azure_openai":
+        # Azure deployments can have ANY name - don't validate against a list
+        if not target_model:
+            # Try to use default if no model specified
+            target_model = provider_config.default_model
+            if not target_model:
+                raise ValueError(f"No deployment specified for Azure OpenAI and no default configured")
+        
+        logger.info(f"Azure OpenAI: Using deployment '{target_model}' (custom deployments supported)")
+        
+        # For Azure, pass through Azure-specific parameters
+        if 'azure_endpoint' not in kwargs:
+            kwargs['azure_endpoint'] = api_base or provider_config.api_base or os.getenv('AZURE_OPENAI_ENDPOINT')
+        if 'api_version' not in kwargs:
+            kwargs['api_version'] = os.getenv('AZURE_OPENAI_API_VERSION', '2024-02-01')
+        if 'azure_deployment' not in kwargs:
+            kwargs['azure_deployment'] = target_model
+            
+    elif target_model:
+        # For non-Azure providers, validate the model exists
         # Try to ensure model is available (triggers discovery if needed)
         resolved_model = config_manager._ensure_model_available(provider, target_model)
         if resolved_model:
@@ -134,17 +155,30 @@ def get_client(
     if not target_model:
         raise ValueError(f"No model specified and no default model for provider '{provider}'")
     
-    # Validate provider configuration
+    # Validate provider configuration (be lenient for Azure)
     is_valid, issues = ConfigValidator.validate_provider_config(provider_config)
     if not is_valid:
-        raise ValueError(f"Invalid provider configuration for '{provider}': {', '.join(issues)}")
+        if provider == "azure_openai":
+            # For Azure, just log warnings but continue
+            logger.debug(f"Azure OpenAI config validation issues (continuing anyway): {', '.join(issues)}")
+        else:
+            raise ValueError(f"Invalid provider configuration for '{provider}': {', '.join(issues)}")
     
     # Build client configuration
     client_config = {
         'model': target_model,
         'api_key': api_key or config_manager.get_api_key(provider),
-        'api_base': api_base or provider_config.api_base,
     }
+    
+    # Handle api_base differently for Azure
+    if provider == "azure_openai":
+        # For Azure, prefer azure_endpoint over api_base
+        if 'azure_endpoint' in kwargs:
+            client_config['azure_endpoint'] = kwargs['azure_endpoint']
+        else:
+            client_config['azure_endpoint'] = api_base or provider_config.api_base or os.getenv('AZURE_OPENAI_ENDPOINT')
+    else:
+        client_config['api_base'] = api_base or provider_config.api_base
     
     # Add extra provider config
     client_config.update(provider_config.extra)
@@ -171,8 +205,14 @@ def get_client(
         logger.debug(f"Created {provider} client with model {target_model}")
         return client
     except Exception as e:
-        raise ValueError(f"Failed to create {provider} client: {e}")
-
+        if provider == "azure_openai":
+            raise ValueError(
+                f"Failed to create Azure OpenAI client with deployment '{target_model}': {e}\n"
+                f"Ensure AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY are set correctly."
+            )
+        else:
+            raise ValueError(f"Failed to create {provider} client: {e}")
+                  
 
 def validate_request_compatibility(
     provider: str,
