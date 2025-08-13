@@ -1667,6 +1667,29 @@ openai:
               - o3
               - o3-mini
               - o3-.*
+openai_compatible:
+  client_class: OpenAILLMClient
+  api_base: null  # Will be provided by user
+  models:
+    - "*"  # Accept any model name
+  model_aliases: {}
+  rate_limits:
+    requests_per_minute: 1000  # Default, adjust based on your endpoint
+  
+  # Model capabilities - assume full OpenAI compatibility
+  model_capabilities:
+    - pattern: ".*"  # Match any model
+      features:
+        - text
+        - streaming
+        - tools
+        - vision
+        - json_mode
+        - system_messages
+        - parallel_calls
+        - multimodal
+      max_context_length: 128000  # Adjust based on your endpoint
+      max_output_tokens: 4096     # Adjust based on your endpoint
 perplexity:
   api_base: https://api.perplexity.ai
   api_key_env: PERPLEXITY_API_KEY
@@ -2079,7 +2102,7 @@ azure_openai:
               
           gpt4_deployments:
             base_context_length: 128000
-            base_max_output_tokens: 8192
+            base_max_output_tokens: 4096
             features:
               - text
               - streaming
@@ -2198,7 +2221,7 @@ azure_openai:
         - json_mode
         - system_messages
       max_context_length: 128000
-      max_output_tokens: 8192
+      max_output_tokens: 4096
     
     # GPT-4.1 series
     - pattern: "gpt-4\\.1.*"
@@ -2211,7 +2234,7 @@ azure_openai:
         - json_mode
         - system_messages
       max_context_length: 128000
-      max_output_tokens: 8192
+      max_output_tokens: 4096
     
     # GPT-4 Turbo and regular
     - pattern: "gpt-4(-turbo|-preview)?$"
@@ -2224,7 +2247,7 @@ azure_openai:
         - json_mode
         - system_messages
       max_context_length: 128000
-      max_output_tokens: 8192
+      max_output_tokens: 4096
     
     # GPT-3.5 Turbo
     - pattern: "gpt-3\\.5-turbo.*"
