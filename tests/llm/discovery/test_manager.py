@@ -231,7 +231,7 @@ class TestUniversalDiscoveryManager:
         assert len(results.models_by_provider["provider1"]) == 2
         assert len(results.models_by_provider["provider2"]) == 1
         assert len(results.errors) == 0
-        assert results.discovery_time > 0
+        assert results.discovery_time >= 0  # Can be 0 on fast machines
 
     @pytest.mark.asyncio
     async def test_discover_all_models_with_failures(self):

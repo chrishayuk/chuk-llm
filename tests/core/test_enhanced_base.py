@@ -361,7 +361,7 @@ class TestEnhancedBaseLLMClient:
             middleware.process_stream_chunk_calls
         ):
             assert chunk_index == i
-            assert duration > 0
+            assert duration >= 0  # Duration can be 0 on fast machines
             assert chunk in client.mock_stream
 
         # Verify implementation was called
@@ -454,7 +454,7 @@ class TestEnhancedBaseLLMClient:
         assert len(middleware.process_error_calls) == 1
         error, duration = middleware.process_error_calls[0]
         assert error == test_error
-        assert duration > 0
+        assert duration >= 0  # Duration can be 0 on fast machines
 
     @pytest.mark.asyncio
     async def test_streaming_error_handling_with_middleware(self):

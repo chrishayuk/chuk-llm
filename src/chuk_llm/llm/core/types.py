@@ -1,25 +1,28 @@
 # chuk_llm/llm/core/types.py
+# chuk_llm/llm/core/types.py
 import json
 import logging
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ToolCallFunction(BaseModel):
     name: str
     arguments: str  # JSON string
 
-    @field_validator("arguments")
+    @field_validator("arguments", mode="before")
     @classmethod
     def validate_arguments(cls, v):
         if isinstance(v, dict):
             return json.dumps(v)
-        try:
-            json.loads(v)  # Validate it's valid JSON
-            return v
-        except json.JSONDecodeError:
-            return "{}"  # Fallback to empty object
+        if isinstance(v, str):
+            try:
+                json.loads(v)  # Validate it's valid JSON
+                return v
+            except json.JSONDecodeError:
+                return "{}"  # Fallback to empty object
+        return "{}"  # Fallback for any other type
 
 
 class ToolCall(BaseModel):
@@ -38,17 +41,13 @@ class LLMResponse(BaseModel):
     error: bool = False
     error_message: str | None = None
 
-    @field_validator("response", "tool_calls", mode="before")
-    @classmethod
-    def validate_response_xor_tools(cls, v, info):
-        # At least one of response or tool_calls should have content
-        values = info.data if hasattr(info, "data") else {}
-        response = values.get("response")
-        tool_calls = values.get("tool_calls", [])
-
-        if not response and not tool_calls and not values.get("error", False):
-            raise ValueError("Response must have either text content or tool calls")
-        return v
+    @model_validator(mode="after")
+    def validate_has_content(self):
+        """Validate that response has content unless it's an error"""
+        if not self.error:
+            if not self.response and not self.tool_calls:
+                raise ValueError("Response must have either text content or tool calls")
+        return self
 
 
 class StreamChunk(LLMResponse):
@@ -58,11 +57,11 @@ class StreamChunk(LLMResponse):
     is_final: bool = False
     timestamp: float | None = None
 
-    @field_validator("response", mode="before")
-    @classmethod
-    def allow_empty_chunks(cls, v):
-        # Streaming chunks can be empty
-        return v
+    @model_validator(mode="after")
+    def allow_empty_chunks(self):
+        """Override parent validator - streaming chunks can be empty"""
+        # StreamChunks are allowed to be empty, so we bypass the parent's validation
+        return self
 
 
 class ResponseValidator:
@@ -81,12 +80,21 @@ class ResponseValidator:
         except Exception as e:
             # Return error response if validation fails
             error_class = StreamChunk if is_streaming else LLMResponse
-            return error_class(
-                response=None,
-                tool_calls=[],
-                error=True,
-                error_message=f"Response validation failed: {str(e)}",
-            )
+            try:
+                return error_class(
+                    response=None,
+                    tool_calls=[],
+                    error=True,
+                    error_message=f"Response validation failed: {str(e)}",
+                )
+            except Exception:
+                # If even the error response fails validation, use model_construct to bypass
+                return error_class.model_construct(
+                    response=None,
+                    tool_calls=[],
+                    error=True,
+                    error_message=f"Response validation failed: {str(e)}",
+                )
 
     @staticmethod
     def normalize_tool_calls(raw_tool_calls: list[Any]) -> list[ToolCall]:

@@ -1179,26 +1179,32 @@ openai:
     - streaming
 """
 
+        # Create a temporary file and close it immediately to avoid Windows file lock issues
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            temp_path = f.name
             f.write(config_content)
             f.flush()
+        
+        try:
+            with patch.object(UnifiedConfigManager, "_load_environment"):
+                manager = UnifiedConfigManager(config_path=temp_path)
+                manager.load()
 
+                assert manager.global_settings["debug"] is True
+                assert manager.global_aliases["gpt4"] == "gpt-4"
+                assert "openai" in manager.providers
+
+                openai = manager.providers["openai"]
+                assert openai.client_class == "OpenAIClient"
+                assert openai.default_model == "gpt-4"
+                assert Feature.TEXT in openai.features
+
+        finally:
             try:
-                with patch.object(UnifiedConfigManager, "_load_environment"):
-                    manager = UnifiedConfigManager(config_path=f.name)
-                    manager.load()
-
-                    assert manager.global_settings["debug"] is True
-                    assert manager.global_aliases["gpt4"] == "gpt-4"
-                    assert "openai" in manager.providers
-
-                    openai = manager.providers["openai"]
-                    assert openai.client_class == "OpenAIClient"
-                    assert openai.default_model == "gpt-4"
-                    assert Feature.TEXT in openai.features
-
-            finally:
-                os.unlink(f.name)
+                os.unlink(temp_path)
+            except (OSError, PermissionError):
+                # On Windows, file might still be locked
+                pass
 
     def test_load_yaml_inheritance(self):
         """Test loading YAML with inheritance"""
@@ -1217,31 +1223,37 @@ specific_provider:
     - tools
 """
 
+        # Create a temporary file and close it immediately to avoid Windows file lock issues
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            temp_path = f.name
             f.write(config_content)
             f.flush()
+        
+        try:
+            with patch.object(UnifiedConfigManager, "_load_environment"):
+                manager = UnifiedConfigManager(config_path=temp_path)
+                manager.load()
 
+                base = manager.providers["base_provider"]
+                specific = manager.providers["specific_provider"]
+
+                # Base provider
+                assert base.client_class == "BaseClient"
+                assert Feature.TEXT in base.features
+                assert Feature.STREAMING in base.features
+
+                # Specific provider inherits + adds
+                assert specific.client_class == "BaseClient"  # Inherited
+                assert specific.api_key_env == "SPECIFIC_API_KEY"  # Own
+                assert Feature.TEXT in specific.features  # Inherited
+                assert Feature.TOOLS in specific.features  # Added
+
+        finally:
             try:
-                with patch.object(UnifiedConfigManager, "_load_environment"):
-                    manager = UnifiedConfigManager(config_path=f.name)
-                    manager.load()
-
-                    base = manager.providers["base_provider"]
-                    specific = manager.providers["specific_provider"]
-
-                    # Base provider
-                    assert base.client_class == "BaseClient"
-                    assert Feature.TEXT in base.features
-                    assert Feature.STREAMING in base.features
-
-                    # Specific provider inherits + adds
-                    assert specific.client_class == "BaseClient"  # Inherited
-                    assert specific.api_key_env == "SPECIFIC_API_KEY"  # Own
-                    assert Feature.TEXT in specific.features  # Inherited
-                    assert Feature.TOOLS in specific.features  # Added
-
-            finally:
-                os.unlink(f.name)
+                os.unlink(temp_path)
+            except (OSError, PermissionError):
+                # On Windows, file might still be locked
+                pass
 
     def test_load_yaml_file_missing(self):
         """Test loading when YAML file is missing"""
@@ -1262,20 +1274,26 @@ invalid: yaml: content:
     nested: incorrectly
 """
 
+        # Create a temporary file and close it immediately to avoid Windows file lock issues
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            temp_path = f.name
             f.write(invalid_yaml)
             f.flush()
+        
+        try:
+            with patch.object(UnifiedConfigManager, "_load_environment"):
+                manager = UnifiedConfigManager(config_path=temp_path)
 
+                # Should handle invalid YAML gracefully
+                manager.load()
+                assert manager._loaded is True
+
+        finally:
             try:
-                with patch.object(UnifiedConfigManager, "_load_environment"):
-                    manager = UnifiedConfigManager(config_path=f.name)
-
-                    # Should handle invalid YAML gracefully
-                    manager.load()
-                    assert manager._loaded is True
-
-            finally:
-                os.unlink(f.name)
+                os.unlink(temp_path)
+            except (OSError, PermissionError):
+                # On Windows, file might still be locked
+                pass
 
 
 class TestEnvironmentHandling:
