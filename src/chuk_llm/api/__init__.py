@@ -57,6 +57,17 @@ from .sync import (
 # Import all provider functions
 from .providers import *
 
+# Dynamic provider registration
+from .dynamic_providers import (
+    register_provider,
+    update_provider,
+    unregister_provider,
+    list_dynamic_providers,
+    get_provider_config,
+    provider_exists,
+    register_openai_compatible,
+)
+
 # Export clean API
 __all__ = [
     # Core async API
@@ -99,6 +110,15 @@ __all__ = [
     "get_client",
     "list_available_providers",
     "validate_provider_setup",
+    
+    # Dynamic provider registration
+    "register_provider",
+    "update_provider",
+    "unregister_provider",
+    "list_dynamic_providers",
+    "get_provider_config",
+    "provider_exists",
+    "register_openai_compatible",
 ]
 
 # Add provider functions to __all__

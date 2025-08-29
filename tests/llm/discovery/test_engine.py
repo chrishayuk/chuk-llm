@@ -90,8 +90,8 @@ class TestConfigDrivenInferenceEngine:
                     "features": ["text", "streaming", "tools"],
                     "base_context_length": 4096,
                     "context_rules": {
-                        r"llama-3": 8192,  # Fixed pattern
-                        r"llama.*3\.1": 128000
+                        r"llama.*3\.1": 128000,  # More specific pattern first
+                        r"llama-3": 8192  # Less specific pattern second
                     }
                 }
             },
@@ -182,9 +182,10 @@ class TestConfigDrivenInferenceEngine:
         result1 = self.engine.infer_capabilities(model1)
         result2 = self.engine.infer_capabilities(model2)
         
-        # Both models get the base context since the patterns don't match as expected
-        assert result1.context_length == 4096  # Base context for llama family
-        assert result2.context_length == 4096  # Base context (pattern doesn't match)
+        # Model1 matches "llama-3" pattern -> 8192
+        assert result1.context_length == 8192  # Matches llama-3 pattern
+        # Model2 matches "llama.*3\.1" pattern -> 128000
+        assert result2.context_length == 128000  # Matches llama.*3\.1 pattern
     
     def test_context_rules_with_matching_pattern(self):
         """Test context rules when pattern actually matches"""
@@ -193,8 +194,8 @@ class TestConfigDrivenInferenceEngine:
         
         result = self.engine.infer_capabilities(model)
         
-        # This should still get base context unless the pattern exactly matches
-        assert result.context_length == 4096  # Base context
+        # This matches the "llama.*3\.1" pattern -> 128000
+        assert result.context_length == 128000  # Matches llama.*3\.1 pattern
         assert result.family == "llama"
     
     def test_universal_patterns_application(self):
@@ -536,7 +537,7 @@ class TestIntegration:
         # Check llama model
         llama_model = next(m for m in models if "llama" in m.name)
         assert llama_model.family == "llama"
-        assert llama_model.context_length == 4096  # Base context for llama family
+        assert llama_model.context_length == 128000  # Matches llama.*3\.1 pattern
         
         # Check gpt4 model
         gpt_model = next(m for m in models if "gpt-4" in m.name)
@@ -552,7 +553,7 @@ class TestIntegration:
         # Test model capabilities
         llama_caps = manager.get_model_capabilities("llama-3.1-70b")
         assert llama_caps is not None
-        assert llama_caps.max_context_length == 4096  # Base context length
+        assert llama_caps.max_context_length == 128000  # Matches llama.*3\.1 pattern
     
     @patch('chuk_llm.configuration.get_config')
     def test_manager_with_config_integration(self, mock_get_config):

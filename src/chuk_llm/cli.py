@@ -86,16 +86,73 @@ def trigger_discovery_for_provider(provider: str, quiet: bool = True) -> bool:
         True if discovery succeeded, False otherwise
     """
     try:
-        # Always run discovery silently unless explicitly verbose
+        config_manager = get_config()
+        provider_config = config_manager.get_provider(provider)
+        
+        # Check if provider has discovery enabled in its configuration
+        if provider_config.extra and 'dynamic_discovery' in provider_config.extra:
+            discovery_config = provider_config.extra['dynamic_discovery']
+            if not discovery_config.get('enabled', False):
+                if not quiet:
+                    import logging
+                    logging.getLogger(__name__).info(f"Discovery disabled for {provider} in configuration")
+                return False
+        
+        # For Ollama, use its specific discovery
         if provider == "ollama":
             new_functions = trigger_ollama_discovery_and_refresh()
-        else:
-            new_functions = refresh_provider_functions(provider)
+            return bool(new_functions)
         
+        # For OpenAI-compatible providers, trigger discovery through config manager
+        if provider_config.client_class and 'OpenAI' in provider_config.client_class:
+            try:
+                # Force discovery refresh through config manager
+                import asyncio
+                
+                async def discover():
+                    # Get discovery config from provider
+                    discovery_data = provider_config.extra.get("dynamic_discovery", {})
+                    if not discovery_data.get("enabled", False):
+                        return False
+                    
+                    from chuk_llm.configuration.models import DiscoveryConfig
+                    
+                    discovery_config = DiscoveryConfig(
+                        enabled=True,
+                        discoverer_type=discovery_data.get("discoverer_type", "openai"),
+                        cache_timeout=0 if not quiet else discovery_data.get("cache_timeout", 300),  # Force refresh in CLI
+                        inference_config=discovery_data.get("inference_config", {}),
+                        discoverer_config=discovery_data.get("discoverer_config", {})
+                    )
+                    
+                    # Use config manager's discovery system
+                    success = await config_manager._refresh_provider_models(provider, discovery_config)
+                    return success
+                
+                # Run discovery
+                success = asyncio.run(discover())
+                
+                if success and not quiet:
+                    discovered = config_manager.get_discovered_models(provider)
+                    import logging
+                    logging.getLogger(__name__).info(f"Discovered {len(discovered)} models for {provider}")
+                
+                return success
+                
+            except Exception as e:
+                if not quiet:
+                    import logging
+                    logging.getLogger(__name__).debug(f"Discovery failed for {provider}: {e}")
+                return False
+        
+        # For other providers, try to refresh their functions
+        new_functions = refresh_provider_functions(provider)
         return bool(new_functions)
         
-    except Exception:
-        # Silently fail - don't show discovery errors
+    except Exception as e:
+        if not quiet:
+            import logging
+            logging.getLogger(__name__).debug(f"Discovery error for {provider}: {e}")
         return False
 
 
@@ -140,18 +197,26 @@ class ChukLLMCLI:
             print()
 
     def ask_model(self, prompt: str, provider: str, model: Optional[str] = None, 
-                 json_mode: bool = False, stream: bool = True) -> str:
+                 json_mode: bool = False, stream: bool = True, 
+                 base_url: Optional[str] = None, api_key: Optional[str] = None) -> str:
         """Ask a question to a specific model using sync API with optional streaming"""
         try:
+            # Apply dynamic configuration if provided
+            extra_kwargs = {}
+            if base_url:
+                extra_kwargs['base_url'] = base_url
+            if api_key:
+                extra_kwargs['api_key'] = api_key
+            
             if stream and not json_mode:
                 # Use streaming (this prints as it goes)
-                return self.stream_response(prompt, provider, model, json_mode=json_mode)
+                return self.stream_response(prompt, provider, model, json_mode=json_mode, **extra_kwargs)
             else:
                 # Non-streaming for JSON mode or when explicitly disabled
                 if model:
-                    response = ask_sync(prompt, provider=provider, model=model, json_mode=json_mode)
+                    response = ask_sync(prompt, provider=provider, model=model, json_mode=json_mode, **extra_kwargs)
                 else:
-                    response = ask_sync(prompt, provider=provider, json_mode=json_mode)
+                    response = ask_sync(prompt, provider=provider, json_mode=json_mode, **extra_kwargs)
                 
                 # Print the response for non-streaming
                 print(response)
@@ -254,6 +319,12 @@ class ChukLLMCLI:
                     self.print_rich(f"🤖 {provider}:", "info")
                 else:
                     self.print_rich("🤖 Response:", "info")
+                    
+                # Show dynamic configuration if provided
+                if 'base_url' in kwargs:
+                    self.print_rich(f"  Base URL: {kwargs['base_url']}", "info")
+                if 'api_key' in kwargs:
+                    self.print_rich(f"  API Key: ***{kwargs['api_key'][-4:] if len(kwargs['api_key']) > 4 else '****'}", "info")
                 print("")  # Add a blank line
             
             # Stream the response
@@ -318,44 +389,126 @@ class ChukLLMCLI:
             self.print_rich(f"Error listing providers: {e}", "error")
 
     def show_models(self, provider: str) -> None:
-        """List models for a specific provider"""
+        """List models for a specific provider with discovery"""
         try:
             provider_config = self.config.get_provider(provider)
             
-            if not provider_config.models:
-                self.print_rich(f"No models configured for provider '{provider}'", "error")
+            # Trigger discovery based on provider type
+            self.print_rich(f"🔍 Fetching available {provider} models from API...", "info")
+            
+            # Use the discovery system properly
+            discovered_models = set()
+            discovery_succeeded = False
+            
+            if provider == "ollama":
+                try:
+                    from chuk_llm.api.providers import trigger_ollama_discovery_and_refresh
+                    trigger_ollama_discovery_and_refresh()
+                    # Get discovered models from config manager
+                    discovered_models = self.config.get_discovered_models(provider)
+                    discovery_succeeded = bool(discovered_models)
+                except Exception as e:
+                    self.print_rich(f"⚠️  Ollama discovery unavailable: {e}", "error")
+            else:
+                # Use the config manager's discovery instead of making direct API calls
+                try:
+                    # Trigger discovery through config manager
+                    success = trigger_discovery_for_provider(provider, quiet=False)
+                    if success:
+                        # Get discovered models from config manager
+                        discovered_models = self.config.get_discovered_models(provider)
+                        discovery_succeeded = bool(discovered_models)
+                        if discovered_models:
+                            self.print_rich(f"✅ Found {len(discovered_models)} available models", "success")
+                except Exception as e:
+                    self.print_rich(f"⚠️  Discovery failed for {provider}: {e}", "error")
+            
+            # Get all models (static + discovered) from config manager
+            all_models = self.config.get_all_available_models(provider)
+            static_models = set(provider_config.models)
+            
+            if not all_models:
+                self.print_rich(f"No models found for provider '{provider}'", "error")
                 return
             
+            # Display models with proper source indication
             rows = []
-            for model in provider_config.models:
+            for model in sorted(all_models):
+                # Determine source and status correctly
+                in_static = model in static_models
+                in_discovered = model in discovered_models
+                
+                if in_static and in_discovered:
+                    source = "✅ Configured + Available"
+                    status = "🟢"
+                elif in_static and not in_discovered and discovery_succeeded:
+                    # We did discovery but didn't find this model
+                    source = "📋 Configured (Not Found)"
+                    status = "🔴"
+                elif in_static:
+                    # No discovery was done or discovery failed
+                    source = "📋 Configured"
+                    status = "⚪"
+                elif in_discovered:
+                    source = "🔍 Discovered Only"
+                    status = "🟡"
+                else:
+                    source = "❓ Unknown"
+                    status = "❓"
+                
+                # Get capabilities from provider config
                 try:
                     caps = provider_config.get_model_capabilities(model)
                     features = ", ".join([f.value for f in list(caps.features)[:3]])
                     if len(caps.features) > 3:
                         features += "..."
                     
-                    rows.append([
-                        model,
-                        str(caps.max_context_length) if caps.max_context_length else "N/A",
-                        str(caps.max_output_tokens) if caps.max_output_tokens else "N/A",
-                        features
-                    ])
-                except Exception:
-                    rows.append([model, "N/A", "N/A", "Unknown"])
+                    context = str(caps.max_context_length) if caps.max_context_length else "N/A"
+                    output = str(caps.max_output_tokens) if caps.max_output_tokens else "N/A"
+                except:
+                    features = "system_messages, tools, streaming..."
+                    context = "131072"  # Groq default
+                    output = "32768"    # Groq default
+                
+                rows.append([status, model, source, context, output, features])
             
-            # Add aliases
+            # Add aliases section
             if provider_config.model_aliases:
-                rows.append(["--- ALIASES ---", "", "", ""])
+                rows.append(["", "--- ALIASES ---", "", "", "", ""])
                 for alias, target in provider_config.model_aliases.items():
-                    rows.append([f"{alias} → {target}", "", "", "Alias"])
+                    # Check if target is available
+                    if target in all_models:
+                        target_status = "🟢"
+                    else:
+                        target_status = "🔴"
+                    rows.append([target_status, f"{alias} → {target}", "Alias", "", "", ""])
+            
+            # Calculate statistics
+            static_count = len(static_models)
+            discovered_count = len(discovered_models)
+            total_count = len(all_models)
+            new_count = len([m for m in discovered_models if m not in static_models])
             
             self.print_table(
-                ["Model", "Context", "Output", "Features"],
+                ["", "Model", "Source", "Context", "Output", "Features"],
                 rows,
-                f"Models for {provider}"
+                f"Models for {provider} ({total_count} total, {static_count} configured, {discovered_count} discovered, {new_count} new)"
             )
+            
+            # Show helpful hints
+            if provider == "ollama" and not discovered_models:
+                self.print_rich("\n💡 Tip: Make sure Ollama is running to see available models", "info")
+            elif new_count > 0:
+                self.print_rich(f"\n✨ Found {new_count} additional models not in configuration!", "success")
+                self.print_rich("These models are immediately available for use.", "info")
+            elif discovered_models and new_count == 0:
+                self.print_rich(f"\n✅ All {discovered_count} discovered models are already configured", "info")
+                
         except Exception as e:
             self.print_rich(f"Error listing models for '{provider}': {e}", "error")
+            if self.verbose:
+                import traceback
+                self.print_rich(traceback.format_exc(), "error")
 
     def test_provider(self, provider: str) -> None:
         """Test if a provider is working"""
@@ -568,6 +721,10 @@ chuk-llm stream_ollama_qwen3 "Explain Python in detail"
 ```bash
 chuk-llm ask "Question" --provider openai --model gpt-4o-mini
 chuk-llm ask "Question" --json  # Request JSON response
+
+# Dynamic provider configuration
+chuk-llm ask "Question" --provider openai --base-url https://api.custom.com/v1 --api-key sk-custom-key
+chuk-llm ask "Question" --provider ollama --base-url http://remote-server:11434
 ```
 
 ## Simple Commands
@@ -700,6 +857,8 @@ def main():
             parser.add_argument("prompt", help="The question to ask")
             parser.add_argument("--provider", "-p", required=True, help="Provider to use")
             parser.add_argument("--model", "-m", help="Specific model to use")
+            parser.add_argument("--base-url", "-b", help="Override base URL for the provider")
+            parser.add_argument("--api-key", "-k", help="Override API key for the provider")
             parser.add_argument("--json", action="store_true", help="Request JSON response")
             parser.add_argument("--no-stream", action="store_true", help="Disable streaming")
             
@@ -724,7 +883,9 @@ def main():
                     parsed_args.provider, 
                     parsed_args.model,
                     json_mode=parsed_args.json,
-                    stream=not parsed_args.no_stream
+                    stream=not parsed_args.no_stream,
+                    base_url=parsed_args.base_url,
+                    api_key=parsed_args.api_key
                 )
                 
                 # The streaming methods should already print, but ensure we have output
@@ -737,7 +898,9 @@ def main():
                         parsed_args.provider, 
                         parsed_args.model,
                         json_mode=parsed_args.json,
-                        stream=False
+                        stream=False,
+                        base_url=parsed_args.base_url,
+                        api_key=parsed_args.api_key
                     )
                     if response:
                         print(response)

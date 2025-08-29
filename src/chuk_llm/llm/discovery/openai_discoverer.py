@@ -122,9 +122,29 @@ class OpenAIModelDiscoverer(BaseModelDiscoverer):
                 
                 models = []
                 discovered_count = 0
+                text_model_count = 0
+                
+                # Patterns for non-text models to exclude
+                non_text_patterns = [
+                    r'text-embedding-.*',     # Embedding models
+                    r'.*embedding.*',          # Any embedding model
+                    r'dall-e-.*',             # Image generation
+                    r'whisper-.*',            # Speech to text
+                    r'tts-.*',                # Text to speech
+                    r'.*moderation.*',        # Moderation models
+                    r'babbage-.*',            # Legacy completion models
+                    r'davinci-.*',            # Legacy completion models
+                    r'.*realtime.*',          # Realtime models (usually audio)
+                    r'.*audio.*',             # Audio models
+                    r'.*transcribe.*',        # Transcription models
+                    r'.*search.*',            # Search models
+                    r'.*image.*',             # Image models
+                    r'computer-use-.*',       # Computer use models (not text generation)
+                ]
                 
                 for model_data in data.get("data", []):
                     model_id = model_data["id"]
+                    discovered_count += 1
                     
                     # Skip fine-tuned and organization-specific models for general discovery
                     if ":" in model_id or model_id.startswith("ft-"):
@@ -134,13 +154,19 @@ class OpenAIModelDiscoverer(BaseModelDiscoverer):
                     if any(skip in model_id.lower() for skip in ['deprecated', 'internal', 'test']):
                         continue
                     
-                    discovered_count += 1
+                    # Skip non-text models
+                    model_lower = model_id.lower()
+                    if any(re.match(pattern, model_lower) for pattern in non_text_patterns):
+                        log.debug(f"Skipping non-text model: {model_id}")
+                        continue
                     
-                    # Enhanced model categorization
+                    text_model_count += 1
+                    
+                    # Enhanced model categorization for text models only
                     model_info = self._categorize_model(model_id, model_data)
                     models.append(model_info)
                 
-                log.info(f"Discovered {len(models)} usable models from {discovered_count} total OpenAI API models")
+                log.info(f"Discovered {text_model_count} text models from {discovered_count} total OpenAI API models")
                 
                 # Sort models by importance (reasoning models first, then by generation)
                 models.sort(key=self._model_sort_key)
@@ -149,7 +175,7 @@ class OpenAIModelDiscoverer(BaseModelDiscoverer):
         except Exception as e:
             log.error(f"Failed to discover OpenAI models: {e}")
             return self._get_fallback_models()
-    
+        
     def _categorize_model(self, model_id: str, model_data: Dict[str, Any]) -> Dict[str, Any]:
         """Categorize a model with enhanced metadata"""
         # Determine model family and characteristics

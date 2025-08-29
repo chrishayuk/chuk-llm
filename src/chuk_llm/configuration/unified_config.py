@@ -508,6 +508,10 @@ class UnifiedConfigManager(ConfigDiscoveryMixin):
         """Get API key for provider"""
         provider = self.get_provider(provider_name)
         
+        # Check for runtime API key first (from dynamic registration)
+        if provider.extra and '_runtime_api_key' in provider.extra:
+            return provider.extra['_runtime_api_key']
+        
         if provider.api_key_env:
             key = os.getenv(provider.api_key_env)
             if key:
@@ -517,6 +521,40 @@ class UnifiedConfigManager(ConfigDiscoveryMixin):
             return os.getenv(provider.api_key_fallback_env)
         
         return None
+    
+    def get_api_base(self, provider_name: str) -> Optional[str]:
+        """Get API base URL for provider, checking environment variables first"""
+        provider = self.get_provider(provider_name)
+        
+        # Check for runtime API base first (from dynamic registration)
+        if provider.extra and '_runtime_api_base' in provider.extra:
+            return provider.extra['_runtime_api_base']
+        
+        # Check for environment variable override
+        if provider.extra and 'api_base_env' in provider.extra:
+            env_base = os.getenv(provider.extra['api_base_env'])
+            if env_base:
+                logger.debug(f"Using API base from environment variable {provider.extra['api_base_env']}: {env_base}")
+                return env_base
+        
+        # Standard environment variable patterns
+        # For provider "openai", check OPENAI_API_BASE, OPENAI_BASE_URL, etc.
+        provider_upper = provider_name.upper()
+        env_names = [
+            f"{provider_upper}_API_BASE",
+            f"{provider_upper}_BASE_URL", 
+            f"{provider_upper}_API_URL",
+            f"{provider_upper}_ENDPOINT"
+        ]
+        
+        for env_name in env_names:
+            env_value = os.getenv(env_name)
+            if env_value:
+                logger.debug(f"Using API base from environment variable {env_name}: {env_value}")
+                return env_value
+        
+        # Return configured base URL
+        return provider.api_base
     
     def supports_feature(self, provider_name: str, feature: Union[str, Feature], 
                         model: Optional[str] = None) -> bool:
@@ -568,6 +606,203 @@ class UnifiedConfigManager(ConfigDiscoveryMixin):
         self.global_settings.clear()
         super().reload()  # Clear discovery state
         self.load()
+    
+    # ─────────────── DYNAMIC PROVIDER REGISTRATION ──────────────
+    
+    def register_provider(
+        self,
+        name: str,
+        api_base: Optional[str] = None,
+        api_key: Optional[str] = None,
+        api_key_env: Optional[str] = None,
+        api_base_env: Optional[str] = None,
+        models: Optional[List[str]] = None,
+        default_model: Optional[str] = None,
+        client_class: Optional[str] = None,
+        features: Optional[List[str]] = None,
+        max_context_length: Optional[int] = None,
+        max_output_tokens: Optional[int] = None,
+        inherits_from: Optional[str] = None,
+        **extra_kwargs
+    ) -> ProviderConfig:
+        """
+        Register a new provider dynamically at runtime.
+        
+        Args:
+            name: Unique provider name
+            api_base: Base URL for the API
+            api_key: API key (stored in memory)
+            api_key_env: Environment variable name for API key
+            api_base_env: Environment variable name for base URL
+            models: List of supported models
+            default_model: Default model to use
+            client_class: Client class path
+            features: List of features
+            max_context_length: Maximum context length
+            max_output_tokens: Maximum output tokens
+            inherits_from: Inherit from existing provider
+            **extra_kwargs: Additional configuration
+            
+        Returns:
+            The created ProviderConfig
+        """
+        self.load()  # Ensure config is loaded
+        
+        # Check if provider already exists
+        if name in self.providers and not hasattr(self, '_dynamic_providers'):
+            self._dynamic_providers = set()
+        
+        # Start with base config or inherit from existing
+        if inherits_from and inherits_from in self.providers:
+            # Deep copy the inherited provider config
+            base_provider = self.providers[inherits_from]
+            provider = ProviderConfig(name=name)
+            provider.client_class = base_provider.client_class
+            provider.api_key_env = base_provider.api_key_env
+            provider.api_base = base_provider.api_base
+            provider.default_model = base_provider.default_model
+            provider.models = base_provider.models.copy() if base_provider.models else []
+            if hasattr(base_provider, 'aliases'):
+                provider.aliases = base_provider.aliases.copy() if base_provider.aliases else {}
+            provider.rate_limits = base_provider.rate_limits.copy() if base_provider.rate_limits else {}
+            provider.extra = base_provider.extra.copy() if base_provider.extra else {}
+        else:
+            provider = ProviderConfig(name=name)
+        
+        # Apply provided configuration
+        if api_base:
+            provider.api_base = api_base
+        if api_base_env:
+            # Store in extra config for environment variable checking
+            if not provider.extra:
+                provider.extra = {}
+            provider.extra['api_base_env'] = api_base_env
+        if api_key:
+            # Store API key in extra config (not persisted)
+            if not provider.extra:
+                provider.extra = {}
+            provider.extra['_runtime_api_key'] = api_key
+        if api_key_env:
+            provider.api_key_env = api_key_env
+        if models:
+            provider.models = models
+        if default_model:
+            provider.default_model = default_model
+        if client_class:
+            provider.client_class = client_class
+        
+        # Handle features
+        if features:
+            if not provider.extra:
+                provider.extra = {}
+            provider.extra['features'] = features
+        
+        # Handle context limits
+        if max_context_length:
+            if not provider.extra:
+                provider.extra = {}
+            provider.extra['max_context_length'] = max_context_length
+        if max_output_tokens:
+            if not provider.extra:
+                provider.extra = {}
+            provider.extra['max_output_tokens'] = max_output_tokens
+        
+        # Add any extra kwargs
+        if extra_kwargs:
+            if not provider.extra:
+                provider.extra = {}
+            provider.extra.update(extra_kwargs)
+        
+        # Register the provider
+        self.providers[name] = provider
+        
+        # Track as dynamic provider
+        if not hasattr(self, '_dynamic_providers'):
+            self._dynamic_providers = set()
+        self._dynamic_providers.add(name)
+        
+        logger.info(f"Registered dynamic provider: {name}")
+        return provider
+    
+    def update_provider(self, name: str, **kwargs) -> ProviderConfig:
+        """
+        Update an existing provider's configuration.
+        
+        Args:
+            name: Provider name to update
+            **kwargs: Fields to update
+            
+        Returns:
+            The updated ProviderConfig
+        """
+        self.load()
+        
+        if name not in self.providers:
+            raise ValueError(f"Provider '{name}' not found")
+        
+        provider = self.providers[name]
+        
+        # Update fields
+        for key, value in kwargs.items():
+            if key == 'api_key':
+                # Special handling for API key
+                if not provider.extra:
+                    provider.extra = {}
+                provider.extra['_runtime_api_key'] = value
+            elif key == 'api_base_env':
+                # Special handling for API base environment variable
+                if not provider.extra:
+                    provider.extra = {}
+                provider.extra['api_base_env'] = value
+            elif hasattr(provider, key):
+                setattr(provider, key, value)
+            else:
+                # Store in extra
+                if not provider.extra:
+                    provider.extra = {}
+                provider.extra[key] = value
+        
+        logger.info(f"Updated provider: {name}")
+        return provider
+    
+    def unregister_provider(self, name: str) -> bool:
+        """
+        Remove a dynamically registered provider.
+        
+        Args:
+            name: Provider name to remove
+            
+        Returns:
+            True if removed, False otherwise
+        """
+        self.load()
+        
+        # Only allow removing dynamic providers
+        if not hasattr(self, '_dynamic_providers'):
+            return False
+        
+        if name not in self._dynamic_providers:
+            logger.warning(f"Cannot remove non-dynamic provider '{name}'")
+            return False
+        
+        if name in self.providers:
+            del self.providers[name]
+            self._dynamic_providers.remove(name)
+            logger.info(f"Unregistered dynamic provider: {name}")
+            return True
+        
+        return False
+    
+    def list_dynamic_providers(self) -> List[str]:
+        """
+        List all dynamically registered providers.
+        
+        Returns:
+            List of dynamic provider names
+        """
+        if not hasattr(self, '_dynamic_providers'):
+            return []
+        return list(self._dynamic_providers)
 
 
 # ──────────────────────────── Capability Checker ─────────────────────────────
@@ -650,9 +885,6 @@ class CapabilityChecker:
             }
         except Exception as exc:
             return {"error": f"Failed to get model info: {exc}"}
-
-
-# ──────────────────────────── SINGLETON FIX ─────────────────────────────
 class SingletonConfigManager(UnifiedConfigManager):
     """
     Singleton version of UnifiedConfigManager that persists runtime changes

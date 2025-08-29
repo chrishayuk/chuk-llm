@@ -9,8 +9,8 @@ load_dotenv()
 
 from chuk_llm import (
     # OpenAI model-specific functions (async versions - no _sync suffix)
-    ask_openai_gpt4o_mini,
-    ask_anthropic_claude_sonnet4_20250514,
+    ask_openai_gpt_4o_mini,
+    ask_anthropic_claude_sonnet_4_20250514,
     ask_anthropic_sonnet,  # Alias
 )
 
@@ -24,7 +24,7 @@ async def main():
     print("-" * 40)
     
     print("GPT-4o Mini:")
-    response = await ask_openai_gpt4o_mini(question)
+    response = await ask_openai_gpt_4o_mini(question)
     print(response)
     print()
     
@@ -33,7 +33,7 @@ async def main():
     print("-" * 40)
     
     print("Claude Sonnet 4:")
-    response = await ask_anthropic_claude_sonnet4_20250514(question)
+    response = await ask_anthropic_claude_sonnet_4_20250514(question)
     print(response)
     print()
     
@@ -53,7 +53,7 @@ async def main():
     
     # Create tasks for parallel execution
     tasks = [
-        ask_openai_gpt4o_mini("What's 3+3?"),
+        ask_openai_gpt_4o_mini("What's 3+3?"),
         ask_anthropic_sonnet("What's 4+4?")
     ]
     

@@ -291,16 +291,6 @@ def client(mock_configuration, mock_env, monkeypatch):
         "text", "streaming", "tools", "system_messages", "json_mode", "reasoning"
     ])
     
-    # Mock tool compatibility methods
-    monkeypatch.setattr(cl, "_sanitize_tool_names", lambda tools: tools)
-    monkeypatch.setattr(cl, "_restore_tool_names_in_response", lambda response, mapping=None: response)
-    monkeypatch.setattr(cl, "get_tool_compatibility_info", lambda: {
-        "supports_universal_naming": True,
-        "sanitization_method": "enterprise_grade",
-        "restoration_method": "name_mapping",
-        "supported_name_patterns": ["alphanumeric_underscore"],
-    })
-    
     # Initialize empty name mapping
     cl._current_name_mapping = {}
     

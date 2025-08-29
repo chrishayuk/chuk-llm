@@ -11,14 +11,13 @@ from .unified_config import (
     ModelCapabilities,
     ProviderConfig,
     UnifiedConfigManager,
-    ConfigValidator,
     CapabilityChecker,
-    get_config,
     get_config,
     reset_config,
     reset_unified_config,
     ConfigManager
 )
+from .validator import ConfigValidator
 
 # Clean exports
 __all__ = [
@@ -28,7 +27,6 @@ __all__ = [
     "UnifiedConfigManager",
     "ConfigValidator",
     "CapabilityChecker",
-    "get_config",
     "get_config",
     "reset_config", 
     "reset_unified_config",

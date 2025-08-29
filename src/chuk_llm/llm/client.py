@@ -176,9 +176,11 @@ def get_client(
         if 'azure_endpoint' in kwargs:
             client_config['azure_endpoint'] = kwargs['azure_endpoint']
         else:
-            client_config['azure_endpoint'] = api_base or provider_config.api_base or os.getenv('AZURE_OPENAI_ENDPOINT')
+            # Use get_api_base which checks environment variables
+            client_config['azure_endpoint'] = api_base or config_manager.get_api_base(provider) or os.getenv('AZURE_OPENAI_ENDPOINT')
     else:
-        client_config['api_base'] = api_base or provider_config.api_base
+        # Use get_api_base which checks environment variables
+        client_config['api_base'] = api_base or config_manager.get_api_base(provider)
     
     # Add extra provider config
     client_config.update(provider_config.extra)

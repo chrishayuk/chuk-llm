@@ -1377,6 +1377,9 @@ def test_validate_conversation_context_valid(client):
 
 def test_validate_conversation_context_duplicate_roles(client, caplog):
     """Test context validation detects duplicate consecutive roles."""
+    import logging
+    caplog.set_level(logging.DEBUG)
+    
     messages = [
         {"role": "user", "content": "Hello"},
         {"role": "user", "content": "Are you there?"},  # Duplicate user role
@@ -1390,6 +1393,9 @@ def test_validate_conversation_context_duplicate_roles(client, caplog):
 
 def test_validate_conversation_context_missing_tool_responses(client, caplog):
     """Test context validation detects missing tool responses."""
+    import logging
+    caplog.set_level(logging.DEBUG)
+    
     messages = [
         {"role": "user", "content": "What's the weather?"},
         {"role": "assistant", "content": "", "tool_calls": [

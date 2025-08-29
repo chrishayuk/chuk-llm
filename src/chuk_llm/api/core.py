@@ -107,6 +107,8 @@ async def ask(
     json_mode: bool = False,
     context: str = None,
     previous_messages: List[Dict[str, str]] = None,
+    base_url: str = None,
+    api_key: str = None,
     **kwargs
 ) -> str:
     """
@@ -180,12 +182,12 @@ async def ask(
         except Exception as e:
             logger.debug(f"Could not update session system prompt: {e}")
     
-    # Build effective configuration
+    # Build effective configuration with dynamic overrides
     effective_config = {
         "provider": effective_provider,
         "model": effective_model,
-        "api_key": effective_api_key,
-        "api_base": effective_api_base,
+        "api_key": api_key or effective_api_key,  # Dynamic override takes precedence
+        "api_base": base_url or effective_api_base,  # Dynamic override takes precedence
         "system_prompt": system_prompt or config.get("system_prompt"),
         "temperature": temperature if temperature is not None else config.get("temperature"),
         "max_tokens": max_tokens if max_tokens is not None else config.get("max_tokens"),
@@ -325,6 +327,8 @@ async def stream(
     context: str = None, 
     previous_messages: List[Dict[str, str]] = None,
     return_tool_calls: bool = None,  # NEW: Control whether to return tool calls
+    base_url: str = None,
+    api_key: str = None,
     **kwargs
 ) -> AsyncIterator[Union[str, Dict[str, Any]]]:
     """
@@ -394,6 +398,12 @@ async def stream(
                 effective_model = provider_config.default_model
             except Exception:
                 pass
+    
+    # Apply dynamic overrides if provided
+    if api_key:
+        effective_api_key = api_key
+    if base_url:
+        effective_api_base = base_url
     
     # Update session system prompt if provided
     system_prompt = kwargs.get("system_prompt")
