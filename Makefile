@@ -1,19 +1,27 @@
-.PHONY: clean clean-pyc clean-build clean-test clean-all test run build publish help install dev-install
+.PHONY: clean clean-pyc clean-build clean-test clean-all test run build publish help install dev-install pre-commit pre-commit-install pre-commit-run
 
 # Default target
 help:
 	@echo "Available targets:"
-	@echo "  clean       - Remove Python bytecode and basic artifacts"
-	@echo "  clean-all   - Deep clean everything (pyc, build, test, cache)"
-	@echo "  clean-pyc   - Remove Python bytecode files"
-	@echo "  clean-build - Remove build artifacts"
-	@echo "  clean-test  - Remove test artifacts"
-	@echo "  install     - Install package in current environment"
-	@echo "  dev-install - Install package in development mode"
-	@echo "  test        - Run tests"
-	@echo "  run         - Run the server"
-	@echo "  build       - Build the project"
-	@echo "  publish     - Build and publish to PyPI"
+	@echo "  clean            - Remove Python bytecode and basic artifacts"
+	@echo "  clean-all        - Deep clean everything (pyc, build, test, cache)"
+	@echo "  clean-pyc        - Remove Python bytecode files"
+	@echo "  clean-build      - Remove build artifacts"
+	@echo "  clean-test       - Remove test artifacts"
+	@echo "  install          - Install package in current environment"
+	@echo "  dev-install      - Install package in development mode"
+	@echo "  test             - Run tests"
+	@echo "  test-cov         - Run tests with coverage report"
+	@echo "  lint             - Check code quality with ruff"
+	@echo "  format           - Auto-format code with ruff"
+	@echo "  typecheck        - Run type checking with mypy"
+	@echo "  check            - Run all checks (lint, typecheck, test)"
+	@echo "  pre-commit       - Run pre-commit hooks on all files"
+	@echo "  pre-commit-install - Install pre-commit hooks"
+	@echo "  run              - Run the server"
+	@echo "  build            - Build the project"
+	@echo "  publish          - Build and publish to PyPI"
+	@echo "  info             - Show project information"
 
 # Basic clean - Python bytecode and common artifacts
 clean: clean-pyc clean-build
@@ -174,6 +182,30 @@ typecheck:
 # Run all checks
 check: lint typecheck test
 	@echo "All checks completed."
+
+# Pre-commit hooks
+pre-commit-install:
+	@echo "Installing pre-commit hooks..."
+	@if command -v uv >/dev/null 2>&1; then \
+		uv run pre-commit install; \
+	elif command -v pre-commit >/dev/null 2>&1; then \
+		pre-commit install; \
+	else \
+		pip install pre-commit && pre-commit install; \
+	fi
+	@echo "Pre-commit hooks installed."
+
+pre-commit-run:
+	@echo "Running pre-commit hooks..."
+	@if command -v uv >/dev/null 2>&1; then \
+		uv run pre-commit run --all-files; \
+	elif command -v pre-commit >/dev/null 2>&1; then \
+		pre-commit run --all-files; \
+	else \
+		echo "Pre-commit not found. Install with: pip install pre-commit"; \
+	fi
+
+pre-commit: pre-commit-run
 
 # Show project info
 info:

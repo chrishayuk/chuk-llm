@@ -6,7 +6,8 @@ Common abstract interface for every LLM adapter.
 from __future__ import annotations
 
 import abc
-from typing import Any, AsyncIterator, Dict, List, Optional, Union
+from collections.abc import AsyncIterator
+from typing import Any
 
 
 class BaseLLMClient(abc.ABC):
@@ -15,12 +16,12 @@ class BaseLLMClient(abc.ABC):
     @abc.abstractmethod
     def create_completion(
         self,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         *,
         stream: bool = False,
         **kwargs: Any,
-    ) -> Union[AsyncIterator[Dict[str, Any]], Any]:
+    ) -> AsyncIterator[dict[str, Any]] | Any:
         """
         Generate (or continue) a chat conversation.
 
@@ -38,10 +39,10 @@ class BaseLLMClient(abc.ABC):
         Returns
         -------
         When stream=True: AsyncIterator that yields chunks as they arrive
-        When stream=False: Awaitable that resolves to standardised payload 
+        When stream=False: Awaitable that resolves to standardised payload
                           with keys ``response`` and ``tool_calls``.
-        
-        CRITICAL: When stream=True, this method MUST NOT be async and 
+
+        CRITICAL: When stream=True, this method MUST NOT be async and
                  MUST return the async iterator directly (no awaiting).
         """
         ...

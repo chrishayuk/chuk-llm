@@ -1,0 +1,46 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Force LF for these files
+*.py text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.cfg text eol=lf
+*.txt text eol=lf
+*.md text eol=lf
+*.rst text eol=lf
+*.json text eol=lf
+*.sh text eol=lf
+Makefile text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tar binary
+*.tgz binary
+*.jar binary
+*.so binary
+*.dll binary
+*.dylib binary
+*.pyc binary
+*.pyo binary
+*.pyd binary
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
+
+# Jupyter notebooks
+*.ipynb text eol=lf
+
+# Diff settings
+*.py diff=python
+*.md diff=markdown

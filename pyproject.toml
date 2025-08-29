@@ -10,10 +10,39 @@ readme = "README.md"
 authors = [
   { name = "Chris Hay", email = "chrishayuk@somejunkmailbox.com" }
 ]
+maintainers = [
+  { name = "Chris Hay", email = "chrishayuk@somejunkmailbox.com" }
+]
+license = { text = "MIT" }
 requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+keywords = [
+    "llm",
+    "ai",
+    "openai",
+    "anthropic",
+    "claude",
+    "gpt",
+    "gemini",
+    "ollama",
+    "streaming",
+    "async",
+    "machine-learning",
+]
 
-# Core dependencies - includes session tracking by default
 dependencies = [
+    "aiohttp>=3.12.15",
     "anthropic>=0.62.0",
     "asyncio>=4.0.0",
     "chuk-ai-session-manager>=0.7",
@@ -31,7 +60,12 @@ dependencies = [
     "transformers>=4.53.2",
 ]
 
-# Optional dependencies
+[project.urls]
+Homepage = "https://github.com/chrishayuk/chuk-llm"
+Documentation = "https://github.com/chrishayuk/chuk-llm#readme"
+Repository = "https://github.com/chrishayuk/chuk-llm.git"
+Issues = "https://github.com/chrishayuk/chuk-llm/issues"
+Changelog = "https://github.com/chrishayuk/chuk-llm/releases"
 [project.optional-dependencies]
 # Redis support for persistent session storage
 redis = [
@@ -96,4 +130,103 @@ dev = [
     "pytest-cov>=6.1.1",
     "rich>=14.0.0",
     "pillow",
+    "mypy>=1.14.0",
+    "ruff>=0.8.0",
+    "black>=24.10.0",
+    "isort>=5.13.0",
+    "pre-commit>=4.0.0",
+    "twine>=6.0.0",
+    "build>=1.2.0",
+    "types-PyYAML>=6.0.0",
+    "types-requests>=2.31.0",
 ]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+fix = true
+exclude = [
+    "tests/**/*.py",       # Exclude all test files
+    "diagnostics/**/*.py", # Exclude diagnostic scripts
+    "examples/**/*.py",    # Exclude example scripts
+    "benchmarks/**/*.py",  # Exclude benchmark scripts
+]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+    "N",    # pep8-naming
+    "SIM",  # flake8-simplify
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B008",  # do not perform function calls in argument defaults
+    "B905",  # zip() without an explicit strict= parameter
+    "SIM102",  # Allow nested if statements for complex logic
+    "SIM103",  # Allow explicit return False for clarity
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["chuk_llm"]
+
+[tool.ruff.lint.per-file-ignores]
+# Additional ignores for specific patterns if needed
+"tests/**/*.py" = ["F401", "F403", "E402", "E722"]  # Allow unused imports and bare except in tests
+"diagnostics/**/*.py" = ["F401", "F403", "E402", "E722", "B904"]  # Allow diagnostic testing patterns
+"examples/**/*.py" = ["F401", "E402"]  # Allow import testing in examples
+"benchmarks/**/*.py" = ["C901"]  # Allow complex functions in benchmarks
+
+[tool.black]
+line-length = 88
+target-version = ['py311', 'py312']
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 88
+known_first_party = ["chuk_llm"]
+skip_gitignore = true
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = false  # Too many dynamic returns
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+no_implicit_optional = false  # Allow implicit Optional
+warn_redundant_casts = false
+warn_unused_ignores = false
+warn_no_return = true
+check_untyped_defs = true
+allow_untyped_calls = true
+allow_untyped_decorators = true
+exclude = [
+    "tests/",
+    "diagnostics/",
+    "examples/",
+    "benchmarks/",
+]
+
+[[tool.mypy.overrides]]
+module = [
+    "chuk_llm.api.providers",  # Dynamic function generation
+    "chuk_llm.llm.__init__",   # Complex conditional imports
+    "chuk_llm.api.core",       # Complex async patterns
+    "chuk_llm.api.conversation",  # Dynamic conversation management
+    "chuk_llm.api.show_info",  # Display utilities
+    "chuk_llm.cli",            # CLI with dynamic imports
+]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = [
+    "chuk_llm.llm.providers.*",  # Provider-specific implementations
+    "chuk_llm.llm.discovery.*",  # Dynamic discovery
+]
+disable_error_code = ["assignment", "attr-defined", "misc"]

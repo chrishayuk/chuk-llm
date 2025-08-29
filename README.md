@@ -4,9 +4,11 @@ A unified, production-ready Python library for Large Language Model (LLM) provid
 
 ## 🌟 Why ChukLLM?
 
+✅ **🔌 OpenAI-Compatible Everything** - Support for 100+ providers via OpenAI API compatibility  
+✅ **🎯 Dynamic Provider Registration** - Add new providers at runtime without config files  
 ✅ **🛠️ Advanced Tool Streaming** - Real-time tool calls with incremental JSON parsing  
 ✅ **200+ Auto-Generated Functions** - Every provider & model + discovered models  
-✅ **🚀 GPT-5 & Reasoning Models** - Full support for GPT-5, O1, O3+ series, and GPT-OSS  
+✅ **🚀 GPT-5 & Reasoning Models** - Full support for GPT-5, O1, O3+ series, Claude 4, and GPT-OSS  
 ✅ **3-7x Performance Boost** - Concurrent requests vs sequential  
 ✅ **Real-time Streaming** - Token-by-token output as it's generated  
 ✅ **Memory Management** - Stateful conversations with context  
@@ -22,22 +24,23 @@ A unified, production-ready Python library for Large Language Model (LLM) provid
 ### Installation
 
 ```bash
+# Install uv (if you haven't already)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
 # Core functionality with session tracking (memory storage)
-pip install chuk_llm
-# OR with modern package manager
 uv add chuk_llm
 
 # With Redis for persistent sessions
-pip install chuk_llm[redis]
 uv add chuk_llm[redis]
 
 # With enhanced CLI experience
-pip install chuk_llm[cli]
 uv add chuk_llm[cli]
 
 # Full installation
-pip install chuk_llm[all]
 uv add chuk_llm[all]
+
+# Alternative: use pip if you prefer
+pip install chuk_llm[all]
 ```
 
 ### 30-Second Demo
@@ -46,21 +49,6 @@ uv add chuk_llm[all]
 # Zero installation required - try it instantly with uv!
 uvx chuk-llm stream_ollama_gpt_oss "What is Python?"
 ```
-
-**Live Streaming Output** (see the AI thinking in real-time!):
-```
-The user asks: "What is Python?" Provide a clear, accurate, concise response. It's a general question. Likely want to describe Python programming language: its nature, usage, etc. Should be succinct. Could mention its design, general-purpose, high-level, interpreted, dynamic, etc. Use clear language. Probably mention its creators, history, uses, features. Let's produce a short answer.
-
-Python is a high‑level, general‑purpose programming language known for its readability and simplicity.  
-* **Designed by** Guido van Rossum (first released in 1991).  
-* **Interpreted, dynamically typed** – you run code directly without compiling.  
-* **Extensible** – can call C/C++ libraries and embed in other applications.  
-* **Wide ecosystem** – thousands of packages on PyPI for data science, web development, automation, AI, etc.  
-* **Community‑driven** – strong support, regular updates (currently Python 3.x).  
-In short, Python lets developers write clear, concise code that can tackle everything from quick scripts to large, complex systems.
-```
-
-**🧠 Notice**: You can see the AI's thinking process first, then the polished answer - this is the power of reasoning models!
 
 Or in Python:
 ```python
@@ -71,220 +59,265 @@ answer = quick_question("What is 2+2?")
 print(answer)  # "2 + 2 equals 4."
 ```
 
-### Simple API - Perfect for Scripts & Prototypes
+## 🔌 NEW: OpenAI-Compatible Providers
+
+ChukLLM now supports **ANY OpenAI-compatible API** with zero configuration changes. This includes gateways, proxies, and self-hosted services.
+
+### Built-in OpenAI-Compatible Providers
 
 ```python
-from chuk_llm import ask_sync, configure
+from chuk_llm import ask_sync
 
-# Provider-specific functions (auto-generated!)
-from chuk_llm import ask_openai_sync, ask_azure_openai_sync, ask_claude_sync, ask_groq_sync
+# LiteLLM Gateway - Universal LLM Gateway (100+ providers)
+response = ask_sync("Hello!", provider="litellm", model="gpt-3.5-turbo")
+response = ask_sync("Hello!", provider="litellm", model="claude-3-opus")
+response = ask_sync("Hello!", provider="litellm", model="gemini-pro")
 
-# 🚀 NEW: GPT-5 models with unified reasoning architecture
-gpt5_response = ask_openai_sync("Explain quantum computing", model="gpt-5")
-gpt5_mini_response = ask_openai_sync("Quick summary of AI", model="gpt-5-mini")
+# OpenRouter - Unified API for LLMs
+response = ask_sync("Hello!", provider="openrouter", model="openai/gpt-4")
+response = ask_sync("Hello!", provider="openrouter", model="anthropic/claude-3-opus")
+response = ask_sync("Hello!", provider="openrouter", model="meta-llama/llama-3-70b-instruct")
 
-# 🧠 NEW: Claude 4 family with enhanced reasoning
-claude4_response = ask_claude_sync("Complex analysis task", model="claude-4-sonnet")
-claude41_response = ask_claude_sync("Advanced reasoning problem", model="claude-4-1-opus")
+# vLLM - High-performance inference
+response = ask_sync("Hello!", provider="vllm", model="meta-llama/Llama-3-70b-hf")
 
-openai_response = ask_openai_sync("Tell me a joke")
-azure_response = ask_azure_openai_sync("Explain quantum computing")
-claude_response = ask_claude_sync("Write a Python function") 
-groq_response = ask_groq_sync("What's the weather like?")
+# Together AI - Scalable inference
+response = ask_sync("Hello!", provider="togetherai", model="deepseek-ai/deepseek-v3")
+response = ask_sync("Hello!", provider="togetherai", model="meta-llama/Llama-3.3-70B-Instruct-Turbo")
 
-# ✨ NEW: Dynamic convenience functions for discovered models (including GPT-OSS)
-from chuk_llm import ask_ollama_llama3_2_sync, ask_ollama_gpt_oss_sync
-local_response = ask_ollama_llama3_2_sync("Write Python code")
-reasoning_response = ask_ollama_gpt_oss_sync("Think through this problem step by step")
-
-# Configure once, use everywhere
-configure(provider="openai", model="gpt-5", temperature=0.7)  # GPT-5 ready!
-response = ask_sync("Write a creative story opening")
-
-# Compare multiple providers including GPT-5
-from chuk_llm import compare_providers
-results = compare_providers("What is AI?", ["openai", "azure_openai", "anthropic"])
-for provider, response in results.items():
-    print(f"{provider}: {response}")
+# Generic OpenAI-compatible endpoint
+response = ask_sync("Hello!", provider="openai_compatible", 
+                   base_url="https://your-service.com/v1",
+                   api_key="your-key")
 ```
 
-### API Keys Setup
+### Environment Configuration
 
 ```bash
-export OPENAI_API_KEY="your-openai-key"
-export AZURE_OPENAI_API_KEY="your-azure-openai-key"
-export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com"
-export ANTHROPIC_API_KEY="your-anthropic-key"
-export GROQ_API_KEY="your-groq-key"
-export GEMINI_API_KEY="your-google-key"
-export PERPLEXITY_API_KEY="your-perplexity-key"
-# Add other provider keys as needed
+# LiteLLM Gateway
+export LITELLM_API_BASE=http://localhost:4000
+export LITELLM_API_KEY=your-litellm-key
+
+# OpenRouter
+export OPENROUTER_API_KEY=sk-or-...
+
+# vLLM Server
+export VLLM_API_BASE=http://localhost:8000/v1
+
+# Together AI
+export TOGETHER_API_KEY=...
+export TOGETHERAI_API_BASE=https://api.together.xyz/v1
+
+# Generic OpenAI-compatible
+export OPENAI_COMPATIBLE_API_BASE=https://your-service.com/v1
+export OPENAI_COMPATIBLE_API_KEY=your-key
 ```
 
-### 🖥️ Command Line Interface (CLI)
+## 🎯 NEW: Dynamic Provider Registration
 
-ChukLLM includes a powerful CLI for quick AI interactions from your terminal:
+Register new providers at runtime without modifying configuration files:
+
+### Simple Registration
+
+```python
+from chuk_llm import register_provider, register_openai_compatible
+
+# Register a simple OpenAI-compatible provider
+register_openai_compatible(
+    name="my_service",
+    api_base="https://api.myservice.com/v1",
+    api_key="sk-abc123",
+    models=["model-a", "model-b"],
+    default_model="model-a"
+)
+
+# Now use it immediately!
+from chuk_llm import ask_sync
+response = ask_sync("Hello!", provider="my_service")
+```
+
+### Advanced Registration
+
+```python
+# Register with environment variables
+register_provider(
+    name="custom_llm",
+    api_key_env="CUSTOM_API_KEY",        # Uses environment variable
+    api_base_env="CUSTOM_API_BASE",      # Uses environment variable
+    models=["gpt-3.5-turbo", "gpt-4"],
+    client_class="chuk_llm.llm.providers.openai_client.OpenAILLMClient",
+    features=["streaming", "tools", "vision", "json_mode"]
+)
+
+# Inherit from existing provider
+register_provider(
+    name="my_openai",
+    inherits_from="openai",              # Inherit OpenAI's configuration
+    api_base="https://proxy.company.com/v1",
+    api_key="company-key"
+)
+
+# Register LocalAI
+register_openai_compatible(
+    name="localai",
+    api_base="http://localhost:8080/v1",
+    models=["llama", "mistral", "phi"]
+)
+
+# Register FastChat
+register_openai_compatible(
+    name="fastchat",
+    api_base="http://localhost:8000/v1",
+    models=["vicuna-13b", "chatglm2-6b"]
+)
+
+# Register LM Studio
+register_openai_compatible(
+    name="lmstudio",
+    api_base="http://localhost:1234/v1",
+    models=["*"]  # Accept any model
+)
+
+# Register Anyscale Endpoints
+register_openai_compatible(
+    name="anyscale",
+    api_base="https://api.endpoints.anyscale.com/v1",
+    api_key_env="ANYSCALE_API_KEY",
+    models=["meta-llama/Llama-2-70b-chat-hf", "mistralai/Mixtral-8x7B-Instruct-v0.1"]
+)
+
+# Register Ollama with OpenAI compatibility
+register_openai_compatible(
+    name="ollama_openai",
+    api_base="http://localhost:11434/v1",
+    models=["llama3.3", "mistral", "phi3"]
+)
+```
+
+### Managing Dynamic Providers
+
+```python
+from chuk_llm import (
+    update_provider,
+    unregister_provider,
+    list_dynamic_providers,
+    get_provider_config,
+    provider_exists
+)
+
+# Update a provider's configuration
+update_provider(
+    "my_service",
+    api_base="https://new-endpoint.com/v1",
+    models=["model-a", "model-b", "model-c"]
+)
+
+# Check if a provider exists
+if provider_exists("my_service"):
+    response = ask_sync("Hello", provider="my_service")
+
+# List all dynamically registered providers
+dynamic = list_dynamic_providers()
+print(f"Dynamic providers: {dynamic}")
+
+# Get provider configuration
+config = get_provider_config("my_service")
+print(f"API base: {config.api_base}")
+print(f"Models: {config.models}")
+
+# Remove a dynamic provider
+success = unregister_provider("my_service")
+```
+
+## 🖥️ Enhanced CLI with Dynamic Configuration
+
+The CLI now supports dynamic provider configuration on-the-fly:
 
 ```bash
+# Use any provider with custom endpoints
+chuk-llm ask "Hello" --provider openai --base-url https://api.custom.com/v1 --api-key sk-custom-key
+chuk-llm ask "Test" --provider ollama --base-url http://remote-server:11434
+chuk-llm ask "Query" --provider anthropic --api-key sk-test-key
+
+# Use OpenAI-compatible providers
+chuk-llm ask "Hello" --provider litellm --model claude-3-opus
+chuk-llm ask "Hello" --provider openrouter --model openai/gpt-4
+chuk-llm ask "Hello" --provider vllm --model meta-llama/Llama-3-70b-hf
+chuk-llm ask "Hello" --provider togetherai --model deepseek-ai/deepseek-v3
+
 # Quick questions using global aliases
 chuk-llm ask_granite "What is Python?"
 chuk-llm ask_claude "Explain quantum computing"
 chuk-llm ask_gpt "Write a haiku about code"
-chuk-llm ask_azure "Deploy models to Azure"
 
-# 🚀 NEW: GPT-5 models via CLI
-chuk-llm ask "Solve this complex problem" --provider openai --model gpt-5
-chuk-llm ask "Quick answer" --provider openai --model gpt-5-mini
-
-# 🧠 NEW: Claude 4 models via CLI
-chuk-llm ask "Complex reasoning task" --provider anthropic --model claude-4-sonnet
-chuk-llm ask "Advanced analysis" --provider anthropic --model claude-4-1-opus
-
-# ✨ NEW: Convenience functions for discovered models (including reasoning models)
+# Convenience functions for discovered models
 chuk-llm ask_ollama_gpt_oss "Think through this step by step"
 chuk-llm ask_ollama_mistral_small_latest "Tell me a joke"
 chuk-llm stream_ollama_llama3_2 "Write a long explanation"
-
-# General ask command with provider selection
-chuk-llm ask "What is machine learning?" --provider openai --model gpt-5
 
 # JSON responses for structured output
 chuk-llm ask "List 3 Python libraries" --json --provider openai --model gpt-5
 
 # Provider and model management
 chuk-llm providers              # Show all available providers
-chuk-llm models openai          # Show models for OpenAI (includes GPT-5)
+chuk-llm models openai          # Show models for OpenAI
 chuk-llm test openai            # Test OpenAI connection
-chuk-llm discover ollama        # Discover new Ollama models ✨ NEW
+chuk-llm discover ollama        # Discover new Ollama models
 
 # Configuration and diagnostics
 chuk-llm config                 # Show current configuration
-chuk-llm functions              # List all auto-generated functions ✨ NEW
+chuk-llm functions              # List all auto-generated functions
 chuk-llm help                   # Comprehensive help
 
-# Use with uv for zero-install usage (modern package manager)
-uvx chuk-llm ask "What is Azure OpenAI?" --provider azure_openai
-uvx chuk-llm ask_ollama_gpt_oss "Reasoning problem"  # ✨ NEW
-uvx chuk-llm ask "Test GPT-5" --provider openai --model gpt-5  # 🚀 NEW
+# Use with uv for zero-install usage
+uvx chuk-llm ask "What is AI?" --provider openai
+uvx chuk-llm ask_ollama_gpt_oss "Reasoning problem"
+uvx chuk-llm ask "Test GPT-5" --provider openai --model gpt-5
 ```
 
-#### CLI Features
+## 📊 Supported Providers
 
-- **🎯 Global Aliases**: Quick commands like `ask_granite`, `ask_claude`, `ask_gpt`, `ask_azure`
-- **🚀 GPT-5 Support**: Full CLI support for GPT-5 family models with reasoning capabilities
-- **✨ Dynamic Convenience Functions**: Auto-generated functions like `ask_ollama_gpt_oss`, `ask_ollama_mistral_small_latest`
-- **🛠️ Real-time Tool Streaming**: See function calls and responses as they're generated
-- **🌊 Content Streaming**: See text responses as they're generated token by token
-- **🔧 Provider Management**: Test, discover, and configure providers
-- **📊 Rich Output**: Beautiful tables and formatting (with `[cli]` extra)
-- **🔍 Discovery Integration**: Find and use new Ollama models instantly (including GPT-OSS)
-- **⚡ Fast Feedback**: Immediate responses with connection testing
-- **🎨 Quiet/Verbose Modes**: Control output detail with `--quiet` or `--verbose`
-
-### Async API - Production Performance (3-7x faster!)
-
-```python
-import asyncio
-from chuk_llm import ask, stream, conversation
-
-async def main():
-    # Basic async call
-    response = await ask("Hello!")
-    
-    # 🚀 NEW: GPT-5 family with reasoning capabilities
-    from chuk_llm import ask_openai
-    gpt5_response = await ask_openai("Complex reasoning task", model="gpt-5")
-    gpt5_mini_response = await ask_openai("Quick question", model="gpt-5-mini")
-    
-# 🧠 NEW: Claude 4 family with enhanced reasoning
-    from chuk_llm import ask_claude
-    claude4_response = await ask_claude("Complex reasoning task", model="claude-4-sonnet")
-    claude41_response = await ask_claude("Advanced analysis", model="claude-4-1-opus")
-    
-    # Provider-specific async functions
-    from chuk_llm import ask_azure_openai, ask_claude, ask_groq
-    
-    azure_response = await ask_azure_openai("Explain quantum computing")
-    claude_response = await ask_claude("Write a Python function")
-    groq_response = await ask_groq("What's the weather like?")
-    
-    # ✨ NEW: Dynamic async functions for discovered models (including reasoning models)
-    from chuk_llm import ask_ollama_llama3_2, ask_ollama_gpt_oss, stream_ollama_qwen3
-    local_response = await ask_ollama_llama3_2("Write Python code")
-    reasoning_response = await ask_ollama_gpt_oss("Think through this problem")
-    
-    # Real-time streaming (token by token) - works with GPT-5 and reasoning models
-    print("Streaming GPT-OSS thinking: ", end="", flush=True)
-    async for chunk in stream_ollama_qwen3("Write a haiku about coding"):
-        print(chunk, end="", flush=True)
-    
-    # 🛠️ NEW: Stream tool calls in real-time
-    print("\n🛠️ Streaming with tools:")
-    tools = [{"type": "function", "function": {"name": "calculate", ...}}]
-    async for chunk in stream("Calculate compound interest", tools=tools):
-        if chunk.get("tool_calls"):
-            for tc in chunk["tool_calls"]:
-                print(f"🔧 {tc['function']['name']}({tc['function']['arguments']})")
-        if chunk.get("response"):
-            print(chunk["response"], end="", flush=True)
-    
-    # Conversations with memory - GPT-5 compatible
-    async with conversation(provider="openai", model="gpt-5") as chat:
-        await chat.say("My name is Alice")
-        response = await chat.say("What's my name?")
-        # Remembers: "Your name is Alice"
-    
-    # Concurrent requests (massive speedup!) - works with all models including GPT-5
-    tasks = [
-        ask("Capital of France?", provider="openai", model="gpt-5"),
-        ask("What is 2+2?", provider="openai", model="gpt-5-mini"), 
-        ask("Name a color", provider="claude")
-    ]
-    responses = await asyncio.gather(*tasks)
-    # 3-7x faster than sequential!
-
-asyncio.run(main())
-```
-
-## 🌟 Core Features
-
-### Multi-Provider Support
-
-ChukLLM supports **9 major LLM providers** with unified APIs:
-
+### Major Cloud Providers
 | Provider | Models | Special Features |
 |----------|---------|------------------|
-| **OpenAI** | 🚀 GPT-5, GPT-5-mini, GPT-4o, GPT-3.5-turbo | Reasoning models, function calling, vision, JSON mode |
-| **Azure OpenAI** 🏢 | 🚀 Enterprise GPT-5, GPT-4 models | Private endpoints, compliance, audit logs |
-| **Anthropic** 🧠 | Claude 4.1 Opus, Claude 4 Sonnet, Claude 3.5 Sonnet | Advanced reasoning, long context, strong analysis |
-| **Google Gemini** | Gemini 2.0 Flash, Gemini 1.5 Pro | Multimodal, fast inference |
-| **Groq** ⚡ | Llama models | Ultra-fast inference (500+ tokens/sec) |
-| **Perplexity** 🌐 | Sonar models | Real-time web search with citations |
-| **Ollama** 🏠 | 🧠 GPT-OSS, Local models + discovery | Privacy, reasoning models, offline usage, custom models |
-| **IBM watsonx** 🏢 | Granite, Llama 4 | Enterprise compliance, 131K context |
-| **Mistral AI** 🇪🇺 | Mistral Large, Medium | European, efficient models |
+| **OpenAI** | GPT-5, GPT-4o, GPT-3.5-turbo, O1/O3 series | Reasoning models, function calling, JSON mode |
+| **Azure OpenAI** | Enterprise GPT-5, GPT-4, Custom deployments | Private endpoints, compliance, auto-discovery |
+| **Anthropic** | Claude 4.1 Opus, Claude 4 Sonnet, Claude 3.7 | Advanced reasoning, 200K context, vision |
+| **Google Gemini** | Gemini 2.5 Flash/Pro, 2.0 Flash, 1.5 Pro | Multimodal, 2M context, thinking capabilities |
+| **Groq** | Llama 3.3, Mixtral, GPT-OSS | Ultra-fast inference (245+ tokens/sec), 131K context |
+| **Perplexity** | Sonar models | Real-time web search, citations |
+| **Mistral AI** | Magistral (reasoning), Codestral, Pixtral | European, <think> tags, vision models |
+| **DeepSeek** | DeepSeek-Reasoner, DeepSeek-Chat | Complex reasoning (30-60s), OpenAI-compatible |
+| **IBM watsonx** | Granite 3.3, Llama 4, Custom models | Enterprise compliance, IBM Cloud integration |
 
-### 🛠️ Advanced Tool Streaming - BREAKTHROUGH FEATURE!
+### OpenAI-Compatible Gateways
+| Provider | Description | Use Case |
+|----------|-------------|----------|
+| **LiteLLM** | Universal gateway for 100+ providers | Multi-provider apps |
+| **OpenRouter** | Unified API for all major LLMs | Provider switching |
+| **vLLM** | High-performance OpenAI-compatible | Self-hosted inference |
+| **Together AI** | Scalable inference platform | Production workloads |
+| **openai_compatible** | Generic OpenAI API | Any compatible service |
 
-ChukLLM implements cutting-edge **real-time tool call streaming** that solves one of the hardest problems in LLM streaming: how to stream function calls as they're being generated.
+### Local/Self-Hosted
+| Provider | Description | Use Case |
+|----------|-------------|----------|
+| **Ollama** | Local models with discovery | Privacy, offline |
+| **LocalAI** | OpenAI-compatible local API | Self-hosted |
+| **FastChat** | Multi-model serving | Research |
+| **LM Studio** | Desktop model server | Personal use |
+| **Text Generation WebUI** | Gradio-based UI | Experimentation |
 
-#### The Challenge
-Traditional streaming only handles text content, but modern LLMs also generate tool/function calls with complex JSON parameters. Most libraries force you to wait for the entire response before seeing tool calls.
+## 🛠️ Advanced Features
 
-#### ChukLLM's Solution
-- **🔄 Incremental JSON Parsing**: Streams tool calls as JSON arguments are built up token by token
-- **⚡ Immediate Tool Detection**: Shows function names as soon as they're available
-- **🧠 Smart Deduplication**: Prevents duplicate tool calls during streaming
-- **🔧 Universal Compatibility**: Works across all providers (OpenAI, Anthropic, Ollama, etc.)
-- **💫 Reasoning Model Support**: Special handling for models like GPT-5 and Claude 4 that interleave thinking and tool calls
+### Real-time Tool Streaming
 
-#### Live Tool Streaming Examples
+ChukLLM implements cutting-edge real-time tool call streaming:
 
 ```python
 import asyncio
 from chuk_llm import stream
 
-# Stream tool calls in real-time
 async def stream_with_tools():
     tools = [
         {
@@ -295,22 +328,7 @@ async def stream_with_tools():
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "expression": {"type": "string"},
-                        "precision": {"type": "integer"}
-                    }
-                }
-            }
-        },
-        {
-            "type": "function", 
-            "function": {
-                "name": "search_web",
-                "description": "Search the web for information",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "max_results": {"type": "integer"}
+                        "expression": {"type": "string"}
                     }
                 }
             }
@@ -319,297 +337,112 @@ async def stream_with_tools():
     
     print("🛠️  Streaming with tool calls:")
     async for chunk in stream(
-        "Calculate 15% of 2,847 and then search for information about compound interest",
+        "Calculate 15% of 2,847",
         provider="openai",
         model="gpt-5",
         tools=tools
     ):
         if chunk.get("tool_calls"):
-            # Tool calls stream in real-time!
             for tool_call in chunk["tool_calls"]:
                 func_name = tool_call["function"]["name"]
                 args = tool_call["function"]["arguments"]
                 print(f"🔧 TOOL CALL: {func_name}({args})")
         
         if chunk.get("response"):
-            # Text content also streams
             print(chunk["response"], end="", flush=True)
 
 asyncio.run(stream_with_tools())
 ```
 
-#### Streaming Output Example
-```bash
-🧠 Thinking: The user asks: "What is Python?" Provide a clear, accurate, concise response...
-
-🛠️  Streaming with tool calls:
-I'll help you calculate that and find information about compound interest.
-
-🔧 TOOL CALL: calculate({"expression": "2847 * 0.15", "precision": 2})
-The calculation shows that 15% of 2,847 is 427.05.
-
-🔧 TOOL CALL: search_web({"query": "compound interest explanation", "max_results": 5})
-Based on the search results, compound interest is...
-```
-
-#### Advanced Streaming Features
+### Conversations with Memory
 
 ```python
-# Stream reasoning models with tool calls and see the thinking process live
-async for chunk in stream(
-    "Think through this problem step by step, then use tools as needed",
-    provider="anthropic",
-    model="claude-4-sonnet",
-    tools=tools
-):
-    # Get both thinking process AND tool calls in real-time
-    if chunk.get("reasoning"):
-        print(f"💭 Thinking: {chunk['reasoning']['thinking_content']}")
-    
-    if chunk.get("tool_calls"):
-        print(f"🔧 Tool: {chunk['tool_calls'][0]['function']['name']}")
-    
-    if chunk.get("response"):
-        print(chunk["response"], end="")
+from chuk_llm import conversation
 
-# Stream GPT-OSS reasoning with complete thinking visibility
-async for chunk in stream_ollama_gpt_oss(
-    "Analyze this data and create a report",
-    tools=analysis_tools
-):
-    # See the model's complete reasoning process live:
-    # "The user asks for data analysis. I should first understand the data structure, 
-    #  then identify key patterns, calculate relevant metrics, and present findings..."
-    if chunk.get("reasoning", {}).get("is_thinking"):
-        print(f"🧠 {chunk['reasoning']['thinking_content']}", end="")
-    elif chunk.get("tool_calls"):
-        print(f"\n🛠️  Using: {chunk['tool_calls'][0]['function']['name']}")
-    else:
-        print(chunk["response"], end="")
+async def chat_example():
+    # Conversation with automatic session tracking
+    async with conversation(provider="openai", model="gpt-5") as chat:
+        await chat.say("My name is Alice")
+        response = await chat.say("What's my name?")
+        # Remembers: "Your name is Alice"
+        
+        # Save conversation
+        conversation_id = await chat.save()
+        
+    # Resume later
+    async with conversation(resume_from=conversation_id) as chat:
+        response = await chat.say("Do you remember me?")
+        # Still remembers the context!
+
+asyncio.run(chat_example())
 ```
 
-#### Why This Matters
+### Dynamic Model Discovery
 
-1. **⚡ Immediate Feedback**: See what the AI is doing as it works
-2. **🔧 Tool Transparency**: Watch function calls happen in real-time  
-3. **🧠 Reasoning Visibility**: For reasoning models, see the thinking process live
-4. **📊 Better UX**: Users don't wait in silence for complex operations
-5. **🐛 Easier Debugging**: Spot issues with tool calls immediately
-6. **🔄 Interactive Workflows**: Build responsive AI applications
-
-#### Technical Implementation
-
-ChukLLM's streaming engine handles:
-- **JSON Fragment Assembly**: Builds complete JSON from streaming tokens
-- **Tool Call Deduplication**: Prevents the same tool call from being yielded multiple times
-- **Provider Differences**: Handles OpenAI's delta format vs Anthropic's event format vs Ollama's chunks
-- **Error Recovery**: Graceful handling of malformed JSON during streaming
-- **Context Preservation**: Maintains conversation context across streaming tool calls
-
-This breakthrough makes ChukLLM ideal for building responsive AI applications where users need to see what's happening in real-time, especially with complex multi-tool workflows.
-
-### 🧠 Claude 4 & Advanced Reasoning - NEW!
-
-ChukLLM provides first-class support for Anthropic's latest Claude 4 family alongside GPT-5:
-
-#### Claude 4 Family Models
-- **claude-4-1-opus** - Flagship model with the most advanced reasoning capabilities
-- **claude-4-sonnet** - Balanced model with strong reasoning and fast performance
-- **claude-4-haiku** - Efficient model with reasoning capabilities (coming soon)
-
-#### Claude 4 Features
-- **Enhanced Reasoning**: Advanced analytical and logical thinking capabilities
-- **Long Context**: Up to 200K tokens for extensive document analysis
-- **Tool Calling**: Sophisticated function calling with complex parameter handling
-- **Vision Support**: Advanced image analysis and understanding
-- **Code Generation**: Superior programming assistance and debugging
+ChukLLM automatically discovers and generates functions for available models:
 
 ```python
-# Claude 4 usage examples
-from chuk_llm import ask_sync
-
-# Claude 4 Sonnet for balanced reasoning
-response = ask_sync("Analyze this complex business problem step by step", 
-                   provider="anthropic", model="claude-4-sonnet")
-
-# Claude 4.1 Opus for the most advanced reasoning
-advanced_response = ask_sync("Provide a detailed strategic analysis", 
-                           provider="anthropic", model="claude-4-1-opus")
-
-# Claude 4 with vision capabilities
-vision_response = ask_sync("Analyze this chart and provide insights", 
-                          provider="anthropic", 
-                          model="claude-4-sonnet",
-                          messages=[{
-                              "role": "user",
-                              "content": [
-                                  {"type": "text", "text": "Analyze this chart"},
-                                  {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
-                              ]
-                          }])
-
-# Claude 4 with complex tool calling
-tools = [{"type": "function", "function": {"name": "data_analysis", ...}}]
-response = ask_sync("Analyze this dataset", 
-                   provider="anthropic", model="claude-4-1-opus", tools=tools)
-```
-
-### 🚀 GPT-5 & Reasoning Model Support - NEW!
-
-ChukLLM provides first-class support for OpenAI's latest GPT-5 family and reasoning models:
-
-#### GPT-5 Family Models
-- **gpt-5** - Full-scale GPT-5 with unified reasoning architecture
-- **gpt-5-mini** - Efficient GPT-5 variant for faster responses
-- **gpt-5-nano** - Ultra-lightweight GPT-5 for simple tasks
-- **gpt-5-chat** - Conversation-optimized GPT-5
-
-#### Reasoning Model Support
-- **O1 Series** - o1-mini (legacy support)
-- **O3 Series** - o3, o3-mini with advanced reasoning
-- **O4/O5 Series** - Next-generation reasoning models
-- **Claude 4 Series** - claude-4-sonnet, claude-4-1-opus with enhanced reasoning
-- **GPT-OSS** - Open-source reasoning model via Ollama discovery
-
-```python
-# GPT-5 usage examples
-from chuk_llm import ask_sync
-
-# GPT-5 with automatic parameter optimization
-response = ask_sync("Solve this complex reasoning problem", 
-                   provider="openai", model="gpt-5")
-
-# GPT-5-mini for efficiency
-quick_response = ask_sync("Quick question", 
-                         provider="openai", model="gpt-5-mini")
-
-# Claude 4 usage examples
-response = ask_sync("Complex reasoning problem", 
-                   provider="anthropic", model="claude-4-sonnet")
-
-# Claude 4.1 Opus for advanced analysis
-advanced_response = ask_sync("Detailed analysis task", 
-                           provider="anthropic", model="claude-4-1-opus")
-
-# GPT-OSS via Ollama (automatically discovered)
-from chuk_llm import ask_ollama_gpt_oss_sync
-reasoning_response = ask_ollama_gpt_oss_sync("Think through this step by step")
-
-# All reasoning models support tool calling and streaming
-tools = [{"type": "function", "function": {"name": "calculate", ...}}]
-response = ask_sync("What's 15% of 250?", 
-                   provider="anthropic", model="claude-4-sonnet", tools=tools)
-```
-
-#### Automatic Parameter Handling
-
-ChukLLM automatically handles reasoning model requirements:
-
-```python
-# Automatic parameter conversion for reasoning models
-response = ask_sync("Complex task", 
-                   provider="openai", 
-                   model="gpt-5",
-                   max_tokens=1000)  # Automatically converted to max_completion_tokens
-
-# Temperature restrictions handled automatically
-response = ask_sync("Task", 
-                   provider="openai", 
-                   model="gpt-5",
-                   temperature=0.7)  # Automatically removed (GPT-5 uses fixed temperature)
-```
-
-### 🔍 Dynamic Model Discovery - ✨ ENHANCED!
-
-ChukLLM automatically discovers and generates functions for Ollama models in real-time, including reasoning models:
-
-```python
-# Start Ollama with reasoning models
+# Ollama models are discovered automatically
 # ollama pull gpt-oss
 # ollama pull llama3.2
-# ollama pull qwen2.5:14b
-# ollama pull deepseek-coder:6.7b
 
-# ChukLLM automatically discovers them and generates functions!
 from chuk_llm import (
-    ask_ollama_gpt_oss_sync,           # 🧠 Reasoning model - Auto-generated!
-    ask_ollama_llama3_2_sync,          # Auto-generated!
-    ask_ollama_qwen2_5_14b_sync,       # Auto-generated!
-    ask_ollama_deepseek_coder_6_7b_sync, # Auto-generated!
+    ask_ollama_gpt_oss_sync,     # Auto-generated!
+    ask_ollama_llama3_2_sync,    # Auto-generated!
 )
 
-# Use reasoning models immediately
-reasoning_response = ask_ollama_gpt_oss_sync("Think through this problem step by step")
+response = ask_ollama_gpt_oss_sync("Think through this problem")
 
-# ✨ NEW: CLI discovery with instant function availability
-# chuk-llm discover ollama
-# chuk-llm ask_ollama_gpt_oss "Reasoning problem"  # Works immediately!
+# Trigger discovery manually
+from chuk_llm.api.providers import trigger_ollama_discovery_and_refresh
+new_functions = trigger_ollama_discovery_and_refresh()
+print(f"Discovered {len(new_functions)} new functions")
 ```
 
-#### Discovery Features
+#### Provider Discovery Examples
 
-- **🔍 Real-time Detection**: Automatically finds new Ollama models including reasoning models
-- **🧠 Reasoning Model Detection**: Automatically identifies models like GPT-OSS with thinking capabilities
-- **⚡ Instant Functions**: Generates `ask_*` and `stream_*` functions immediately
-- **🖥️ CLI Integration**: New models work instantly in CLI with convenience syntax
-- **🧠 Smart Caching**: Remembers discovered models between sessions
-- **📊 Environment Controls**: Fine-grained control over discovery behavior
+Run the discovery examples to see available models for each provider:
 
-### 🧠 Intelligent System Prompt Generation - NEW!
+```bash
+# Discover OpenAI models
+uv run examples/llm_provider_examples/openai_usage_examples.py
 
-ChukLLM features an advanced system prompt generator that automatically creates optimized prompts:
+# Discover Anthropic models  
+uv run examples/llm_provider_examples/anthropic_usage_examples.py
 
-```python
-from chuk_llm import ask_sync
+# Discover local Ollama models
+uv run examples/llm_provider_examples/ollama_usage_examples.py
 
-# GPT-5 gets optimized reasoning prompts
-response = ask_sync("Complex problem", provider="openai", model="gpt-5")
-# Automatically gets system prompt optimized for reasoning
-
-# Claude 4 gets optimized reasoning prompts
-response = ask_sync("Complex problem", provider="anthropic", model="claude-4-sonnet")
-# Automatically gets system prompt optimized for advanced reasoning
-
-# GPT-OSS gets thinking-focused prompts
-response = ask_ollama_gpt_oss_sync("Analyze this situation")
-# Automatically gets system prompt optimized for step-by-step thinking
-
-# With function calling - works with GPT-5 and reasoning models
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "calculate",
-            "description": "Perform mathematical calculations",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "expression": {"type": "string", "description": "Math expression to evaluate"}
-                }
-            }
-        }
-    }
-]
-
-response = ask_sync("What's 15% of 250?", provider="anthropic", model="claude-4-sonnet", tools=tools)
-# System prompt automatically includes function calling guidelines optimized for Claude 4
+# Discover Azure OpenAI deployments
+uv run examples/llm_provider_examples/azure_usage_examples.py
 ```
 
-### 🎯 Automatic Session Tracking
+Available provider examples:
+- `anthropic_usage_examples.py` - Claude models with Opus/Sonnet/Haiku families
+- `azure_usage_examples.py` - Azure OpenAI deployments with auto-discovery
+- `deepseek_usage_examples.py` - DeepSeek reasoning and chat models
+- `gemini_usage_examples.py` - Google Gemini models with multimodal support
+- `groq_usage_examples.py` - Groq's ultra-fast inference models
+- `mistral_usage_examples.py` - Mistral AI models including Magistral
+- `openai_usage_examples.py` - OpenAI GPT models including O1/O3 reasoning
+- `openrouter_usage_examples.py` - OpenRouter's model marketplace
+- `perplexity_usage_examples.py` - Perplexity's search-enhanced models
+- `watsonx_usage_examples.py` - IBM Watsonx Granite models
 
-ChukLLM includes automatic session tracking powered by `chuk-ai-session-manager`:
+### Session Analytics
 
 ```python
 from chuk_llm import ask, get_session_stats, get_session_history
 
-# All calls are automatically tracked (including GPT-5)
-await ask("What's the capital of France?", provider="openai", model="gpt-5")
+# All calls are automatically tracked
+await ask("What's the capital of France?")
 await ask("What's 2+2?")
 
 # Get comprehensive analytics
 stats = await get_session_stats()
 print(f"📊 Tracked {stats['total_messages']} messages")
 print(f"💰 Total cost: ${stats['estimated_cost']:.6f}")
+print(f"🔤 Total tokens: {stats['total_tokens']}")
 
 # View complete history
 history = await get_session_history()
@@ -617,407 +450,77 @@ for msg in history:
     print(f"{msg['role']}: {msg['content'][:50]}...")
 ```
 
-### 🎭 Enhanced Conversations
-
-```python
-# Conversation branching with Claude 4
-async with conversation(provider="anthropic", model="claude-4-sonnet") as chat:
-    await chat.say("Let's plan a vacation")
-    
-    # Branch to explore Japan
-    async with chat.branch() as japan_branch:
-        await japan_branch.say("Tell me about visiting Japan")
-        # This conversation stays isolated
-    
-    # Main conversation doesn't know about branches
-    await chat.say("I've decided on Japan!")
-
-# Conversation persistence with reasoning models
-async with conversation(provider="ollama", model="gpt-oss") as chat:
-    await chat.say("I'm learning Python")
-    conversation_id = await chat.save()
-
-# Resume days later with full reasoning context
-async with conversation(resume_from=conversation_id) as chat:
-    response = await chat.say("What should I learn next?")
-    # AI remembers your background and thinks through the answer!
-```
-
-### 200+ Auto-Generated Functions ✨ EXPANDED
-
-ChukLLM automatically creates functions for every provider and model:
-
-```python
-# Base provider functions
-from chuk_llm import ask_openai, ask_azure_openai, ask_anthropic, ask_groq, ask_ollama
-
-# 🚀 NEW: GPT-5 family functions (auto-generated from config)
-from chuk_llm import ask_openai_gpt5, ask_openai_gpt5_mini, ask_azure_openai_gpt5
-
-# Model-specific functions (auto-generated from config + discovery)
-from chuk_llm import ask_openai_gpt4o, ask_azure_openai_gpt4o, ask_claude_4_sonnet, ask_claude_4_1_opus
-
-# ✨ NEW: Dynamically discovered functions (including reasoning models)
-from chuk_llm import (
-    ask_ollama_gpt_oss,               # 🧠 Reasoning model - Auto-discovered!
-    ask_ollama_llama3_2,              # Discovered from ollama pull llama3.2
-    ask_ollama_mistral_small_latest,  # Discovered from ollama pull mistral-small:latest
-    stream_ollama_gpt_oss,            # 🧠 Reasoning stream version auto-generated!
-)
-
-# All with sync, async, and streaming variants!
-```
-
-## 📦 Installation
-
-### Installation Matrix
-
-| Command | Session Storage | CLI Features | Use Case |
-|---------|----------------|--------------|----------|
-| `pip install chuk_llm` | Memory (included) | Basic | Development, scripting |
-| `uv add chuk_llm` | Memory (included) | Basic | Modern development, scripting |
-| `pip install chuk_llm[redis]` | Memory + Redis | Basic | Production apps |
-| `uv add chuk_llm[redis]` | Memory + Redis | Basic | Modern production apps |
-| `pip install chuk_llm[cli]` | Memory (included) | Enhanced | CLI tools |
-| `uv add chuk_llm[cli]` | Memory (included) | Enhanced | Modern CLI tools |
-| `pip install chuk_llm[all]` | Memory + Redis | Enhanced | Full features |
-| `uv add chuk_llm[all]` | Memory + Redis | Enhanced | Modern full features |
-
-### Why UV?
-
-`uv` is the modern, fast Python package manager that's becoming the new standard:
-
-```bash
-# Install uv (if you haven't already)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Use chuk_llm with uv (much faster than pip!)
-uv add chuk_llm[all]
-
-# Run without installation using uvx - perfect for trying ChukLLM
-uvx chuk-llm ask "What is GPT-5?" --provider openai --model gpt-5
-uvx chuk-llm ask_ollama_gpt_oss "Think through this problem"
-
-# Real example - zero installation required:
-$ uv run chuk-llm stream_ollama_gpt_oss "What is Python?"
-🧠 Thinking: The user asks: "What is Python?" Provide a clear, accurate, concise response...
-Python is a high‑level, general‑purpose programming language known for its readability and simplicity.  
-* **Designed by** Guido van Rossum (first released in 1991).  
-* **Interpreted, dynamically typed** – you run code directly without compiling...
-
-# Create a new project with chuk_llm
-uv init my-ai-project
-cd my-ai-project
-uv add chuk_llm[all]
-```
-
-### Session Storage Configuration
-
-```bash
-# Default: Memory storage (fast, no persistence)
-export SESSION_PROVIDER=memory
-
-# Production: Redis storage (persistent, requires redis extra)
-export SESSION_PROVIDER=redis
-export SESSION_REDIS_URL=redis://localhost:6379/0
-
-# Disable session tracking entirely
-export CHUK_LLM_DISABLE_SESSIONS=true
-```
-
-## 🚀 Advanced Usage
-
-### GPT-5 Advanced Examples
-
-```python
-# GPT-5 with complex reasoning tasks
-from chuk_llm import ask_sync
-
-# GPT-5 automatically uses optimized parameters
-response = ask_sync("""
-Analyze this complex business scenario:
-A startup has $100k runway, 5 employees, growing 20% MoM but burning $15k/month.
-They have 3 potential funding offers. What should they do?
-""", provider="openai", model="gpt-5")
-
-# GPT-5 with function calling (tools work seamlessly)
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "financial_calculator",
-            "description": "Calculate financial metrics",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "revenue": {"type": "number"},
-                    "expenses": {"type": "number"},
-                    "growth_rate": {"type": "number"}
-                }
-            }
-        }
-    }
-]
-
-response = ask_sync("Calculate runway for this startup", 
-                   provider="openai", model="gpt-5", tools=tools)
-```
-
-### Reasoning Model Comparison
-
-```python
-# Compare reasoning models across providers
-from chuk_llm import compare_providers
-
-reasoning_prompt = """
-Think through this step by step:
-If a train leaves New York at 3 PM traveling at 80 mph toward Chicago (800 miles away),
-and another train leaves Chicago at 4 PM traveling at 70 mph toward New York,
-at what time will they meet?
-"""
-
-# Compare different reasoning approaches
-results = compare_providers(reasoning_prompt, [
-    "openai:gpt-5",           # 🚀 GPT-5 unified reasoning
-    "openai:o3-mini",         # O3 series reasoning
-    "ollama:gpt-oss",         # 🧠 Open-source reasoning
-    "anthropic:claude-3-5-sonnet"  # Claude's reasoning
-])
-
-for provider_model, response in results.items():
-    print(f"\n{provider_model}:")
-    print(response[:200] + "...")
-```
-
-### Performance Demo
-
-```python
-# Sequential vs Concurrent Performance Test with GPT-5
-import time
-import asyncio
-from chuk_llm import ask
-
-async def performance_demo():
-    questions = [
-        "What is quantum computing?",
-        "Explain machine learning",
-        "What is the future of AI?"
-    ]
-    
-    # Sequential (slow)
-    start = time.time()
-    for q in questions:
-        await ask(q, provider="openai", model="gpt-5")
-    sequential_time = time.time() - start
-    
-    # Concurrent (fast!) - works great with GPT-5
-    start = time.time()
-    await asyncio.gather(*[
-        ask(q, provider="openai", model="gpt-5") for q in questions
-    ])
-    concurrent_time = time.time() - start
-    
-    print(f"🐌 Sequential GPT-5: {sequential_time:.2f}s")
-    print(f"🚀 Concurrent GPT-5: {concurrent_time:.2f}s") 
-    print(f"⚡ Speedup: {sequential_time/concurrent_time:.1f}x faster!")
-    # GPT-5 typically shows 3-7x speedup with concurrent requests!
-
-asyncio.run(performance_demo())
-```
-
-## 🌐 Provider Models
-
-### OpenAI 🚀
-- **GPT-5 Family** - gpt-5, gpt-5-mini, gpt-5-nano, gpt-5-chat (unified reasoning architecture)
-- **GPT-4** - gpt-4o, gpt-4o-mini, gpt-4-turbo
-- **GPT-3.5** - gpt-3.5-turbo
-- **Reasoning Models** - o1-mini (legacy), o3, o3-mini, o4, o5 series
-
-### Azure OpenAI 🏢
-Enterprise-grade access to OpenAI models with enhanced security and compliance:
-
-#### Enterprise Features
-- **🔒 Enterprise Security**: Private endpoints, VNet integration, data residency controls
-- **📊 Compliance**: SOC 2, HIPAA, PCI DSS, ISO 27001 certified
-- **🎯 Custom Deployments**: Deploy specific model versions with dedicated capacity
-- **📈 Advanced Monitoring**: Detailed usage analytics and audit logs
-- **🔧 Fine-tuning**: Custom model training on your enterprise data
-- **🌍 Global Availability**: Multiple Azure regions with data residency
-
-#### GPT-5 Enterprise Models
-- **🚀 gpt-5** - Enterprise-grade GPT-5 with full reasoning capabilities
-- **🚀 gpt-5-mini** - Efficient enterprise GPT-5 variant
-- **Enterprise O3+ Models** - Advanced reasoning models for enterprise
-
-#### Model Aliases
-```python
-# These automatically use your Azure deployment:
-ask_azure_openai_gpt5()      # → Your gpt-5 deployment  🚀 NEW
-ask_azure_openai_gpt4o()     # → Your gpt-4o deployment
-ask_azure_openai_gpt4_mini() # → Your gpt-4o-mini deployment
-ask_azure_openai_gpt35()     # → Your gpt-3.5-turbo deployment
-```
-
-### ✨ Ollama (Local Models with Dynamic Discovery)
-Ollama provides local model deployment with **automatic discovery and function generation**:
-
-#### Static Models (Configured)
-- **llama3.3** - Latest Llama 3.3 model
-- **qwen3** - Qwen 3 series
-- **granite3.3** - IBM Granite 3.3
-- **mistral** - Mistral base model
-- **gemma3** - Google Gemma 3
-- **phi3** - Microsoft Phi-3
-- **codellama** - Code-specialized Llama
-
-#### ✨ Dynamic Discovery Examples (Including Reasoning Models)
-When you pull new models, ChukLLM automatically discovers them:
-
-```bash
-# Pull reasoning and standard models in Ollama
-ollama pull gpt-oss          # 🧠 Open-source reasoning model
-ollama pull llama3.2
-ollama pull mistral-small:latest
-ollama pull qwen2.5:14b
-ollama pull deepseek-coder:6.7b
-```
-
-ChukLLM automatically generates functions:
-```python
-# These functions are auto-generated after discovery:
-ask_ollama_gpt_oss_sync()                  # 🧠 Reasoning model
-ask_ollama_llama3_2_sync()
-ask_ollama_mistral_small_latest_sync()
-ask_ollama_qwen2_5_14b_sync()
-ask_ollama_deepseek_coder_6_7b_sync()
-
-# And CLI commands work immediately:
-# chuk-llm ask_ollama_gpt_oss "Think through this step by step"  🧠
-# chuk-llm ask_ollama_llama3_2 "Hello"
-# chuk-llm ask_ollama_mistral_small_latest "Write code"
-```
-
-#### Reasoning Model Features in Ollama
-- **🧠 GPT-OSS Support**: Full support for open-source reasoning models
-- **💭 Thinking Streams**: Stream the reasoning process in real-time
-- **🔍 Automatic Detection**: Recognizes reasoning models and optimizes prompts
-- **📊 Context Preservation**: Maintains thinking context across conversations
-
 ## 🔧 Configuration
 
 ### Environment Variables
 
 ```bash
-# API Keys
-export OPENAI_API_KEY="your-openai-key"  # Includes GPT-5 access
-export AZURE_OPENAI_API_KEY="your-azure-openai-key"
+# Core API Keys
+export OPENAI_API_KEY="your-openai-key"
+export AZURE_OPENAI_API_KEY="your-azure-key"
 export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com"
 export ANTHROPIC_API_KEY="your-anthropic-key"
 export GEMINI_API_KEY="your-google-key"
 export GROQ_API_KEY="your-groq-key"
-export PERPLEXITY_API_KEY="your-perplexity-key"
 
-# Custom endpoints
+# OpenAI-Compatible Services
+export LITELLM_API_BASE="http://localhost:4000"
+export OPENROUTER_API_KEY="sk-or-..."
+export VLLM_API_BASE="http://localhost:8000/v1"
+export TOGETHER_API_KEY="..."
+
+# Custom endpoints (override defaults)
 export OPENAI_API_BASE="https://api.openai.com/v1"
 export PERPLEXITY_API_BASE="https://api.perplexity.ai"
-export OLLAMA_API_BASE="http://localhost:11434"  # For GPT-OSS and other local models
+export OLLAMA_API_BASE="http://localhost:11434"
 
 # Session tracking
-export CHUK_LLM_DISABLE_SESSIONS="false"  # Set to "true" to disable
+export CHUK_LLM_DISABLE_SESSIONS="false"
+export SESSION_PROVIDER="redis"  # or "memory"
+export SESSION_REDIS_URL="redis://localhost:6379/0"
 
-# ✨ NEW: Discovery settings (includes reasoning model detection)
-export CHUK_LLM_DISCOVERY_ENABLED="true"       # Enable discovery globally
-export CHUK_LLM_OLLAMA_DISCOVERY="true"        # Enable Ollama discovery (includes GPT-OSS)
-export CHUK_LLM_AUTO_DISCOVER="true"           # Enable auto-discovery
-export CHUK_LLM_DISCOVERY_TIMEOUT="5"          # Discovery timeout (seconds)
-export CHUK_LLM_DISCOVERY_CACHE_TIMEOUT="300"  # Cache timeout (seconds)
-
-# 🚀 NEW: GPT-5 optimization settings
-export CHUK_LLM_GPT5_OPTIMIZATION="true"       # Enable GPT-5 optimizations
-export CHUK_LLM_REASONING_MODEL_DETECTION="true"  # Auto-detect reasoning models
+# Discovery settings
+export CHUK_LLM_DISCOVERY_ENABLED="true"
+export CHUK_LLM_OLLAMA_DISCOVERY="true"
+export CHUK_LLM_AUTO_DISCOVER="true"
+export CHUK_LLM_DISCOVERY_TIMEOUT="5"
 ```
 
-### Simple API Configuration
+### Programmatic Configuration
 
 ```python
 from chuk_llm import configure, get_current_config
 
-# Simple configuration with GPT-5
+# Simple configuration
 configure(
     provider="openai",
-    model="gpt-5",           # 🚀 GPT-5 ready!
-    # temperature removed automatically for GPT-5
+    model="gpt-5",
+    temperature=0.7
 )
-
-# Configuration for reasoning models
-configure(
-    provider="ollama",
-    model="gpt-oss"          # 🧠 Reasoning model ready!
-)
-
-# All subsequent calls use these settings
-from chuk_llm import ask_sync
-response = ask_sync("Complex reasoning task")
 
 # Check current configuration
 config = get_current_config()
 print(f"Using {config['provider']} with {config['model']}")
+
+# Quick setup helpers
+from chuk_llm import quick_setup, switch_provider
+
+# Setup a provider quickly
+quick_setup("openai", model="gpt-5")
+
+# Switch between providers
+switch_provider("anthropic", model="claude-4-sonnet")
 ```
 
-## 📊 Benchmarking
+## 📦 Installation Options
 
-```python
-import asyncio
-from chuk_llm import test_all_providers, compare_providers
-
-async def benchmark_providers():
-    # Quick performance test including GPT-5
-    results = await test_all_providers()
-    
-    print("Provider Performance (including GPT-5):")
-    for provider, result in results.items():
-        if result["success"]:
-            print(f"✅ {provider}: {result['duration']:.2f}s")
-        else:
-            print(f"❌ {provider}: {result['error']}")
-    
-    # Quality comparison including reasoning models
-    comparison = compare_providers(
-        "Explain machine learning step by step",
-        ["openai:gpt-5", "openai:gpt-4o", "anthropic:claude-4-sonnet", "anthropic:claude-4-1-opus", "ollama:gpt-oss"]
-    )
-    
-    print("\nQuality Comparison (including reasoning models):")
-    for provider, response in comparison.items():
-        print(f"{provider}: {response[:100]}...")
-
-asyncio.run(benchmark_providers())
-```
-
-## 🔍 Provider Capabilities
-
-```python
-import chuk_llm
-
-# Discover available providers and models (including GPT-5 and reasoning models)
-chuk_llm.show_providers()
-
-# ✨ NEW: See all auto-generated functions (includes GPT-5 and discovered models)
-chuk_llm.show_functions()
-
-# Get comprehensive diagnostics (including session info)
-chuk_llm.print_full_diagnostics()
-
-# ✨ NEW: Trigger Ollama discovery and see new functions (including reasoning models)
-from chuk_llm.api.providers import trigger_ollama_discovery_and_refresh
-new_functions = trigger_ollama_discovery_and_refresh()
-print(f"🔍 Generated {len(new_functions)} new Ollama functions")
-
-# 🚀 NEW: Test GPT-5 capabilities
-from chuk_llm import test_connection_sync
-result = test_connection_sync("openai", model="gpt-5")
-print(f"✅ GPT-5 test: {result['duration']:.2f}s")
-```
+| Command | Features | Use Case |
+|---------|----------|----------|
+| `uv add chuk_llm` | Core + Memory sessions | Development |
+| `uv add chuk_llm[redis]` | Core + Redis sessions | Production |
+| `uv add chuk_llm[cli]` | Core + Enhanced CLI | CLI tools |
+| `uv add chuk_llm[all]` | Everything | Full features |
+| `pip install chuk_llm[all]` | Everything (alternative) | If not using uv |
 
 ## 🤝 Contributing
 
@@ -1029,25 +532,251 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## 🚀 What's Next?
 
-- **🛠️ Enhanced Tool Streaming**: Even more sophisticated real-time function call capabilities
-- **🚀 More Claude 4 Features**: Enhanced reasoning optimizations and new model variants
-- **🧠 Advanced Reasoning Models**: Support for upcoming O6, O7 series and Claude 5
-- **More Providers**: Adding support for Cohere, AI21, and others
-- **Advanced Discovery**: Support for HuggingFace model discovery
-- **Multi-Modal**: Enhanced image and document processing
-- **Enterprise Features**: Advanced audit logging and compliance tools
-- **Performance**: Further optimizations for high-throughput scenarios
-- **🔧 Tool Orchestration**: Advanced workflows with tool dependencies and error handling
+- **🔌 More Providers**: Cohere, AI21, Replicate integration
+- **🧠 Advanced Reasoning**: Support for O6, O7 series and Claude 5
+- **🌐 Multi-Modal**: Enhanced image, audio, and document processing
+- **🔧 Tool Orchestration**: Advanced workflows with tool dependencies
+- **📊 Analytics Dashboard**: Web UI for session analytics
+- **🏢 Enterprise Features**: SSO, audit logs, compliance tools
+- **⚡ Performance**: WebSocket streaming, connection pooling optimizations
+- **🔐 Security**: End-to-end encryption for sensitive workloads
+
+## 📊 Performance Benchmarks
+
+```python
+# Concurrent vs Sequential Performance
+import asyncio
+import time
+from chuk_llm import ask
+
+async def benchmark():
+    questions = ["Question 1", "Question 2", "Question 3"]
+    
+    # Sequential
+    start = time.time()
+    for q in questions:
+        await ask(q, provider="openai")
+    sequential_time = time.time() - start
+    
+    # Concurrent
+    start = time.time()
+    await asyncio.gather(*[ask(q, provider="openai") for q in questions])
+    concurrent_time = time.time() - start
+    
+    print(f"Sequential: {sequential_time:.2f}s")
+    print(f"Concurrent: {concurrent_time:.2f}s")
+    print(f"Speedup: {sequential_time/concurrent_time:.1f}x")
+
+asyncio.run(benchmark())
+```
+
+Typical results:
+- Sequential: 6.2s
+- Concurrent: 1.8s  
+- **Speedup: 3.4x faster!**
+
+## 🧪 Testing
+
+```python
+# Test provider connectivity
+from chuk_llm import test_connection_sync, test_all_providers_sync
+
+# Test single provider
+result = test_connection_sync("openai", model="gpt-4o")
+print(f"Response time: {result['duration']:.2f}s")
+
+# Test all configured providers
+results = test_all_providers_sync()
+for provider, result in results.items():
+    if result["success"]:
+        print(f"✅ {provider}: {result['duration']:.2f}s")
+    else:
+        print(f"❌ {provider}: {result['error']}")
+```
+
+## 📚 Examples
+
+### Compare Multiple Providers
+
+```python
+from chuk_llm import compare_providers
+
+results = compare_providers(
+    "Explain quantum computing in one sentence",
+    ["openai", "anthropic", "gemini", "groq"]
+)
+
+for provider, response in results.items():
+    print(f"{provider}: {response}")
+```
+
+### Stream with Multiple Providers
+
+```python
+import asyncio
+from chuk_llm import stream
+
+async def multi_stream():
+    providers = ["openai", "anthropic", "ollama"]
+    prompt = "Write a haiku about coding"
+    
+    async def stream_provider(provider):
+        print(f"\n{provider.upper()}:")
+        async for chunk in stream(prompt, provider=provider):
+            print(chunk, end="", flush=True)
+    
+    await asyncio.gather(*[stream_provider(p) for p in providers])
+
+asyncio.run(multi_stream())
+```
+
+### Use with Pandas DataFrames
+
+```python
+import pandas as pd
+from chuk_llm import ask_sync
+
+# Process DataFrame with LLM
+df = pd.DataFrame({
+    'product': ['laptop', 'phone', 'tablet'],
+    'review': ['Great device!', 'Battery issues', 'Perfect for reading']
+})
+
+# Add sentiment analysis
+df['sentiment'] = df['review'].apply(
+    lambda x: ask_sync(f"Sentiment of '{x}' (positive/negative/neutral):", 
+                      provider="openai", model="gpt-4o-mini")
+)
+
+print(df)
+```
+
+### Build a Simple Chatbot
+
+```python
+from chuk_llm import conversation
+import asyncio
+
+async def chatbot():
+    print("Chatbot ready! Type 'quit' to exit.\n")
+    
+    async with conversation(provider="openai", model="gpt-4o") as chat:
+        while True:
+            user_input = input("You: ")
+            if user_input.lower() == 'quit':
+                break
+            
+            response = await chat.say(user_input)
+            print(f"Bot: {response}\n")
+
+asyncio.run(chatbot())
+```
+
+### Function Calling Example
+
+```python
+from chuk_llm import ask_sync
+import json
+
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get weather for a location",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string"},
+                    "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+                },
+                "required": ["location"]
+            }
+        }
+    }
+]
+
+response = ask_sync(
+    "What's the weather in Paris?",
+    provider="openai",
+    model="gpt-4o",
+    tools=tools
+)
+
+print(response)
+# The model will call the get_weather function with location="Paris"
+```
+
+## 🛠️ Troubleshooting
+
+### Common Issues
+
+**Issue: "No API key found"**
+```bash
+# Set your API key
+export OPENAI_API_KEY="sk-..."
+# Or use a .env file
+echo "OPENAI_API_KEY=sk-..." > .env
+```
+
+**Issue: "Provider not found"**
+```python
+# Check available providers
+from chuk_llm import list_available_providers
+print(list_available_providers())
+
+# Register a new provider
+from chuk_llm import register_openai_compatible
+register_openai_compatible(
+    name="my_provider",
+    api_base="https://api.example.com/v1",
+    api_key="your-key"
+)
+```
+
+**Issue: "Connection timeout"**
+```python
+# Use a different endpoint
+from chuk_llm import ask_sync
+response = ask_sync(
+    "Hello",
+    provider="ollama",
+    base_url="http://192.168.1.100:11434"  # Custom Ollama server
+)
+```
+
+**Issue: "Model not available"**
+```python
+# Discover available models
+from chuk_llm.api.providers import trigger_ollama_discovery_and_refresh
+trigger_ollama_discovery_and_refresh()
+
+# Or check provider models
+from chuk_llm import get_provider_config
+config = get_provider_config("ollama")
+print(config.models)
+```
 
 ## 📞 Support
 
-- **Documentation**: [docs.chuk-llm.dev](https://docs.chuk-llm.dev)
+- **Documentation**: [docs.chukai.io](https://docs.chuk-llm.dev)
 - **Issues**: [GitHub Issues](https://github.com/chuk-llm/chuk-llm/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/chuk-llm/chuk-llm/discussions)
-- **Email**: support@chuk-llm.dev
+- **Email**: support@chukai.io
+
+## 🌟 Why Choose ChukLLM?
+
+1. **Universal Compatibility**: Works with 100+ LLM providers through OpenAI-compatible APIs
+2. **Zero Lock-in**: Switch providers with one line of code
+3. **Production Ready**: Built-in retries, connection pooling, error handling
+4. **Developer Friendly**: Auto-generated functions, great documentation
+5. **Cost Tracking**: Automatic session analytics and cost estimation
+6. **Enterprise Features**: Azure OpenAI support, compliance, audit logs
+7. **Active Development**: Regular updates with new providers and features
+8. **Community Driven**: Open source with active community contributions
 
 ---
 
 **⭐ Star us on GitHub if ChukLLM helps your AI projects!**
 
-**🚀 Try GPT-5 and reasoning models today with ChukLLM's seamless integration!**
+Built with ❤️ by the ChukLLM team

@@ -22,6 +22,7 @@ sys.path.insert(0, str(project_root))
 
 try:
     from dotenv import load_dotenv
+
     env_file = project_root / ".env"
     if env_file.exists():
         load_dotenv(env_file)
@@ -38,27 +39,31 @@ async def test_complete_tool_chain_with_universal_names():
     print("=" * 70)
     print("This simulates the FULL conversation with universal tool names")
     print("Testing: stdio.read_query, stdio.describe_table, stdio.list_tables")
-    
+
     # Check API key
     api_key = os.getenv("MISTRAL_API_KEY")
     if not api_key:
         print("❌ MISTRAL_API_KEY not found!")
         return False
-    
+
     print(f"✅ API key found: {api_key[:8]}...{api_key[-4:]}")
-    
+
     try:
         from chuk_llm.llm.client import get_client
-        
+
         client = get_client(provider="mistral", model="mistral-medium-2505")
         print(f"✅ Client created: {type(client).__name__}")
-        
+
         # Check if client has universal tool compatibility
-        if hasattr(client, 'get_tool_compatibility_info'):
+        if hasattr(client, "get_tool_compatibility_info"):
             tool_info = client.get_tool_compatibility_info()
-            print(f"✅ Universal tool compatibility: {tool_info.get('compatibility_level', 'unknown')}")
-            print(f"   Requires sanitization: {tool_info.get('requires_sanitization', 'unknown')}")
-        
+            print(
+                f"✅ Universal tool compatibility: {tool_info.get('compatibility_level', 'unknown')}"
+            )
+            print(
+                f"   Requires sanitization: {tool_info.get('requires_sanitization', 'unknown')}"
+            )
+
         # Universal tool names that require sanitization for Mistral
         tools = [
             {
@@ -66,8 +71,8 @@ async def test_complete_tool_chain_with_universal_names():
                 "function": {
                     "name": "stdio.list_tables",
                     "description": "List all tables in the SQLite database",
-                    "parameters": {"type": "object", "properties": {}}
-                }
+                    "parameters": {"type": "object", "properties": {}},
+                },
             },
             {
                 "type": "function",
@@ -79,12 +84,12 @@ async def test_complete_tool_chain_with_universal_names():
                         "properties": {
                             "table_name": {
                                 "type": "string",
-                                "description": "Name of the table to describe"
+                                "description": "Name of the table to describe",
                             }
                         },
-                        "required": ["table_name"]
-                    }
-                }
+                        "required": ["table_name"],
+                    },
+                },
             },
             {
                 "type": "function",
@@ -96,23 +101,23 @@ async def test_complete_tool_chain_with_universal_names():
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "SELECT SQL query to execute"
+                                "description": "SELECT SQL query to execute",
                             }
                         },
-                        "required": ["query"]
-                    }
-                }
-            }
+                        "required": ["query"],
+                    },
+                },
+            },
         ]
-        
+
         print("\n📋 Tool Names Being Used:")
         for tool in tools:
             original_name = tool["function"]["name"]
             print(f"   • {original_name} (will be sanitized and restored)")
-        
+
         print("\n🎯 STEP 1: Initial Request")
         print("=" * 30)
-        
+
         # Start with the original request
         conversation = [
             {
@@ -123,134 +128,159 @@ async def test_complete_tool_chain_with_universal_names():
 2. Then describe the specific table schema you need
 3. Finally write and execute the query
 
-CRITICAL: When calling stdio.describe_table, you MUST provide the table_name parameter. 
+CRITICAL: When calling stdio.describe_table, you MUST provide the table_name parameter.
 Extract table names from previous tool results or the user's request.
 
 Example workflow:
-- User: "get products data" 
+- User: "get products data"
 - You: call stdio.list_tables() → see [{"name": "products"}]
 - You: call stdio.describe_table(table_name="products") ← MUST include table name!
 - You: call stdio.read_query(query="SELECT * FROM products LIMIT 10")
 
 Never call stdio.describe_table with empty parameters!
-Always use the exact tool names: stdio.list_tables, stdio.describe_table, stdio.read_query"""
+Always use the exact tool names: stdio.list_tables, stdio.describe_table, stdio.read_query""",
             },
-            {
-                "role": "user", 
-                "content": "select top 10 products from the database"
-            }
+            {"role": "user", "content": "select top 10 products from the database"},
         ]
-        
+
         response1 = await client.create_completion(
-            messages=conversation,
-            tools=tools,
-            stream=False,
-            max_tokens=500
+            messages=conversation, tools=tools, stream=False, max_tokens=500
         )
-        
-        print(f"AI Response 1:")
+
+        print("AI Response 1:")
         if response1.get("tool_calls"):
             for i, call in enumerate(response1["tool_calls"]):
                 func_name = call["function"]["name"]
                 func_args = call["function"]["arguments"]
-                print(f"   Tool {i+1}: {func_name}({func_args})")
-                
+                print(f"   Tool {i + 1}: {func_name}({func_args})")
+
                 # Verify tool name restoration
-                if func_name in ["stdio.list_tables", "stdio.describe_table", "stdio.read_query"]:
+                if func_name in [
+                    "stdio.list_tables",
+                    "stdio.describe_table",
+                    "stdio.read_query",
+                ]:
                     print(f"      ✅ Tool name correctly restored: {func_name}")
                 else:
                     print(f"      ⚠️  Unexpected tool name: {func_name}")
-                
+
             # Expected: AI should call stdio.list_tables() first
             first_call = response1["tool_calls"][0]
             if "stdio.list_tables" in first_call["function"]["name"]:
                 print("✅ AI correctly started with stdio.list_tables")
-                
+
                 print("\n🎯 STEP 2: Simulate stdio.list_tables Result")
                 print("=" * 45)
-                
+
                 # Add the tool result to conversation
-                conversation.extend([
-                    {
-                        "role": "assistant",
-                        "tool_calls": response1["tool_calls"]
-                    },
-                    {
-                        "role": "tool",
-                        "tool_call_id": first_call["id"],
-                        "content": json.dumps([{"name": "products"}, {"name": "orders"}, {"name": "customers"}])
-                    }
-                ])
-                
-                print("Simulated stdio.list_tables result: [{'name': 'products'}, {'name': 'orders'}, {'name': 'customers'}]")
+                conversation.extend(
+                    [
+                        {"role": "assistant", "tool_calls": response1["tool_calls"]},
+                        {
+                            "role": "tool",
+                            "tool_call_id": first_call["id"],
+                            "content": json.dumps(
+                                [
+                                    {"name": "products"},
+                                    {"name": "orders"},
+                                    {"name": "customers"},
+                                ]
+                            ),
+                        },
+                    ]
+                )
+
+                print(
+                    "Simulated stdio.list_tables result: [{'name': 'products'}, {'name': 'orders'}, {'name': 'customers'}]"
+                )
                 print("Now asking AI to continue...")
-                
+
                 # Continue the conversation
                 response2 = await client.create_completion(
-                    messages=conversation,
-                    tools=tools,
-                    stream=False,
-                    max_tokens=500
+                    messages=conversation, tools=tools, stream=False, max_tokens=500
                 )
-                
-                print(f"\nAI Response 2:")
+
+                print("\nAI Response 2:")
                 if response2.get("tool_calls"):
                     for i, call in enumerate(response2["tool_calls"]):
                         func_name = call["function"]["name"]
                         func_args = call["function"]["arguments"]
-                        print(f"   Tool {i+1}: {func_name}({func_args})")
-                        
+                        print(f"   Tool {i + 1}: {func_name}({func_args})")
+
                         # Verify tool name restoration
-                        if func_name in ["stdio.list_tables", "stdio.describe_table", "stdio.read_query"]:
+                        if func_name in [
+                            "stdio.list_tables",
+                            "stdio.describe_table",
+                            "stdio.read_query",
+                        ]:
                             print(f"      ✅ Tool name correctly restored: {func_name}")
-                        
+
                         # Check if stdio.describe_table is called correctly
                         if "stdio.describe_table" in func_name:
                             try:
                                 parsed_args = json.loads(func_args)
-                                if "table_name" in parsed_args and parsed_args["table_name"]:
-                                    print(f"   ✅ SUCCESS! stdio.describe_table called with table_name: '{parsed_args['table_name']}'")
-                                    
+                                if (
+                                    "table_name" in parsed_args
+                                    and parsed_args["table_name"]
+                                ):
+                                    print(
+                                        f"   ✅ SUCCESS! stdio.describe_table called with table_name: '{parsed_args['table_name']}'"
+                                    )
+
                                     # Continue to step 3
-                                    return await test_step_3_schema_result(client, conversation, response2, tools, parsed_args["table_name"])
+                                    return await test_step_3_schema_result(
+                                        client,
+                                        conversation,
+                                        response2,
+                                        tools,
+                                        parsed_args["table_name"],
+                                    )
                                 else:
-                                    print(f"   ❌ FAILED! stdio.describe_table called without table_name")
+                                    print(
+                                        "   ❌ FAILED! stdio.describe_table called without table_name"
+                                    )
                                     print(f"      Args received: {parsed_args}")
                                     return False
                             except json.JSONDecodeError:
-                                print(f"   ❌ FAILED! Invalid JSON in arguments")
+                                print("   ❌ FAILED! Invalid JSON in arguments")
                                 return False
-                
+
                 elif response2.get("response"):
                     print(f"   Text: {response2['response'][:100]}...")
                     print("   ⚠️  AI responded with text instead of tool call")
-                    
+
                     # Check if AI is asking for clarification
-                    if "table" in response2['response'].lower():
-                        print("   💡 AI might be asking for table clarification - this is acceptable")
+                    if "table" in response2["response"].lower():
+                        print(
+                            "   💡 AI might be asking for table clarification - this is acceptable"
+                        )
                         return True
                     return False
-                    
+
             else:
                 print("❌ AI didn't start with stdio.list_tables")
                 print(f"   Actually called: {first_call['function']['name']}")
-                
+
                 # Still acceptable if it called a relevant tool
-                if any(tool_name in first_call['function']['name'] for tool_name in ['describe_table', 'read_query']):
+                if any(
+                    tool_name in first_call["function"]["name"]
+                    for tool_name in ["describe_table", "read_query"]
+                ):
                     print("   ⚠️  AI skipped list_tables but called relevant tool")
                     return True
                 return False
-                
+
         elif response1.get("response"):
             print(f"   Text: {response1['response'][:100]}...")
             print("   ⚠️  AI responded with text instead of tool call")
             return False
-            
+
         return False
-        
+
     except Exception as e:
         print(f"❌ Error in tool chain test: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -259,10 +289,10 @@ async def test_step_3_schema_result(client, conversation, response2, tools, tabl
     """Continue with step 3: simulate schema result and get final query"""
     print(f"\n🎯 STEP 3: Simulate stdio.describe_table Result for '{table_name}'")
     print("=" * 55)
-    
+
     # Add the describe_table result
     describe_call = response2["tool_calls"][0]
-    
+
     # Simulate a realistic products table schema
     schema_result = {
         "table_name": table_name,
@@ -272,78 +302,80 @@ async def test_step_3_schema_result(client, conversation, response2, tools, tabl
             {"name": "price", "type": "DECIMAL(10,2)", "nullable": False},
             {"name": "category", "type": "VARCHAR(100)", "nullable": True},
             {"name": "stock_quantity", "type": "INTEGER", "nullable": False},
-            {"name": "created_at", "type": "TIMESTAMP", "nullable": False}
-        ]
+            {"name": "created_at", "type": "TIMESTAMP", "nullable": False},
+        ],
     }
-    
-    conversation.extend([
-        {
-            "role": "assistant",
-            "tool_calls": response2["tool_calls"]
-        },
-        {
-            "role": "tool",
-            "tool_call_id": describe_call["id"],
-            "content": json.dumps(schema_result)
-        }
-    ])
-    
+
+    conversation.extend(
+        [
+            {"role": "assistant", "tool_calls": response2["tool_calls"]},
+            {
+                "role": "tool",
+                "tool_call_id": describe_call["id"],
+                "content": json.dumps(schema_result),
+            },
+        ]
+    )
+
     print(f"Simulated schema result for {table_name}:")
-    print(f"   Columns: id, name, price, category, stock_quantity, created_at")
+    print("   Columns: id, name, price, category, stock_quantity, created_at")
     print("Now asking AI to write the final query...")
-    
+
     # Get the final query
     response3 = await client.create_completion(
-        messages=conversation,
-        tools=tools,
-        stream=False,
-        max_tokens=500
+        messages=conversation, tools=tools, stream=False, max_tokens=500
     )
-    
-    print(f"\nAI Response 3:")
+
+    print("\nAI Response 3:")
     if response3.get("tool_calls"):
         for i, call in enumerate(response3["tool_calls"]):
             func_name = call["function"]["name"]
             func_args = call["function"]["arguments"]
-            print(f"   Tool {i+1}: {func_name}({func_args})")
-            
+            print(f"   Tool {i + 1}: {func_name}({func_args})")
+
             # Verify tool name restoration
             if func_name == "stdio.read_query":
                 print(f"      ✅ Tool name correctly restored: {func_name}")
-            
+
             # Check if stdio.read_query is called correctly
             if "stdio.read_query" in func_name:
                 try:
                     parsed_args = json.loads(func_args)
                     if "query" in parsed_args and parsed_args["query"]:
                         query = parsed_args["query"]
-                        print(f"   ✅ FINAL SUCCESS! Query generated:")
+                        print("   ✅ FINAL SUCCESS! Query generated:")
                         print(f"      {query}")
-                        
+
                         # Validate the query makes sense
-                        if table_name.lower() in query.lower() and "select" in query.lower():
+                        if (
+                            table_name.lower() in query.lower()
+                            and "select" in query.lower()
+                        ):
                             print("   ✅ Query looks correct and uses the right table!")
                             return True
                         else:
                             print("   ⚠️  Query might not be optimal but is acceptable")
                             return True
                     else:
-                        print(f"   ❌ stdio.read_query called without query parameter")
+                        print("   ❌ stdio.read_query called without query parameter")
                         return False
                 except json.JSONDecodeError:
-                    print(f"   ❌ Invalid JSON in query arguments")
+                    print("   ❌ Invalid JSON in query arguments")
                     return False
-    
+
     elif response3.get("response"):
         print(f"   Text: {response3['response'][:200]}...")
-        
+
         # Check if the text contains a SQL query
-        if "SELECT" in response3["response"].upper() and table_name.lower() in response3["response"].lower():
+        if (
+            "SELECT" in response3["response"].upper()
+            and table_name.lower() in response3["response"].lower()
+        ):
             print("   ✅ AI provided query in text response (acceptable)")
             return True
         else:
             print("   ⚠️  AI provided text but no clear SQL query")
-    
+
     return False
 
 
@@ -351,16 +383,16 @@ async def test_universal_parameter_extraction():
     """Test if AI can extract parameters directly from user requests with universal tool names"""
     print("\n🎯 MISTRAL UNIVERSAL PARAMETER EXTRACTION TEST")
     print("=" * 55)
-    
+
     api_key = os.getenv("MISTRAL_API_KEY")
     if not api_key:
         return False
-    
+
     try:
         from chuk_llm.llm.client import get_client
-        
+
         client = get_client(provider="mistral", model="mistral-medium-2505")
-        
+
         # Universal tool names that require sanitization for Mistral
         tools = [
             {
@@ -373,12 +405,12 @@ async def test_universal_parameter_extraction():
                         "properties": {
                             "table_name": {
                                 "type": "string",
-                                "description": "Name of the table to describe"
+                                "description": "Name of the table to describe",
                             }
                         },
-                        "required": ["table_name"]
-                    }
-                }
+                        "required": ["table_name"],
+                    },
+                },
             },
             {
                 "type": "function",
@@ -388,18 +420,15 @@ async def test_universal_parameter_extraction():
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "Search query"
-                            },
+                            "query": {"type": "string", "description": "Search query"},
                             "category": {
                                 "type": "string",
-                                "description": "Search category"
-                            }
+                                "description": "Search category",
+                            },
                         },
-                        "required": ["query"]
-                    }
-                }
+                        "required": ["query"],
+                    },
+                },
             },
             {
                 "type": "function",
@@ -411,57 +440,60 @@ async def test_universal_parameter_extraction():
                         "properties": {
                             "path": {
                                 "type": "string",
-                                "description": "File path to read"
+                                "description": "File path to read",
                             },
                             "encoding": {
                                 "type": "string",
-                                "description": "File encoding (default: utf-8)"
-                            }
+                                "description": "File encoding (default: utf-8)",
+                            },
                         },
-                        "required": ["path"]
-                    }
-                }
-            }
+                        "required": ["path"],
+                    },
+                },
+            },
         ]
-        
+
         print("🔧 Testing universal tool names with Mistral:")
         for tool in tools:
             print(f"   • {tool['function']['name']} (requires sanitization)")
-        
+
         # Test cases where parameters are explicit
         test_cases = [
             {
                 "request": "describe the products table schema",
                 "expected_tool": "stdio.describe_table",
-                "expected_params": {"table_name": "products"}
+                "expected_params": {"table_name": "products"},
             },
             {
                 "request": "show me the structure of the users table",
-                "expected_tool": "stdio.describe_table", 
-                "expected_params": {"table_name": "users"}
+                "expected_tool": "stdio.describe_table",
+                "expected_params": {"table_name": "users"},
             },
             {
                 "request": "search for 'machine learning' in technology category",
                 "expected_tool": "web.api:search",
-                "expected_params": {"query": "machine learning", "category": "technology"}
+                "expected_params": {
+                    "query": "machine learning",
+                    "category": "technology",
+                },
             },
             {
                 "request": "read the config.json file",
                 "expected_tool": "filesystem.read_file",
-                "expected_params": {"path": "config.json"}
+                "expected_params": {"path": "config.json"},
             },
             {
                 "request": "what columns does the orders table have?",
                 "expected_tool": "stdio.describe_table",
-                "expected_params": {"table_name": "orders"}
-            }
+                "expected_params": {"table_name": "orders"},
+            },
         ]
-        
+
         for i, test_case in enumerate(test_cases):
-            print(f"\nTest {i+1}: '{test_case['request']}'")
+            print(f"\nTest {i + 1}: '{test_case['request']}'")
             print(f"Expected tool: {test_case['expected_tool']}")
             print(f"Expected params: {test_case['expected_params']}")
-            
+
             messages = [
                 {
                     "role": "system",
@@ -473,94 +505,101 @@ For file operations, extract the file path from the user's request for filesyste
 
 Examples:
 - "describe the products table" → stdio.describe_table(table_name="products")
-- "show users table structure" → stdio.describe_table(table_name="users")  
+- "show users table structure" → stdio.describe_table(table_name="users")
 - "search for 'AI news'" → web.api:search(query="AI news")
 - "search for 'python' in programming" → web.api:search(query="python", category="programming")
 - "read config.json file" → filesystem.read_file(path="config.json")
 
 NEVER call tools with empty required parameters!
-Always use the exact tool names provided."""
+Always use the exact tool names provided.""",
                 },
-                {
-                    "role": "user",
-                    "content": test_case["request"]
-                }
+                {"role": "user", "content": test_case["request"]},
             ]
-            
+
             response = await client.create_completion(
-                messages=messages,
-                tools=tools,
-                stream=False,
-                max_tokens=200
+                messages=messages, tools=tools, stream=False, max_tokens=200
             )
-            
+
             if response.get("tool_calls"):
                 call = response["tool_calls"][0]
                 func_name = call["function"]["name"]
                 func_args = call["function"]["arguments"]
-                
+
                 print(f"   Tool called: {func_name}")
-                
+
                 # Verify tool name restoration
                 if func_name == test_case["expected_tool"]:
-                    print(f"   ✅ Correct tool called and name restored")
+                    print("   ✅ Correct tool called and name restored")
                 else:
                     print(f"   ⚠️  Different tool called: {func_name}")
-                
+
                 try:
                     parsed_args = json.loads(func_args)
                     print(f"   Parameters: {parsed_args}")
-                    
+
                     # Check required parameters
                     expected_params = test_case["expected_params"]
                     success = True
-                    
+
                     for key, expected_value in expected_params.items():
                         actual_value = parsed_args.get(key, "")
                         if key == "table_name":
                             if actual_value == expected_value:
                                 print(f"   ✅ {key}: '{actual_value}' (exact match)")
                             elif actual_value and expected_value in actual_value:
-                                print(f"   ✅ {key}: '{actual_value}' (contains expected)")
+                                print(
+                                    f"   ✅ {key}: '{actual_value}' (contains expected)"
+                                )
                             else:
-                                print(f"   ❌ {key}: '{actual_value}' (expected '{expected_value}')")
+                                print(
+                                    f"   ❌ {key}: '{actual_value}' (expected '{expected_value}')"
+                                )
                                 success = False
                         elif key == "query":
                             if expected_value.lower() in actual_value.lower():
-                                print(f"   ✅ {key}: '{actual_value}' (contains expected)")
+                                print(
+                                    f"   ✅ {key}: '{actual_value}' (contains expected)"
+                                )
                             else:
-                                print(f"   ❌ {key}: '{actual_value}' (expected to contain '{expected_value}')")
+                                print(
+                                    f"   ❌ {key}: '{actual_value}' (expected to contain '{expected_value}')"
+                                )
                                 success = False
                         elif key == "path":
                             if expected_value in actual_value:
-                                print(f"   ✅ {key}: '{actual_value}' (contains expected)")
+                                print(
+                                    f"   ✅ {key}: '{actual_value}' (contains expected)"
+                                )
                             else:
-                                print(f"   ❌ {key}: '{actual_value}' (expected to contain '{expected_value}')")
+                                print(
+                                    f"   ❌ {key}: '{actual_value}' (expected to contain '{expected_value}')"
+                                )
                                 success = False
                         else:
                             if actual_value:
                                 print(f"   ✅ {key}: '{actual_value}' (provided)")
                             else:
                                 print(f"   ⚠️  {key}: not provided")
-                    
+
                     if success:
-                        print(f"   ✅ OVERALL SUCCESS")
+                        print("   ✅ OVERALL SUCCESS")
                     else:
-                        print(f"   ⚠️  PARTIAL SUCCESS")
-                        
+                        print("   ⚠️  PARTIAL SUCCESS")
+
                 except json.JSONDecodeError:
-                    print(f"   ❌ FAILED: Invalid JSON arguments")
-                    
+                    print("   ❌ FAILED: Invalid JSON arguments")
+
             else:
-                print(f"   ❌ FAILED: No tool call made")
+                print("   ❌ FAILED: No tool call made")
                 if response.get("response"):
                     print(f"   Text response: {response['response'][:100]}...")
-        
+
         return True
-        
+
     except Exception as e:
         print(f"❌ Error in universal parameter test: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -569,16 +608,16 @@ async def test_streaming_with_universal_tools():
     """Test streaming functionality with universal tool names"""
     print("\n🎯 MISTRAL STREAMING WITH UNIVERSAL TOOLS TEST")
     print("=" * 55)
-    
+
     api_key = os.getenv("MISTRAL_API_KEY")
     if not api_key:
         return False
-    
+
     try:
         from chuk_llm.llm.client import get_client
-        
+
         client = get_client(provider="mistral", model="mistral-medium-2505")
-        
+
         # Universal tools requiring sanitization
         tools = [
             {
@@ -591,9 +630,9 @@ async def test_streaming_with_universal_tools():
                         "properties": {
                             "query": {"type": "string", "description": "SQL query"}
                         },
-                        "required": ["query"]
-                    }
-                }
+                        "required": ["query"],
+                    },
+                },
             },
             {
                 "type": "function",
@@ -605,9 +644,9 @@ async def test_streaming_with_universal_tools():
                         "properties": {
                             "query": {"type": "string", "description": "Search query"}
                         },
-                        "required": ["query"]
-                    }
-                }
+                        "required": ["query"],
+                    },
+                },
             },
             {
                 "type": "function",
@@ -619,71 +658,75 @@ async def test_streaming_with_universal_tools():
                         "properties": {
                             "path": {"type": "string", "description": "Directory path"}
                         },
-                        "required": ["path"]
-                    }
-                }
-            }
+                        "required": ["path"],
+                    },
+                },
+            },
         ]
-        
+
         messages = [
             {
                 "role": "user",
-                "content": "Search for 'latest AI news', list files in the current directory, and query the database for user data"
+                "content": "Search for 'latest AI news', list files in the current directory, and query the database for user data",
             }
         ]
-        
+
         print("Testing Mistral streaming with universal tool names...")
         print("Expected: Tool names should be restored in streaming chunks")
-        
-        response = client.create_completion(
-            messages=messages,
-            tools=tools,
-            stream=True
-        )
-        
+
+        response = client.create_completion(messages=messages, tools=tools, stream=True)
+
         chunk_count = 0
         tool_calls_found = []
         restored_names = []
-        
+
         async for chunk in response:
             chunk_count += 1
-            
+
             if chunk.get("tool_calls"):
                 for tc in chunk["tool_calls"]:
                     tool_name = tc.get("function", {}).get("name", "unknown")
                     tool_calls_found.append(tool_name)
-                    
+
                     print(f"   🔧 Streaming tool call: {tool_name}")
-                    
+
                     # Verify name restoration
-                    if tool_name in ["stdio.read_query", "web.api:search", "filesystem.list_files"]:
-                        print(f"      ✅ Universal tool name correctly restored in stream")
+                    if tool_name in [
+                        "stdio.read_query",
+                        "web.api:search",
+                        "filesystem.list_files",
+                    ]:
+                        print(
+                            "      ✅ Universal tool name correctly restored in stream"
+                        )
                         restored_names.append(tool_name)
                     else:
                         print(f"      ⚠️  Unexpected tool name in stream: {tool_name}")
-            
+
             if chunk.get("response"):
                 print(".", end="", flush=True)
-            
+
             # Limit for testing
             if chunk_count >= 15:
                 break
-        
-        print(f"\n✅ Mistral streaming test completed:")
+
+        print("\n✅ Mistral streaming test completed:")
         print(f"   Chunks processed: {chunk_count}")
         print(f"   Tool calls found: {len(tool_calls_found)}")
         print(f"   Correctly restored names: {len(restored_names)}")
-        
+
         if restored_names:
             print(f"   Restored tools: {restored_names}")
             return True
         elif tool_calls_found:
-            print(f"   ⚠️  Tools called but names not fully restored: {tool_calls_found}")
+            print(
+                f"   ⚠️  Tools called but names not fully restored: {tool_calls_found}"
+            )
             return True
         else:
-            print(f"   ⚠️  No tool calls in streaming response")
+            print("   ⚠️  No tool calls in streaming response")
             return False
-        
+
     except Exception as e:
         print(f"❌ Error in Mistral streaming test: {e}")
         return False
@@ -693,21 +736,21 @@ async def test_mistral_vs_anthropic_consistency():
     """Test that Mistral and Anthropic provide consistent behavior with universal tools"""
     print("\n🎯 MISTRAL VS ANTHROPIC CONSISTENCY TEST")
     print("=" * 55)
-    
+
     # Check both API keys
     mistral_key = os.getenv("MISTRAL_API_KEY")
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-    
+
     if not mistral_key:
         print("❌ MISTRAL_API_KEY not found!")
         return False
     if not anthropic_key:
         print("❌ ANTHROPIC_API_KEY not found!")
         return False
-    
+
     try:
         from chuk_llm.llm.client import get_client
-        
+
         # Same universal tools for both providers
         universal_tools = [
             {
@@ -718,11 +761,14 @@ async def test_mistral_vs_anthropic_consistency():
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "table_name": {"type": "string", "description": "Table name"}
+                            "table_name": {
+                                "type": "string",
+                                "description": "Table name",
+                            }
                         },
-                        "required": ["table_name"]
-                    }
-                }
+                        "required": ["table_name"],
+                    },
+                },
             },
             {
                 "type": "function",
@@ -734,104 +780,111 @@ async def test_mistral_vs_anthropic_consistency():
                         "properties": {
                             "query": {"type": "string", "description": "Search query"}
                         },
-                        "required": ["query"]
-                    }
-                }
-            }
+                        "required": ["query"],
+                    },
+                },
+            },
         ]
-        
-        messages = [
-            {"role": "user", "content": "describe the users table structure"}
-        ]
-        
+
+        messages = [{"role": "user", "content": "describe the users table structure"}]
+
         print("Testing same request with both providers...")
-        
+
         providers = [
             ("mistral", "mistral-medium-2505"),
-            ("anthropic", "claude-sonnet-4-20250514")
+            ("anthropic", "claude-sonnet-4-20250514"),
         ]
-        
+
         results = {}
-        
+
         for provider, model in providers:
             print(f"\n🔍 Testing {provider} with {model}:")
-            
+
             client = get_client(provider=provider, model=model)
-            
+
             # Check tool compatibility
-            if hasattr(client, 'get_tool_compatibility_info'):
+            if hasattr(client, "get_tool_compatibility_info"):
                 tool_info = client.get_tool_compatibility_info()
-                print(f"   Compatibility level: {tool_info.get('compatibility_level', 'unknown')}")
-                print(f"   Requires sanitization: {tool_info.get('requires_sanitization', 'unknown')}")
-            
+                print(
+                    f"   Compatibility level: {tool_info.get('compatibility_level', 'unknown')}"
+                )
+                print(
+                    f"   Requires sanitization: {tool_info.get('requires_sanitization', 'unknown')}"
+                )
+
             response = await client.create_completion(
-                messages=messages,
-                tools=universal_tools,
-                stream=False
+                messages=messages, tools=universal_tools, stream=False
             )
-            
+
             if response.get("tool_calls"):
                 tool_call = response["tool_calls"][0]
                 func_name = tool_call["function"]["name"]
                 func_args = tool_call["function"]["arguments"]
-                
+
                 print(f"   Tool called: {func_name}")
                 print(f"   Arguments: {func_args}")
-                
+
                 # Check if original name is restored
                 if func_name == "stdio.describe_table":
-                    print(f"   ✅ Original tool name correctly restored")
-                    
+                    print("   ✅ Original tool name correctly restored")
+
                     # Check parameters
                     try:
                         parsed_args = json.loads(func_args)
                         if "table_name" in parsed_args and parsed_args["table_name"]:
-                            print(f"   ✅ Parameter extraction worked: table_name='{parsed_args['table_name']}'")
+                            print(
+                                f"   ✅ Parameter extraction worked: table_name='{parsed_args['table_name']}'"
+                            )
                             results[provider] = {
                                 "success": True,
                                 "tool_name": func_name,
-                                "table_name": parsed_args["table_name"]
+                                "table_name": parsed_args["table_name"],
                             }
                         else:
-                            print(f"   ❌ Parameter extraction failed")
-                            results[provider] = {"success": False, "reason": "no_parameter"}
+                            print("   ❌ Parameter extraction failed")
+                            results[provider] = {
+                                "success": False,
+                                "reason": "no_parameter",
+                            }
                     except json.JSONDecodeError:
-                        print(f"   ❌ Invalid JSON in arguments")
+                        print("   ❌ Invalid JSON in arguments")
                         results[provider] = {"success": False, "reason": "invalid_json"}
                 else:
                     print(f"   ⚠️  Unexpected tool name: {func_name}")
                     results[provider] = {"success": False, "reason": "wrong_tool"}
             else:
-                print(f"   ❌ No tool call made")
+                print("   ❌ No tool call made")
                 results[provider] = {"success": False, "reason": "no_tool_call"}
-        
+
         # Compare results
-        print(f"\n📊 CONSISTENCY COMPARISON:")
+        print("\n📊 CONSISTENCY COMPARISON:")
         mistral_result = results.get("mistral", {})
         anthropic_result = results.get("anthropic", {})
-        
+
         if mistral_result.get("success") and anthropic_result.get("success"):
-            print(f"   ✅ Both providers successful")
-            
+            print("   ✅ Both providers successful")
+
             # Check if they extracted the same table name
             mistral_table = mistral_result.get("table_name", "")
             anthropic_table = anthropic_result.get("table_name", "")
-            
+
             if mistral_table == anthropic_table:
                 print(f"   ✅ Consistent parameter extraction: '{mistral_table}'")
-                print(f"   ✅ PERFECT CONSISTENCY ACHIEVED!")
+                print("   ✅ PERFECT CONSISTENCY ACHIEVED!")
                 return True
             else:
-                print(f"   ⚠️  Different parameter extraction:")
+                print("   ⚠️  Different parameter extraction:")
                 print(f"      Mistral: '{mistral_table}'")
                 print(f"      Anthropic: '{anthropic_table}'")
                 return True  # Still acceptable
         else:
-            print(f"   ⚠️  Inconsistent results:")
+            print("   ⚠️  Inconsistent results:")
             print(f"      Mistral: {'✅' if mistral_result.get('success') else '❌'}")
-            print(f"      Anthropic: {'✅' if anthropic_result.get('success') else '❌'}")
+            print(
+                f"      Anthropic: {'✅' if anthropic_result.get('success') else '❌'}"
+            )
             return False
-        
+
     except Exception as e:
         print(f"❌ Error in consistency test: {e}")
         return False
@@ -841,37 +894,37 @@ async def main():
     """Run the complete Mistral test suite with universal tool compatibility"""
     print("🧪 MISTRAL COMPLETE TOOL CHAIN & UNIVERSAL COMPATIBILITY TEST")
     print("=" * 80)
-    
+
     print("This test will prove Mistral's universal tool compatibility works by:")
     print("1. Testing complete tool conversation chains with MCP-style names")
     print("2. Testing parameter extraction with sanitized tool names")
     print("3. Testing streaming with tool name restoration")
     print("4. Showing bidirectional mapping throughout conversation flows")
     print("5. Comparing consistency with Anthropic")
-    
+
     # Test 1: Complete tool chain with universal names
     result1 = await test_complete_tool_chain_with_universal_names()
-    
+
     # Test 2: Universal parameter extraction
     result2 = await test_universal_parameter_extraction()
-    
+
     # Test 3: Streaming with universal tools
     result3 = await test_streaming_with_universal_tools()
-    
+
     # Test 4: Consistency with Anthropic
     result4 = await test_mistral_vs_anthropic_consistency()
-    
+
     print("\n" + "=" * 80)
     print("🎯 MISTRAL COMPLETE TEST RESULTS:")
     print(f"   Universal Tool Chain: {'✅ PASS' if result1 else '❌ FAIL'}")
     print(f"   Universal Parameters: {'✅ PASS' if result2 else '❌ FAIL'}")
     print(f"   Streaming + Restoration: {'✅ PASS' if result3 else '❌ FAIL'}")
     print(f"   Consistency with Anthropic: {'✅ PASS' if result4 else '❌ FAIL'}")
-    
+
     if result1 and result2 and result3 and result4:
         print("\n🎉 COMPLETE MISTRAL SUCCESS!")
         print("✅ Mistral universal tool compatibility works perfectly!")
-        
+
         print("\n🔧 PROVEN CAPABILITIES:")
         print("   ✅ MCP-style tool names (stdio.read_query) work seamlessly")
         print("   ✅ API-style tool names (web.api:search) work seamlessly")
@@ -882,17 +935,17 @@ async def main():
         print("   ✅ Complex conversation flows maintain name restoration")
         print("   ✅ Parameter extraction works with any naming convention")
         print("   ✅ Consistent behavior with Anthropic")
-        
+
         print("\n🚀 READY FOR PRODUCTION:")
         print("   • MCP CLI can use any tool naming convention with Mistral")
         print("   • Mistral + Anthropic provide identical user experience")
         print("   • Tool chaining works across conversation turns")
         print("   • Streaming maintains tool name fidelity")
         print("   • Provider switching is seamless")
-        
+
         print("\n💡 Original MCP CLI error is COMPLETELY FIXED!")
         print("   mcp-cli chat --provider mistral --model mistral-medium-2505")
-        
+
     elif any([result1, result2, result3, result4]):
         print("\n⚠️  PARTIAL SUCCESS:")
         print("   Some aspects of universal tool compatibility work")
@@ -904,7 +957,7 @@ async def main():
             print("   ✅ Streaming restoration works")
         if result4:
             print("   ✅ Consistency with Anthropic")
-        
+
     else:
         print("\n❌ TESTS FAILED:")
         print("   Universal tool compatibility needs debugging")
@@ -917,5 +970,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    print("🚀 Starting Mistral Complete Tool Chain Test with Universal Compatibility...")
+    print(
+        "🚀 Starting Mistral Complete Tool Chain Test with Universal Compatibility..."
+    )
     asyncio.run(main())

@@ -1,0 +1,239 @@
+# ChukLLM - AI Agent Documentation
+
+## Project Overview
+ChukLLM is a unified Python library for Large Language Model (LLM) providers with production-ready features including real-time streaming, function calling, middleware support, automatic session tracking, dynamic model discovery, and intelligent system prompt generation.
+
+## Quick Start for AI Agents
+
+### Installation
+```bash
+# Using uv (recommended)
+uv sync --dev
+
+# Using pip
+pip install -e .[dev]
+```
+
+### Running Tests
+```bash
+make test          # Run all tests
+make test-cov      # Run with coverage
+make lint          # Check code quality
+make format        # Auto-format code
+make check         # Run all checks
+```
+
+### Development Workflow
+1. Always run `make format` before committing
+2. Ensure tests pass with `make test`
+3. Check types with `make typecheck`
+4. Install pre-commit hooks: `make pre-commit-install`
+
+## Architecture
+
+### Core Components
+- **API Layer** (`src/chuk_llm/api/`): Main async/sync functions
+- **LLM Clients** (`src/chuk_llm/llm/providers/`): Provider implementations
+- **Discovery** (`src/chuk_llm/llm/discovery/`): Dynamic model detection
+- **Configuration** (`src/chuk_llm/configuration/`): YAML-based config
+
+### Key Patterns
+- All providers implement `BaseLLMClient` interface
+- Streaming with unified interface across providers
+- Dynamic function generation from configuration
+- Automatic session tracking with chuk-ai-session-manager
+
+## Provider Support
+
+### Supported Providers
+- OpenAI (GPT-3.5, GPT-4, GPT-5)
+- Anthropic (Claude 3, Claude 4)
+- Google Gemini
+- Azure OpenAI
+- Ollama (local models)
+- Groq, Mistral, Watsonx
+- OpenRouter, Perplexity, DeepSeek
+
+### Provider Features
+- Full async/sync support
+- Streaming responses
+- Function/tool calling
+- Vision capabilities (provider-dependent)
+- JSON mode support
+
+## Testing Guidelines
+
+### Test Structure
+```
+tests/
+├── api/           # API layer tests
+├── llm/           # LLM client tests
+│   └── providers/ # Provider-specific tests
+└── configuration/ # Config tests
+```
+
+### Running Specific Tests
+```bash
+# Test specific provider
+uv run pytest tests/llm/providers/test_openai_client.py
+
+# Test with pattern
+uv run pytest -k "test_streaming"
+
+# Test specific method
+uv run pytest tests/api/test_core.py::test_ask
+```
+
+## Common Tasks
+
+### Adding a New Provider
+1. Create client in `src/chuk_llm/llm/providers/`
+2. Inherit from `BaseLLMClient`
+3. Implement `ask()` and `stream()` methods
+4. Add configuration in `chuk_llm.yaml`
+5. Add tests in `tests/llm/providers/`
+
+### Debugging
+- Use diagnostic scripts in `diagnostics/`
+- Check provider compatibility with `diagnostics/capabilities/`
+- Test streaming with `diagnostics/streaming/`
+- Validate tool calling with `diagnostics/tools/`
+
+### CLI Usage
+```bash
+# Basic usage
+chuk-llm ask "Hello world" --provider openai
+
+# With custom parameters
+chuk-llm ask "Generate JSON" --json --no-stream
+
+# Override base URL
+chuk-llm ask "Test" --base-url https://custom.api.com/v1
+```
+
+## Code Quality Standards
+
+### Pre-commit Hooks
+The project uses pre-commit hooks for code quality:
+- isort: Import sorting
+- black: Code formatting
+- ruff: Linting
+- mypy: Type checking
+
+### Formatting Order
+1. isort (import sorting)
+2. black (code formatting)  
+3. ruff (linting and fixes)
+
+### Type Hints
+- Use type hints for all public functions
+- Prefer `Optional[T]` over `T | None` for clarity
+- Use `TypedDict` for complex dictionaries
+
+## CI/CD Pipeline
+
+### GitHub Actions Workflows
+- **CI**: Runs on all PRs (lint, typecheck, test)
+- **Release**: Publishes to PyPI on version tags
+- Tests run on multiple OS (Ubuntu, macOS, Windows)
+- Python versions: 3.11, 3.12
+
+### Release Process
+1. Bump version in `pyproject.toml`
+2. Create PR with changes
+3. After merge, tag with `v{version}`
+4. GitHub Actions publishes to PyPI
+
+## Environment Variables
+
+### API Keys
+```bash
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+GEMINI_API_KEY=...
+GROQ_API_KEY=gsk_...
+```
+
+### Base URL Overrides
+```bash
+OPENAI_BASE_URL=https://custom.api.com/v1
+OLLAMA_BASE_URL=http://localhost:11434
+```
+
+## Troubleshooting
+
+### Common Issues
+1. **Import errors**: Run `uv sync --dev`
+2. **Type errors**: Update type stubs with `uv add types-{package}`
+3. **Streaming issues**: Check provider diagnostic scripts
+4. **Discovery failures**: Verify provider availability
+
+### Debug Mode
+```python
+import logging
+logging.basicConfig(level=logging.DEBUG)
+```
+
+## Performance Optimization
+
+### Connection Pooling
+- Automatic connection pooling for high throughput
+- Configurable pool size per provider
+- Efficient resource management
+
+### Caching
+- Response caching with TTL
+- Model discovery caching
+- Configuration caching
+
+## Security Considerations
+
+### API Key Management
+- Never commit API keys
+- Use environment variables
+- Rotate keys regularly
+- Use `.env` file for local development
+
+### Data Privacy
+- No automatic data collection
+- Session tracking is opt-in
+- Local storage by default
+
+## Contributing
+
+### Development Setup
+1. Fork the repository
+2. Clone your fork
+3. Install with `uv sync --dev`
+4. Create feature branch
+5. Make changes with tests
+6. Run `make check`
+7. Submit PR
+
+### Code Review Checklist
+- [ ] Tests pass (`make test`)
+- [ ] Code formatted (`make format`)
+- [ ] Type hints added
+- [ ] Documentation updated
+- [ ] No hardcoded secrets
+
+## Resources
+
+### Documentation
+- [GitHub Repository](https://github.com/chrishayuk/chuk-llm)
+- [PyPI Package](https://pypi.org/project/chuk-llm/)
+- [Issue Tracker](https://github.com/chrishayuk/chuk-llm/issues)
+
+### Examples
+- See `examples/` directory for usage examples
+- Provider-specific examples in `examples/llm_provider_examples/`
+- Benchmarks in `benchmarks/` for performance testing
+
+## Version History
+- v0.9.x: Dynamic discovery, enhanced streaming
+- v0.8.x: Session tracking integration
+- v0.7.x: Multi-provider support
+- v0.6.x: Initial release
+
+## License
+MIT License - See LICENSE file for details

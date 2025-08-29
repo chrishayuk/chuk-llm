@@ -7,29 +7,25 @@ Model discovery system - Clean modular version with Azure OpenAI support
 from .base import BaseModelDiscoverer, DiscoveredModel, DiscovererFactory
 
 # Import engine components
-from .engine import (
-    ConfigDrivenInferenceEngine, 
-    UniversalModelDiscoveryManager
-)
+from .engine import ConfigDrivenInferenceEngine, UniversalModelDiscoveryManager
 
 # Import manager
-from .manager import UniversalDiscoveryManager, DiscoveryResults
+from .manager import DiscoveryResults, UniversalDiscoveryManager
 
 # Clean exports - no legacy imports
 __all__ = [
     # Base classes
     "BaseModelDiscoverer",
-    "DiscoveredModel", 
+    "DiscoveredModel",
     "DiscovererFactory",
-    
     # Engine components
     "ConfigDrivenInferenceEngine",
-    "UniversalModelDiscoveryManager", 
-    
+    "UniversalModelDiscoveryManager",
     # Manager
     "UniversalDiscoveryManager",
     "DiscoveryResults",
 ]
+
 
 # Initialize factory (triggers auto-import of discoverers)
 def _initialize_factory():
@@ -38,7 +34,11 @@ def _initialize_factory():
         DiscovererFactory._auto_import_discoverers()
     except Exception as e:
         import logging
-        logging.getLogger(__name__).warning(f"Failed to initialize discovery factory: {e}")
+
+        logging.getLogger(__name__).warning(
+            f"Failed to initialize discovery factory: {e}"
+        )
+
 
 # Auto-initialize on import
 _initialize_factory()

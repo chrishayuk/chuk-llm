@@ -1,3 +1,45 @@
+# ChukLLM Configuration File
+# ==========================
+#
+# Provider Configuration Options:
+# -------------------------------
+# Each provider can be configured with:
+#
+# Required:
+#   client_class: The Python class path for the LLM client
+#   api_key_env: Environment variable name for API key
+#
+# Optional:
+#   api_base: Base URL for the API endpoint
+#   api_base_env: Custom environment variable for base URL (in extra section)
+#   default_model: Default model to use
+#   models: List of available models
+#   features: List of supported features
+#   max_context_length: Maximum context window size
+#   max_output_tokens: Maximum output token limit
+#
+# Environment Variable Support:
+# -----------------------------
+# Base URLs can be overridden using environment variables:
+# 1. Custom env var (set api_base_env in extra config)
+# 2. Standard patterns: {PROVIDER}_API_BASE, {PROVIDER}_BASE_URL, etc.
+# 3. Configured api_base value (lowest priority)
+#
+# Example:
+#   export OPENAI_API_BASE=https://proxy.company.com/v1
+#   export CUSTOM_LLM_ENDPOINT=https://api.custom.com/v1
+#
+# Dynamic Provider Registration:
+# ------------------------------
+# Providers can also be registered at runtime using the API:
+#   from chuk_llm import register_openai_compatible
+#   register_openai_compatible(
+#       name="custom_provider",
+#       api_base_env="CUSTOM_ENDPOINT",  # Uses env var for URL
+#       api_key_env="CUSTOM_KEY",
+#       models=["model1", "model2"]
+#   )
+
 __discovery_defaults__:
   feature_dependencies:
     json_mode:
@@ -115,7 +157,10 @@ anthropic:
   api_key_env: ANTHROPIC_API_KEY
   client_class: chuk_llm.llm.providers.anthropic_client.AnthropicLLMClient
   default_model: claude-opus-4-1-20250805
+  # Base URL defaults to Anthropic's API, override with ANTHROPIC_API_BASE
   extra:
+    # Environment variable for base URL
+    api_base_env: ANTHROPIC_API_BASE
     dynamic_discovery:
       discoverer_type: anthropic
       enabled: true
@@ -278,11 +323,13 @@ anthropic:
   rate_limits:
     default: 4000
 deepseek:
-  api_base: https://api.deepseek.com
+  api_base: https://api.deepseek.com  # Default fallback
   api_key_env: DEEPSEEK_API_KEY
   client_class: chuk_llm.llm.providers.openai_client.OpenAILLMClient
   default_model: deepseek-reasoner
   extra:
+    # Environment variable for base URL
+    api_base_env: DEEPSEEK_API_BASE
     dynamic_discovery:
       discoverer_type: deepseek
       enabled: true
@@ -351,7 +398,10 @@ gemini:
   api_key_env: GEMINI_API_KEY
   client_class: chuk_llm.llm.providers.gemini_client.GeminiLLMClient
   default_model: gemini-2.5-flash
+  # Base URL defaults to Google's API, override with GEMINI_API_BASE
   extra:
+    # Environment variable for base URL
+    api_base_env: GEMINI_API_BASE
     dynamic_discovery:
       discoverer_type: gemini
       enabled: true
@@ -507,7 +557,7 @@ gemini:
     tier_2: 2000
 
 groq:
-  api_base: https://api.groq.com/openai/v1
+  api_base: https://api.groq.com/openai/v1  # Default fallback
   api_key_env: GROQ_API_KEY
   client_class: chuk_llm.llm.providers.groq_client.GroqAILLMClient
   default_model: llama-3.3-70b-versatile
@@ -694,6 +744,8 @@ groq:
   
   # Extra configuration
   extra:
+    # Environment variable for base URL
+    api_base_env: GROQ_API_BASE
     # Performance characteristics
     ultra_fast_inference: true
     openai_compatible: true
@@ -701,7 +753,7 @@ groq:
     # Dynamic discovery
     dynamic_discovery:
       enabled: true
-      discoverer_type: groq
+      discoverer_type: openai
       cache_timeout: 300
       
       # Inference configuration for discovery
@@ -794,7 +846,10 @@ mistral:
   api_key_env: MISTRAL_API_KEY
   client_class: chuk_llm.llm.providers.mistral_client.MistralLLMClient
   default_model: mistral-medium-2505
+  # Base URL defaults to Mistral's API, override with MISTRAL_API_BASE
   extra:
+    # Environment variable for base URL
+    api_base_env: MISTRAL_API_BASE
     dynamic_discovery:
       discoverer_type: mistral
       enabled: false
@@ -972,10 +1027,13 @@ mistral:
     default: 1000
     premium: 5000
 ollama:
-  api_base: http://localhost:11434
+  api_base: http://localhost:11434  # Default fallback
   client_class: chuk_llm.llm.providers.ollama_client.OllamaLLMClient
   default_model: granite3.3
+  # Override with OLLAMA_API_BASE or OLLAMA_HOST environment variables
   extra:
+    # Environment variable for base URL
+    api_base_env: OLLAMA_API_BASE
     dynamic_discovery:
       auto_update_models: true
       cache_timeout: 300
@@ -1277,6 +1335,13 @@ openai:
   api_key_env: OPENAI_API_KEY
   default_model: gpt-5
   
+  # Base URL can be overridden by environment variables:
+  # - OPENAI_API_BASE (highest priority)
+  # - OPENAI_BASE_URL
+  # - OPENAI_API_URL
+  # - OPENAI_ENDPOINT
+  # Or set a custom env var using api_base_env in extra config
+  
   # Enhanced features including unified reasoning
   features:
     - text
@@ -1290,6 +1355,11 @@ openai:
   
   max_context_length: 272000  # Updated for GPT-5
   max_output_tokens: 128000   # Updated for GPT-5
+  
+  # Extra configuration
+  extra:
+    # Environment variable for base URL (standard patterns work automatically)
+    api_base_env: OPENAI_API_BASE
   
   # Updated model list with GPT-5 family and GPT-OSS
   models:
@@ -1667,14 +1737,282 @@ openai:
               - o3
               - o3-mini
               - o3-.*
-openai_compatible:
-  client_class: OpenAILLMClient
-  api_base: null  # Will be provided by user
+
+litellm:
+  # LiteLLM Gateway - Universal LLM Gateway
+  # https://github.com/BerriAI/litellm
+  # 
+  # LiteLLM provides a unified interface to 100+ LLM providers
+  # Set up your gateway and configure:
+  #   LITELLM_API_BASE=http://localhost:4000  # Or your gateway URL
+  #   LITELLM_API_KEY=your-litellm-key
+  #
+  # Models are prefixed by provider: openai/gpt-4, anthropic/claude-3, etc.
+  #
+  client_class: chuk_llm.llm.providers.openai_client.OpenAILLMClient
+  api_key_env: LITELLM_API_KEY
+  api_key_fallback_env: OPENAI_API_KEY
+  api_base: http://localhost:4000  # Default fallback
+  
+  # Common models accessible via LiteLLM
   models:
-    - "*"  # Accept any model name
-  model_aliases: {}
+    - gpt-3.5-turbo
+    - gpt-4
+    - claude-3-opus
+    - claude-3-sonnet
+    - gemini-pro
+    - mistral-medium
+    - "*"  # Accept any model/provider combination
+  
+  default_model: gpt-3.5-turbo
+  
+  features:
+    - text
+    - streaming
+    - system_messages
+    - tools
+    - json_mode
+    - vision
+    - parallel_calls
+  
+  max_context_length: 128000
+  max_output_tokens: 4096
+  
+  extra:
+    # Environment variable for base URL
+    api_base_env: LITELLM_API_BASE
+    # LiteLLM supports model fallbacks and load balancing
+    supports_fallbacks: true
+    supports_caching: true
+    supports_load_balancing: true
+
+openrouter:
+  # OpenRouter - Unified API for LLMs
+  # https://openrouter.ai/docs/quickstart
+  #
+  # Get your API key from https://openrouter.ai/keys
+  # Set: OPENROUTER_API_KEY=sk-or-...
+  #
+  # Models use provider prefixes: openai/gpt-4, anthropic/claude-3-opus, etc.
+  #
+  client_class: chuk_llm.llm.providers.openai_client.OpenAILLMClient
+  api_base: https://openrouter.ai/api/v1  # Default fallback
+  api_key_env: OPENROUTER_API_KEY
+  
+  # Popular models on OpenRouter
+  models:
+    - openai/gpt-3.5-turbo
+    - openai/gpt-4
+    - openai/gpt-4-turbo
+    - anthropic/claude-3-opus
+    - anthropic/claude-3-sonnet
+    - anthropic/claude-3-haiku
+    - google/gemini-pro
+    - google/gemini-pro-vision
+    - meta-llama/llama-3-70b-instruct
+    - mistralai/mistral-large
+    - deepseek/deepseek-chat
+    - "*"  # OpenRouter has 100+ models
+  
+  default_model: openai/gpt-3.5-turbo
+  
+  features:
+    - text
+    - streaming
+    - system_messages
+    - tools
+    - json_mode
+    - vision
+    - parallel_calls
+  
+  max_context_length: 200000  # Varies by model
+  max_output_tokens: 4096
+  
+  extra:
+    # Environment variable for base URL
+    api_base_env: OPENROUTER_API_BASE
+    # OpenRouter specific headers
+    # You can set these in your code:
+    # extra_headers = {
+    #   "HTTP-Referer": "https://yourapp.com",
+    #   "X-Title": "Your App Name"
+    # }
+    supports_usage_tracking: true
+    supports_cost_tracking: true
+
+vllm:
+  # vLLM - High-performance OpenAI-compatible inference
+  # https://docs.vllm.ai/en/latest/getting_started/quickstart.html
+  #
+  # Start vLLM server:
+  #   python -m vllm.entrypoints.openai.api_server \
+  #     --model meta-llama/Llama-3-70b-hf \
+  #     --port 8000
+  #
+  # Then set: VLLM_API_BASE=http://localhost:8000/v1
+  #
+  client_class: chuk_llm.llm.providers.openai_client.OpenAILLMClient
+  api_key_env: VLLM_API_KEY
+  # Most vLLM deployments don't require API keys
+  api_base: http://localhost:8000/v1  # Default fallback
+  
+  # Models depend on what you're serving
+  models:
+    - meta-llama/Llama-3-8b-hf
+    - meta-llama/Llama-3-70b-hf
+    - mistralai/Mistral-7B-Instruct-v0.2
+    - mistralai/Mixtral-8x7B-Instruct-v0.1
+    - deepseek-ai/deepseek-llm-67b-base
+    - "*"  # Accept any model served by vLLM
+  
+  default_model: meta-llama/Llama-3-8b-hf
+  
+  features:
+    - text
+    - streaming
+    - system_messages
+    - tools
+    - json_mode
+  
+  # vLLM supports very long contexts
+  max_context_length: 128000
+  max_output_tokens: 4096
+  
+  extra:
+    # Environment variable for base URL
+    api_base_env: VLLM_API_BASE
+    # vLLM specific features
+    supports_tensor_parallel: true
+    supports_pipeline_parallel: true
+    supports_continuous_batching: true
+    supports_prefix_caching: true
+
+togetherai:
+  # Together AI - Scalable AI inference
+  # https://www.together.ai/models
+  #
+  # Get API key from https://api.together.xyz/settings/api-keys
+  # Set: TOGETHER_API_KEY=...
+  # Set: TOGETHERAI_API_BASE=https://api.together.xyz/v1 (optional override)
+  #
+  client_class: chuk_llm.llm.providers.openai_client.OpenAILLMClient
+  api_base: https://api.together.xyz/v1  # Default fallback
+  api_key_env: TOGETHER_API_KEY
+  api_key_fallback_env: TOGETHERAI_API_KEY
+  
+  # Together AI's top models
+  models:
+    # DeepSeek models
+    - deepseek-ai/deepseek-v3
+    - deepseek-ai/DeepSeek-V2.5-1210
+    - deepseek-ai/deepseek-coder-33b-instruct
+    
+    # Llama models
+    - meta-llama/Llama-3.3-70B-Instruct-Turbo
+    - meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo
+    - meta-llama/Llama-3-70b-chat-hf
+    - meta-llama/Llama-3-8b-chat-hf
+    
+    # Mixtral models
+    - mistralai/Mixtral-8x7B-Instruct-v0.1
+    - mistralai/Mixtral-8x22B-Instruct-v0.1
+    
+    # Qwen models
+    - Qwen/Qwen2.5-72B-Instruct-Turbo
+    - Qwen/QwQ-32B-Preview
+    
+    # Code models
+    - deepseek-ai/deepseek-coder-33b-instruct
+    - codellama/CodeLlama-70b-Instruct-hf
+    
+    # Vision models
+    - meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo
+    - meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo
+    
+    - "*"  # Together has 100+ models
+  
+  default_model: meta-llama/Llama-3.3-70B-Instruct-Turbo
+  
+  features:
+    - text
+    - streaming
+    - system_messages
+    - tools
+    - json_mode
+    - vision  # For vision models
+  
+  max_context_length: 128000  # Varies by model
+  max_output_tokens: 4096
+  
+  extra:
+    # Environment variable for base URL
+    api_base_env: TOGETHERAI_API_BASE
+    # Together AI offers very competitive pricing
+    supports_function_calling: true
+    supports_json_mode: true
+    supports_streaming: true
+
+openai_compatible:
+  # Generic OpenAI-compatible provider configuration
+  # Use this for any service that implements the OpenAI API
+  # without modifying the main openai provider
+  #
+  # Configure via environment variables:
+  #   OPENAI_COMPATIBLE_API_BASE=https://your-service.com/v1
+  #   OPENAI_COMPATIBLE_API_KEY=your-api-key
+  #   OPENAI_COMPATIBLE_MODEL=model-name (optional)
+  #
+  # Or use custom environment variables by setting in extra:
+  #   extra:
+  #     api_base_env: YOUR_CUSTOM_BASE_ENV
+  #
+  client_class: chuk_llm.llm.providers.openai_client.OpenAILLMClient
+  api_key_env: OPENAI_COMPATIBLE_API_KEY
+  # Base URL will be read from environment: OPENAI_COMPATIBLE_API_BASE
+  # Falls back to api_key_fallback_env if primary not set
+  api_key_fallback_env: OPENAI_API_KEY
+  
+  # Accept any model name - will be validated by the service
+  models:
+    - gpt-3.5-turbo     # Common models for convenience
+    - gpt-4
+    - gpt-4-turbo
+    - text-embedding-ada-002
+    - "*"               # Accept any model name
+  
+  default_model: gpt-3.5-turbo  # Safe default
+  
+  # Full OpenAI feature compatibility assumed
+  features:
+    - text
+    - streaming
+    - system_messages
+    - tools
+    - json_mode
+    - vision
+    - parallel_calls
+  
+  # Reasonable defaults - adjust via dynamic registration if needed
+  max_context_length: 128000
+  max_output_tokens: 4096
+  
   rate_limits:
     requests_per_minute: 1000  # Default, adjust based on your endpoint
+  
+  # Extra configuration for environment variable support
+  extra:
+    # Environment variable for base URL (automatically checked)
+    api_base_env: OPENAI_COMPATIBLE_API_BASE
+    
+    # Service examples that work with this config:
+    # - LocalAI: http://localhost:8080/v1
+    # - FastChat: http://localhost:8000/v1
+    # - vLLM: http://gpu-server:8000/v1
+    # - Perplexity: https://api.perplexity.ai
+    # - Together AI: https://api.together.xyz/v1
+    # - Anyscale: https://api.endpoints.anyscale.com/v1
+    # - LM Studio: http://localhost:1234/v1
+    # - Ollama (OpenAI mode): http://localhost:11434/v1
   
   # Model capabilities - assume full OpenAI compatibility
   model_capabilities:
@@ -1691,11 +2029,13 @@ openai_compatible:
       max_context_length: 128000  # Adjust based on your endpoint
       max_output_tokens: 4096     # Adjust based on your endpoint
 perplexity:
-  api_base: https://api.perplexity.ai
+  api_base: https://api.perplexity.ai  # Default fallback
   api_key_env: PERPLEXITY_API_KEY
   client_class: chuk_llm.llm.providers.openai_client.OpenAILLMClient
   default_model: sonar-pro
   extra:
+    # Environment variable for base URL
+    api_base_env: PERPLEXITY_API_BASE
     beta_features:
       tier_0:
       - related_questions
@@ -1839,7 +2179,10 @@ watsonx:
   api_key_fallback_env: IBM_CLOUD_API_KEY
   client_class: chuk_llm.llm.providers.watsonx_client.WatsonXLLMClient
   default_model: ibm/granite-3-3-8b-instruct
+  # Base URL defaults to IBM Cloud, override with WATSONX_API_BASE
   extra:
+    # Environment variable for base URL
+    api_base_env: WATSONX_API_BASE
     dynamic_discovery:
       discoverer_type: watsonx
       enabled: false
