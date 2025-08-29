@@ -4,9 +4,10 @@ Parameters example - customize LLM behavior
 """
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
-from chuk_llm import ask_openai_sync, ask_anthropic_sync
+from chuk_llm import ask_anthropic_sync, ask_openai_sync
 
 # Temperature: Controls creativity (0.0 = predictable, 2.0 = very creative)
 print("=== Temperature ===")

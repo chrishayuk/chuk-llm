@@ -20,15 +20,17 @@ print(f"\n📌 Virtual env: {sys.prefix}")
 print("\n📌 Checking installed packages:")
 try:
     import chuk_llm
+
     print(f"  ✅ chuk_llm: {chuk_llm.__version__}")
 except ImportError as e:
     print(f"  ❌ chuk_llm: Not installed or import error: {e}")
 
 try:
     import chuk_ai_session_manager
+
     print(f"  ✅ chuk_ai_session_manager: {chuk_ai_session_manager.__version__}")
 except ImportError:
-    print(f"  ❌ chuk_ai_session_manager: Not installed")
+    print("  ❌ chuk_ai_session_manager: Not installed")
 
 # Check environment variables
 print("\n📌 Environment variables:")
@@ -45,19 +47,25 @@ for key, value in api_keys.items():
         print(f"  ❌ {key}: Not set")
 
 # Check session settings
-sessions_disabled = os.getenv("CHUK_LLM_DISABLE_SESSIONS", "").lower() in ("true", "1", "yes")
+sessions_disabled = os.getenv("CHUK_LLM_DISABLE_SESSIONS", "").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 print(f"\n📌 Session tracking: {'Disabled' if sessions_disabled else 'Enabled'}")
 
 # Try importing core components
 print("\n📌 Testing imports:")
 try:
     from chuk_llm.api.core import ask, get_session_stats
+
     print("  ✅ Core functions imported")
 except ImportError as e:
     print(f"  ❌ Core import failed: {e}")
 
 try:
     from chuk_llm.api.conversation import conversation
+
     print("  ✅ Conversation imported")
 except ImportError as e:
     print(f"  ❌ Conversation import failed: {e}")

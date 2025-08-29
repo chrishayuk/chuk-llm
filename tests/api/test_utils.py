@@ -7,27 +7,25 @@ Run with:
     pytest tests/api/test_utils.py::TestGetMetrics::test_get_metrics_no_cached_client -v
 """
 
-import pytest
 import asyncio
-from unittest.mock import Mock, patch, AsyncMock
-from typing import Dict, Any
-import sys
-import os
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
 
 # Import the module under test
 from chuk_llm.api import utils
 from chuk_llm.api.utils import (
+    cleanup,
+    cleanup_sync,
+    get_current_client_info,
     get_metrics,
     health_check,
     health_check_sync,
-    get_current_client_info,
-    test_connection,
-    test_connection_sync,
+    print_diagnostics,
     test_all_providers,
     test_all_providers_sync,
-    print_diagnostics,
-    cleanup,
-    cleanup_sync
+    test_connection,
+    test_connection_sync,
 )
 
 
@@ -48,7 +46,7 @@ class TestGetMetrics:
 
     def test_get_metrics_no_cached_client(self):
         """Test get_metrics when no client is cached."""
-        with patch('chuk_llm.api.utils._cached_client', None):
+        with patch("chuk_llm.api.utils._cached_client", None):
             result = get_metrics()
             assert result == {}
 
@@ -56,23 +54,23 @@ class TestGetMetrics:
         """Test get_metrics when client has no middleware stack."""
         mock_client = Mock()
         # Client without middleware_stack attribute
-        if hasattr(mock_client, 'middleware_stack'):
-            delattr(mock_client, 'middleware_stack')
-        
-        with patch('chuk_llm.api.utils._cached_client', mock_client):
+        if hasattr(mock_client, "middleware_stack"):
+            delattr(mock_client, "middleware_stack")
+
+        with patch("chuk_llm.api.utils._cached_client", mock_client):
             result = get_metrics()
             assert result == {}
 
     def test_get_metrics_with_middleware_no_metrics(self):
         """Test get_metrics when middleware exists but has no get_metrics method."""
         mock_middleware = Mock()
-        if hasattr(mock_middleware, 'get_metrics'):
-            delattr(mock_middleware, 'get_metrics')  # Remove get_metrics method
-        
+        if hasattr(mock_middleware, "get_metrics"):
+            delattr(mock_middleware, "get_metrics")  # Remove get_metrics method
+
         mock_client = Mock()
         mock_client.middleware_stack.middlewares = [mock_middleware]
-        
-        with patch('chuk_llm.api.utils._cached_client', mock_client):
+
+        with patch("chuk_llm.api.utils._cached_client", mock_client):
             result = get_metrics()
             assert result == {}
 
@@ -81,16 +79,16 @@ class TestGetMetrics:
         expected_metrics = {
             "total_requests": 42,
             "average_duration": 1.5,
-            "error_count": 3
+            "error_count": 3,
         }
-        
+
         mock_middleware = Mock()
         mock_middleware.get_metrics.return_value = expected_metrics
-        
+
         mock_client = Mock()
         mock_client.middleware_stack.middlewares = [mock_middleware]
-        
-        with patch('chuk_llm.api.utils._cached_client', mock_client):
+
+        with patch("chuk_llm.api.utils._cached_client", mock_client):
             result = get_metrics()
             assert result == expected_metrics
             mock_middleware.get_metrics.assert_called_once()
@@ -98,17 +96,17 @@ class TestGetMetrics:
     def test_get_metrics_multiple_middleware_first_has_metrics(self):
         """Test get_metrics when multiple middleware exist, first has metrics."""
         expected_metrics = {"requests": 10}
-        
+
         mock_middleware1 = Mock()
         mock_middleware1.get_metrics.return_value = expected_metrics
-        
+
         mock_middleware2 = Mock()
         mock_middleware2.get_metrics.return_value = {"other": "data"}
-        
+
         mock_client = Mock()
         mock_client.middleware_stack.middlewares = [mock_middleware1, mock_middleware2]
-        
-        with patch('chuk_llm.api.utils._cached_client', mock_client):
+
+        with patch("chuk_llm.api.utils._cached_client", mock_client):
             result = get_metrics()
             assert result == expected_metrics
             mock_middleware1.get_metrics.assert_called_once()
@@ -124,12 +122,14 @@ class TestHealthCheck:
         expected_health = {
             "status": "healthy",
             "total_clients": 5,
-            "active_connections": 3
+            "active_connections": 3,
         }
-        
-        with patch('chuk_llm.llm.connection_pool.get_llm_health_status', new_callable=AsyncMock) as mock_health:
+
+        with patch(
+            "chuk_llm.llm.connection_pool.get_llm_health_status", new_callable=AsyncMock
+        ) as mock_health:
             mock_health.return_value = expected_health
-            
+
             result = await health_check()
             assert result == expected_health
             mock_health.assert_called_once()
@@ -138,32 +138,36 @@ class TestHealthCheck:
     async def test_health_check_import_error(self):
         """Test health check when connection pool module is not available."""
         # Mock the import inside the health_check function
-        with patch.dict('sys.modules', {'chuk_llm.llm.connection_pool': None}):
-            with patch('builtins.__import__', side_effect=ImportError("Module not found")):
+        with patch.dict("sys.modules", {"chuk_llm.llm.connection_pool": None}):
+            with patch(
+                "builtins.__import__", side_effect=ImportError("Module not found")
+            ):
                 result = await health_check()
-                
+
                 expected = {
                     "status": "unknown",
-                    "error": "Health check not available - connection pool not found"
+                    "error": "Health check not available - connection pool not found",
                 }
                 assert result == expected
 
     @pytest.mark.asyncio
     async def test_health_check_other_exception(self):
         """Test health check when other exceptions occur."""
-        with patch('chuk_llm.llm.connection_pool.get_llm_health_status', new_callable=AsyncMock) as mock_health:
+        with patch(
+            "chuk_llm.llm.connection_pool.get_llm_health_status", new_callable=AsyncMock
+        ) as mock_health:
             mock_health.side_effect = RuntimeError("Connection failed")
-            
+
             with pytest.raises(RuntimeError, match="Connection failed"):
                 await health_check()
 
     def test_health_check_sync(self):
         """Test synchronous health check wrapper."""
         expected_health = {"status": "healthy"}
-        
-        with patch('asyncio.run') as mock_run:
+
+        with patch("asyncio.run") as mock_run:
             mock_run.return_value = expected_health
-            
+
             result = health_check_sync()
             assert result == expected_health
             mock_run.assert_called_once()
@@ -174,13 +178,10 @@ class TestGetCurrentClientInfo:
 
     def test_get_current_client_info_no_client(self):
         """Test get_current_client_info when no client is cached."""
-        with patch('chuk_llm.api.utils._cached_client', None):
+        with patch("chuk_llm.api.utils._cached_client", None):
             result = get_current_client_info()
-            
-            expected = {
-                "status": "no_client",
-                "message": "No client currently cached"
-            }
+
+            expected = {"status": "no_client", "message": "No client currently cached"}
             assert result == expected
 
     def test_get_current_client_info_with_client_no_middleware(self):
@@ -188,27 +189,25 @@ class TestGetCurrentClientInfo:
         mock_client = Mock()
         mock_client.__class__.__name__ = "TestClient"
         # Remove middleware_stack attribute
-        if hasattr(mock_client, 'middleware_stack'):
-            delattr(mock_client, 'middleware_stack')
-        
-        mock_config = {
-            "provider": "openai",
-            "model": "gpt-4",
-            "api_key": "test_key"
-        }
-        
-        with patch('chuk_llm.api.utils._cached_client', mock_client):
-            with patch('chuk_llm.api.utils.get_current_config', return_value=mock_config):
-                result = get_current_client_info()
-                
-                expected = {
-                    "status": "active",
-                    "provider": "openai",
-                    "model": "gpt-4",
-                    "client_type": "TestClient",
-                    "has_middleware": False,
-                }
-                assert result == expected
+        if hasattr(mock_client, "middleware_stack"):
+            delattr(mock_client, "middleware_stack")
+
+        mock_config = {"provider": "openai", "model": "gpt-4", "api_key": "test_key"}
+
+        with (
+            patch("chuk_llm.api.utils._cached_client", mock_client),
+            patch("chuk_llm.api.utils.get_current_config", return_value=mock_config),
+        ):
+            result = get_current_client_info()
+
+            expected = {
+                "status": "active",
+                "provider": "openai",
+                "model": "gpt-4",
+                "client_type": "TestClient",
+                "has_middleware": False,
+            }
+            assert result == expected
 
     def test_get_current_client_info_with_middleware(self):
         """Test get_current_client_info with client and middleware."""
@@ -216,51 +215,55 @@ class TestGetCurrentClientInfo:
         mock_middleware1.__class__.__name__ = "MetricsMiddleware"
         mock_middleware2 = Mock()
         mock_middleware2.__class__.__name__ = "LoggingMiddleware"
-        
+
         mock_client = Mock()
         mock_client.__class__.__name__ = "TestClient"
         mock_client.middleware_stack.middlewares = [mock_middleware1, mock_middleware2]
-        
+
         mock_config = {
             "provider": "anthropic",
             "model": "claude-3-sonnet",
         }
-        
-        with patch('chuk_llm.api.utils._cached_client', mock_client):
-            with patch('chuk_llm.api.utils.get_current_config', return_value=mock_config):
-                result = get_current_client_info()
-                
-                expected = {
-                    "status": "active",
-                    "provider": "anthropic",
-                    "model": "claude-3-sonnet",
-                    "client_type": "TestClient",
-                    "has_middleware": True,
-                    "middleware": ["MetricsMiddleware", "LoggingMiddleware"]
-                }
-                assert result == expected
+
+        with (
+            patch("chuk_llm.api.utils._cached_client", mock_client),
+            patch("chuk_llm.api.utils.get_current_config", return_value=mock_config),
+        ):
+            result = get_current_client_info()
+
+            expected = {
+                "status": "active",
+                "provider": "anthropic",
+                "model": "claude-3-sonnet",
+                "client_type": "TestClient",
+                "has_middleware": True,
+                "middleware": ["MetricsMiddleware", "LoggingMiddleware"],
+            }
+            assert result == expected
 
     def test_get_current_client_info_missing_config_keys(self):
         """Test get_current_client_info when config is missing keys."""
         mock_client = Mock()
         mock_client.__class__.__name__ = "TestClient"
-        if hasattr(mock_client, 'middleware_stack'):
-            delattr(mock_client, 'middleware_stack')
-        
+        if hasattr(mock_client, "middleware_stack"):
+            delattr(mock_client, "middleware_stack")
+
         mock_config = {}  # Empty config
-        
-        with patch('chuk_llm.api.utils._cached_client', mock_client):
-            with patch('chuk_llm.api.utils.get_current_config', return_value=mock_config):
-                result = get_current_client_info()
-                
-                expected = {
-                    "status": "active",
-                    "provider": "unknown",
-                    "model": "unknown",
-                    "client_type": "TestClient",
-                    "has_middleware": False,
-                }
-                assert result == expected
+
+        with (
+            patch("chuk_llm.api.utils._cached_client", mock_client),
+            patch("chuk_llm.api.utils.get_current_config", return_value=mock_config),
+        ):
+            result = get_current_client_info()
+
+            expected = {
+                "status": "active",
+                "provider": "unknown",
+                "model": "unknown",
+                "client_type": "TestClient",
+                "has_middleware": False,
+            }
+            assert result == expected
 
 
 class TestTestConnection:
@@ -270,23 +273,23 @@ class TestTestConnection:
     async def test_test_connection_success(self):
         """Test successful connection test."""
         mock_response = "Hello! This is a test response."
-        
+
         # Mock the ask function from core module
-        with patch('chuk_llm.api.core.ask', new_callable=AsyncMock) as mock_ask:
+        with patch("chuk_llm.api.core.ask", new_callable=AsyncMock) as mock_ask:
             mock_ask.return_value = mock_response
-            
-            with patch('chuk_llm.api.utils.get_current_config') as mock_config:
+
+            with patch("chuk_llm.api.utils.get_current_config") as mock_config:
                 mock_config.return_value = {"provider": "openai", "model": "gpt-4"}
-                
+
                 # Try multiple timing mechanisms that might be used
-                with patch('time.time', side_effect=[1000.0, 1001.5]):
-                    with patch('asyncio.get_event_loop') as mock_get_loop:
+                with patch("time.time", side_effect=[1000.0, 1001.5]):
+                    with patch("asyncio.get_event_loop") as mock_get_loop:
                         mock_loop = Mock()
                         mock_loop.time.side_effect = [1000.0, 1001.5]
                         mock_get_loop.return_value = mock_loop
-                        
+
                         result = await test_connection()
-                        
+
                         # Check the structure but be flexible about duration since timing might vary
                         assert result["success"] is True
                         assert result["provider"] == "openai"
@@ -294,38 +297,38 @@ class TestTestConnection:
                         assert result["response_length"] == len(mock_response)
                         assert result["response_preview"] == mock_response
                         assert "duration" in result
-                        assert isinstance(result["duration"], (int, float))
-                        
+                        assert isinstance(result["duration"], int | float)
+
                         mock_ask.assert_called_once_with(
                             "Hello, this is a connection test.",
                             provider="openai",
                             model="gpt-4",
-                            max_tokens=50
+                            max_tokens=50,
                         )
 
     @pytest.mark.asyncio
     async def test_test_connection_with_overrides(self):
         """Test connection test with provider and model overrides."""
         mock_response = "Test response from Anthropic"
-        
-        with patch('chuk_llm.api.core.ask', new_callable=AsyncMock) as mock_ask:
+
+        with patch("chuk_llm.api.core.ask", new_callable=AsyncMock) as mock_ask:
             mock_ask.return_value = mock_response
-            
-            with patch('chuk_llm.api.utils.get_current_config') as mock_config:
+
+            with patch("chuk_llm.api.utils.get_current_config") as mock_config:
                 mock_config.return_value = {"provider": "openai", "model": "gpt-4"}
-                
-                with patch('time.time', side_effect=[1000.0, 1002.0]):
-                    with patch('asyncio.get_event_loop') as mock_get_loop:
+
+                with patch("time.time", side_effect=[1000.0, 1002.0]):
+                    with patch("asyncio.get_event_loop") as mock_get_loop:
                         mock_loop = Mock()
                         mock_loop.time.side_effect = [1000.0, 1002.0]
                         mock_get_loop.return_value = mock_loop
-                        
+
                         result = await test_connection(
                             provider="anthropic",
                             model="claude-3-sonnet",
-                            test_prompt="Custom test prompt"
+                            test_prompt="Custom test prompt",
                         )
-                        
+
                         # Check structure but be flexible about exact duration
                         assert result["success"] is True
                         assert result["provider"] == "anthropic"
@@ -333,71 +336,73 @@ class TestTestConnection:
                         assert result["response_length"] == len(mock_response)
                         assert result["response_preview"] == mock_response
                         assert "duration" in result
-                        assert isinstance(result["duration"], (int, float))
-                        
+                        assert isinstance(result["duration"], int | float)
+
                         mock_ask.assert_called_once_with(
                             "Custom test prompt",
                             provider="anthropic",
                             model="claude-3-sonnet",
-                            max_tokens=50
+                            max_tokens=50,
                         )
 
     @pytest.mark.asyncio
     async def test_test_connection_failure(self):
         """Test connection test when an error occurs."""
-        with patch('chuk_llm.api.core.ask', new_callable=AsyncMock) as mock_ask:
+        with patch("chuk_llm.api.core.ask", new_callable=AsyncMock) as mock_ask:
             mock_ask.side_effect = ValueError("API key invalid")
-            
-            with patch('chuk_llm.api.utils.get_current_config') as mock_config:
+
+            with patch("chuk_llm.api.utils.get_current_config") as mock_config:
                 mock_config.return_value = {"provider": "openai", "model": "gpt-4"}
-                
-                with patch('time.time', side_effect=[1000.0, 1001.0]):
-                    with patch('asyncio.get_event_loop') as mock_get_loop:
+
+                with patch("time.time", side_effect=[1000.0, 1001.0]):
+                    with patch("asyncio.get_event_loop") as mock_get_loop:
                         mock_loop = Mock()
                         mock_loop.time.side_effect = [1000.0, 1001.0]
                         mock_get_loop.return_value = mock_loop
-                        
+
                         result = await test_connection()
-                        
+
                         assert result["success"] is False
                         assert result["provider"] == "openai"
                         assert result["model"] == "gpt-4"
                         assert result["error"] == "API key invalid"
                         assert result["error_type"] == "ValueError"
                         assert "duration" in result
-                        assert isinstance(result["duration"], (int, float))
+                        assert isinstance(result["duration"], int | float)
 
     @pytest.mark.asyncio
     async def test_test_connection_long_response(self):
         """Test connection test with long response that gets truncated."""
         long_response = "A" * 200  # 200 character response
-        
-        with patch('chuk_llm.api.core.ask', new_callable=AsyncMock) as mock_ask:
+
+        with patch("chuk_llm.api.core.ask", new_callable=AsyncMock) as mock_ask:
             mock_ask.return_value = long_response
-            
-            with patch('chuk_llm.api.utils.get_current_config') as mock_config:
+
+            with patch("chuk_llm.api.utils.get_current_config") as mock_config:
                 mock_config.return_value = {"provider": "openai", "model": "gpt-4"}
-                
-                with patch('time.time', side_effect=[1000.0, 1001.0]):
-                    with patch('asyncio.get_event_loop') as mock_get_loop:
+
+                with patch("time.time", side_effect=[1000.0, 1001.0]):
+                    with patch("asyncio.get_event_loop") as mock_get_loop:
                         mock_loop = Mock()
                         mock_loop.time.side_effect = [1000.0, 1001.0]
                         mock_get_loop.return_value = mock_loop
-                        
+
                         result = await test_connection()
-                        
+
                         assert result["success"] is True
                         assert result["response_length"] == 200
-                        assert result["response_preview"] == "A" * 100 + "..."  # Truncated to 100 chars + "..."
+                        assert (
+                            result["response_preview"] == "A" * 100 + "..."
+                        )  # Truncated to 100 chars + "..."
                         assert "duration" in result
 
     def test_test_connection_sync(self):
         """Test synchronous test_connection wrapper."""
         expected_result = {"success": True, "provider": "openai"}
-        
-        with patch('asyncio.run') as mock_run:
+
+        with patch("asyncio.run") as mock_run:
             mock_run.return_value = expected_result
-            
+
             result = test_connection_sync("anthropic", "claude-3-sonnet", "test prompt")
             assert result == expected_result
             mock_run.assert_called_once()
@@ -412,16 +417,18 @@ class TestTestAllProviders:
         mock_results = {
             "openai": {"success": True, "provider": "openai", "duration": 1.0},
             "anthropic": {"success": True, "provider": "anthropic", "duration": 1.5},
-            "google": {"success": True, "provider": "google", "duration": 2.0}
+            "google": {"success": True, "provider": "google", "duration": 2.0},
         }
-        
+
         async def mock_test_connection(provider=None, test_prompt=None):
             await asyncio.sleep(0)  # Ensure coroutine behavior
             return mock_results[provider]
-        
-        with patch('chuk_llm.api.utils.test_connection', side_effect=mock_test_connection):
+
+        with patch(
+            "chuk_llm.api.utils.test_connection", side_effect=mock_test_connection
+        ):
             result = await test_all_providers()
-            
+
             assert result == mock_results
             assert len(result) == 3
             assert all(result[provider]["success"] for provider in result)
@@ -430,25 +437,32 @@ class TestTestAllProviders:
     async def test_test_all_providers_with_custom_list(self):
         """Test testing specific providers."""
         custom_providers = ["openai", "anthropic"]
-        
+
         mock_results = {
             "openai": {"success": True, "provider": "openai"},
-            "anthropic": {"success": False, "provider": "anthropic", "error": "API key missing"}
+            "anthropic": {
+                "success": False,
+                "provider": "anthropic",
+                "error": "API key missing",
+            },
         }
-        
+
         async def mock_test_connection(provider=None, test_prompt=None):
             await asyncio.sleep(0)  # Ensure coroutine behavior
             return mock_results[provider]
-        
-        with patch('chuk_llm.api.utils.test_connection', side_effect=mock_test_connection):
+
+        with patch(
+            "chuk_llm.api.utils.test_connection", side_effect=mock_test_connection
+        ):
             result = await test_all_providers(providers=custom_providers)
-            
+
             assert result == mock_results
             assert len(result) == 2
 
     @pytest.mark.asyncio
     async def test_test_all_providers_with_exceptions(self):
         """Test handling of exceptions during provider testing."""
+
         async def mock_test_connection(provider=None, test_prompt=None):
             await asyncio.sleep(0)  # Ensure coroutine behavior
             if provider == "openai":
@@ -457,10 +471,12 @@ class TestTestAllProviders:
                 raise ConnectionError("Network error")
             else:
                 raise ValueError("Invalid provider")
-        
-        with patch('chuk_llm.api.utils.test_connection', side_effect=mock_test_connection):
+
+        with patch(
+            "chuk_llm.api.utils.test_connection", side_effect=mock_test_connection
+        ):
             result = await test_all_providers()
-            
+
             assert result["openai"]["success"] is True
             assert result["anthropic"]["success"] is False
             assert "Network error" in result["anthropic"]["error"]
@@ -472,22 +488,24 @@ class TestTestAllProviders:
     async def test_test_all_providers_custom_prompt(self):
         """Test testing providers with custom prompt."""
         custom_prompt = "Custom test message"
-        
+
         async def mock_test_connection(provider=None, test_prompt=None):
             await asyncio.sleep(0)  # Ensure coroutine behavior
             assert test_prompt == custom_prompt
             return {"success": True, "provider": provider}
-        
-        with patch('chuk_llm.api.utils.test_connection', side_effect=mock_test_connection):
+
+        with patch(
+            "chuk_llm.api.utils.test_connection", side_effect=mock_test_connection
+        ):
             await test_all_providers(test_prompt=custom_prompt)
 
     def test_test_all_providers_sync(self):
         """Test synchronous test_all_providers wrapper."""
         expected_result = {"openai": {"success": True}}
-        
-        with patch('asyncio.run') as mock_run:
+
+        with patch("asyncio.run") as mock_run:
             mock_run.return_value = expected_result
-            
+
             result = test_all_providers_sync(["openai"], "test prompt")
             assert result == expected_result
             mock_run.assert_called_once()
@@ -502,37 +520,39 @@ class TestPrintDiagnostics:
             "provider": "openai",
             "model": "gpt-4",
             "api_key": "sk-1234567890abcdef",
-            "temperature": 0.7
+            "temperature": 0.7,
         }
-        
+
         mock_client_info = {
             "status": "active",
             "provider": "openai",
             "client_type": "OpenAIClient",
             "has_middleware": True,
-            "middleware": ["MetricsMiddleware"]
+            "middleware": ["MetricsMiddleware"],
         }
-        
+
         mock_metrics = {
             "total_requests": 42,
             "average_duration": 1.23,
-            "error_count": 2
+            "error_count": 2,
         }
-        
-        mock_health = {
-            "status": "healthy",
-            "active_clients": 3
-        }
-        
-        with patch('chuk_llm.api.utils.get_current_config', return_value=mock_config):
-            with patch('chuk_llm.api.utils.get_current_client_info', return_value=mock_client_info):
-                with patch('chuk_llm.api.utils.get_metrics', return_value=mock_metrics):
-                    with patch('chuk_llm.api.utils.health_check_sync', return_value=mock_health):
+
+        mock_health = {"status": "healthy", "active_clients": 3}
+
+        with patch("chuk_llm.api.utils.get_current_config", return_value=mock_config):
+            with patch(
+                "chuk_llm.api.utils.get_current_client_info",
+                return_value=mock_client_info,
+            ):
+                with patch("chuk_llm.api.utils.get_metrics", return_value=mock_metrics):
+                    with patch(
+                        "chuk_llm.api.utils.health_check_sync", return_value=mock_health
+                    ):
                         print_diagnostics()
-        
+
         captured = capsys.readouterr()
         output = captured.out
-        
+
         # Check that key information is present
         assert "ChukLLM Diagnostics" in output
         assert "Current Configuration:" in output
@@ -552,47 +572,58 @@ class TestPrintDiagnostics:
         mock_config = {"provider": "openai"}
         mock_client_info = {"status": "active"}
         mock_health = {"status": "healthy"}
-        
-        with patch('chuk_llm.api.utils.get_current_config', return_value=mock_config):
-            with patch('chuk_llm.api.utils.get_current_client_info', return_value=mock_client_info):
-                with patch('chuk_llm.api.utils.get_metrics', return_value={}):
-                    with patch('chuk_llm.api.utils.health_check_sync', return_value=mock_health):
+
+        with patch("chuk_llm.api.utils.get_current_config", return_value=mock_config):
+            with patch(
+                "chuk_llm.api.utils.get_current_client_info",
+                return_value=mock_client_info,
+            ):
+                with patch("chuk_llm.api.utils.get_metrics", return_value={}):
+                    with patch(
+                        "chuk_llm.api.utils.health_check_sync", return_value=mock_health
+                    ):
                         print_diagnostics()
-        
+
         captured = capsys.readouterr()
         output = captured.out
-        
+
         assert "No metrics available (enable_metrics=False)" in output
 
     def test_print_diagnostics_health_check_error(self, capsys):
         """Test print_diagnostics when health check fails."""
         mock_config = {"provider": "openai"}
         mock_client_info = {"status": "active"}
-        
-        with patch('chuk_llm.api.utils.get_current_config', return_value=mock_config):
-            with patch('chuk_llm.api.utils.get_current_client_info', return_value=mock_client_info):
-                with patch('chuk_llm.api.utils.get_metrics', return_value={}):
-                    with patch('chuk_llm.api.utils.health_check_sync', side_effect=Exception("Connection failed")):
+
+        with patch("chuk_llm.api.utils.get_current_config", return_value=mock_config):
+            with patch(
+                "chuk_llm.api.utils.get_current_client_info",
+                return_value=mock_client_info,
+            ):
+                with patch("chuk_llm.api.utils.get_metrics", return_value={}):
+                    with patch(
+                        "chuk_llm.api.utils.health_check_sync",
+                        side_effect=Exception("Connection failed"),
+                    ):
                         print_diagnostics()
-        
+
         captured = capsys.readouterr()
         output = captured.out
-        
+
         assert "Error: Connection failed" in output
 
     def test_print_diagnostics_short_api_key(self, capsys):
         """Test print_diagnostics with short API key (should not be truncated)."""
         mock_config = {"api_key": "short"}
-        
-        with patch('chuk_llm.api.utils.get_current_config', return_value=mock_config):
-            with patch('chuk_llm.api.utils.get_current_client_info', return_value={}):
-                with patch('chuk_llm.api.utils.get_metrics', return_value={}):
-                    with patch('chuk_llm.api.utils.health_check_sync', return_value={}):
+
+        with patch("chuk_llm.api.utils.get_current_config", return_value=mock_config):
+            with patch("chuk_llm.api.utils.get_current_client_info", return_value={}):
+                with patch("chuk_llm.api.utils.get_metrics", return_value={}):
+                    with patch("chuk_llm.api.utils.health_check_sync", return_value={}):
                         print_diagnostics()
-        
+
         captured = capsys.readouterr()
         output = captured.out
-        
+
         assert "api_key: ***" in output
 
 
@@ -604,29 +635,34 @@ class TestCleanup:
         """Test successful cleanup."""
         mock_client = Mock()
         mock_client.close = AsyncMock()
-        
-        with patch('chuk_llm.api.utils._cached_client', mock_client):
-            with patch('chuk_llm.llm.connection_pool.cleanup_llm_resources', new_callable=AsyncMock) as mock_cleanup:
-                await cleanup()
-                
-                mock_cleanup.assert_called_once()
-                mock_client.close.assert_called_once()
-                
-                # Check that cached client is cleared
-                assert utils._cached_client is None
+
+        with (
+            patch("chuk_llm.api.utils._cached_client", mock_client),
+            patch(
+                "chuk_llm.llm.connection_pool.cleanup_llm_resources",
+                new_callable=AsyncMock,
+            ) as mock_cleanup,
+        ):
+            await cleanup()
+
+            mock_cleanup.assert_called_once()
+            mock_client.close.assert_called_once()
+
+            # Check that cached client is cleared
+            assert utils._cached_client is None
 
     @pytest.mark.asyncio
     async def test_cleanup_import_error(self):
         """Test cleanup when connection pool module is not available."""
         mock_client = AsyncMock()
         mock_client.close = AsyncMock()
-        
-        with patch('chuk_llm.api.utils._cached_client', mock_client):
+
+        with patch("chuk_llm.api.utils._cached_client", mock_client):
             # Mock the import error inside cleanup function
-            with patch.dict('sys.modules', {'chuk_llm.llm.connection_pool': None}):
-                with patch('builtins.__import__', side_effect=ImportError):
+            with patch.dict("sys.modules", {"chuk_llm.llm.connection_pool": None}):
+                with patch("builtins.__import__", side_effect=ImportError):
                     await cleanup()
-                    
+
                     # Should still close client and clear cache
                     mock_client.close.assert_called_once()
                     assert utils._cached_client is None
@@ -634,31 +670,41 @@ class TestCleanup:
     @pytest.mark.asyncio
     async def test_cleanup_no_cached_client(self):
         """Test cleanup when no client is cached."""
-        with patch('chuk_llm.api.utils._cached_client', None):
-            with patch('chuk_llm.llm.connection_pool.cleanup_llm_resources', new_callable=AsyncMock) as mock_cleanup:
-                await cleanup()
-                
-                mock_cleanup.assert_called_once()
-                assert utils._cached_client is None
+        with (
+            patch("chuk_llm.api.utils._cached_client", None),
+            patch(
+                "chuk_llm.llm.connection_pool.cleanup_llm_resources",
+                new_callable=AsyncMock,
+            ) as mock_cleanup,
+        ):
+            await cleanup()
+
+            mock_cleanup.assert_called_once()
+            assert utils._cached_client is None
 
     @pytest.mark.asyncio
     async def test_cleanup_client_without_close_method(self):
         """Test cleanup when client doesn't have close method."""
         mock_client = Mock()
         # Remove close method
-        if hasattr(mock_client, 'close'):
-            delattr(mock_client, 'close')
-        
-        with patch('chuk_llm.api.utils._cached_client', mock_client):
-            with patch('chuk_llm.llm.connection_pool.cleanup_llm_resources', new_callable=AsyncMock) as mock_cleanup:
-                await cleanup()
-                
-                mock_cleanup.assert_called_once()
-                assert utils._cached_client is None
+        if hasattr(mock_client, "close"):
+            delattr(mock_client, "close")
+
+        with (
+            patch("chuk_llm.api.utils._cached_client", mock_client),
+            patch(
+                "chuk_llm.llm.connection_pool.cleanup_llm_resources",
+                new_callable=AsyncMock,
+            ) as mock_cleanup,
+        ):
+            await cleanup()
+
+            mock_cleanup.assert_called_once()
+            assert utils._cached_client is None
 
     def test_cleanup_sync(self):
         """Test synchronous cleanup wrapper."""
-        with patch('asyncio.run') as mock_run:
+        with patch("asyncio.run") as mock_run:
             cleanup_sync()
             mock_run.assert_called_once()
 
@@ -674,7 +720,7 @@ class TestFixtures:
             "model": "gpt-4",
             "api_key": "test_key",
             "temperature": 0.7,
-            "max_tokens": 1000
+            "max_tokens": 1000,
         }
 
     @pytest.fixture
@@ -683,11 +729,11 @@ class TestFixtures:
         mock_middleware = Mock()
         mock_middleware.get_metrics.return_value = {"requests": 10}
         mock_middleware.__class__.__name__ = "TestMiddleware"
-        
+
         mock_client = Mock()
         mock_client.__class__.__name__ = "TestClient"
         mock_client.middleware_stack.middlewares = [mock_middleware]
-        
+
         return mock_client
 
 
@@ -699,54 +745,68 @@ class TestIntegration:
         """Test a complete diagnostic workflow."""
         # Create proper dictionary objects (not Mock objects)
         mock_config = {
-            "provider": "openai", 
+            "provider": "openai",
             "model": "gpt-4",
             "api_key": "sk-test123",
-            "temperature": 0.7
+            "temperature": 0.7,
         }
         mock_client_info = {
-            "status": "active", 
+            "status": "active",
             "provider": "openai",
             "client_type": "TestClient",
-            "has_middleware": False
+            "has_middleware": False,
         }
         # Return empty dict for metrics to match what real function returns when no middleware
         mock_metrics = {}  # Changed to empty dict to avoid KeyError
         mock_health = {"status": "healthy", "active_clients": 2}
-        
+
         # Mock the _cached_client to avoid "no_client" status
         mock_client = Mock()
         mock_client.__class__.__name__ = "TestClient"
         # Remove middleware_stack to avoid hasattr issues
-        if hasattr(mock_client, 'middleware_stack'):
-            delattr(mock_client, 'middleware_stack')
-        
-        with patch.object(utils, '_cached_client', mock_client):
-            with patch('chuk_llm.api.utils.get_current_config', return_value=mock_config):
-                with patch('chuk_llm.api.utils.get_current_client_info', return_value=mock_client_info):
-                    with patch('chuk_llm.api.utils.get_metrics', return_value=mock_metrics):
-                        with patch('chuk_llm.api.utils.health_check_sync', return_value=mock_health):
+        if hasattr(mock_client, "middleware_stack"):
+            delattr(mock_client, "middleware_stack")
+
+        with patch.object(utils, "_cached_client", mock_client):
+            with patch(
+                "chuk_llm.api.utils.get_current_config", return_value=mock_config
+            ):
+                with patch(
+                    "chuk_llm.api.utils.get_current_client_info",
+                    return_value=mock_client_info,
+                ):
+                    with patch(
+                        "chuk_llm.api.utils.get_metrics", return_value=mock_metrics
+                    ):
+                        with patch(
+                            "chuk_llm.api.utils.health_check_sync",
+                            return_value=mock_health,
+                        ):
                             # THE FIX: Import get_current_config from the utils module to use the mocked version
                             from chuk_llm.api.utils import get_current_config
-                            
+
                             # These should now return our mocked values
                             config = get_current_config()
                             client_info = get_current_client_info()
                             metrics = get_metrics()
-                            
+
                             # Verify components work with the actual return values
-                            assert config["provider"] == "openai"  # This should now pass
+                            assert (
+                                config["provider"] == "openai"
+                            )  # This should now pass
                             assert client_info["status"] == "active"
                             assert metrics == {}  # Updated assertion
-                            
+
                             # Test print diagnostics - this should work with empty metrics
                             print_diagnostics()
-                            
+
                             captured = capsys.readouterr()
                             assert "openai" in captured.out
                             assert "active" in captured.out
                             assert "healthy" in captured.out
-                            assert "No metrics available" in captured.out  # Should show this message
+                            assert (
+                                "No metrics available" in captured.out
+                            )  # Should show this message
 
 
 if __name__ == "__main__":

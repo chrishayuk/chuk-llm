@@ -5,12 +5,17 @@ Clean developer experience - just import and use!
 """
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 from chuk_llm import (
-    ask_sync, 
-    ask_openai_sync, ask_anthropic_sync, ask_groq_sync,
-    ask_mistral_sync, ask_granite_sync, ask_deepseek_sync
+    ask_anthropic_sync,
+    ask_deepseek_sync,
+    ask_granite_sync,
+    ask_groq_sync,
+    ask_mistral_sync,
+    ask_openai_sync,
+    ask_sync,
 )
 
 # Simple question

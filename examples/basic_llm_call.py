@@ -10,19 +10,22 @@ Run from the repo root, e.g.
 
 Requires `OPENAI_API_KEY` for OpenAI; load a local `.env` automatically.
 """
+
 from __future__ import annotations
+
 import argparse
 import asyncio
 import os
 import sys
-from typing import Any, Dict, List
+from typing import Any
+
 from dotenv import load_dotenv
 
-# imports
+# imports
 from chuk_llm.llm.client import get_client
 from chuk_llm.llm.system_prompt_generator import SystemPromptGenerator
 
-# load environment variables
+# load environment variables
 load_dotenv()
 
 
@@ -36,7 +39,7 @@ async def run_llm_diagnostic(provider: str, model: str, prompt: str) -> None:
 
     # get the system prompt
     system_prompt = SystemPromptGenerator().generate_prompt({})
-    messages: List[Dict[str, Any]] = [
+    messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": prompt},
     ]
@@ -52,6 +55,7 @@ async def run_llm_diagnostic(provider: str, model: str, prompt: str) -> None:
 
 
 # ────────────────────────────── CLI wrapper ──────────────────────────────
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Basic LLM diagnostic script")

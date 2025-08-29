@@ -4,16 +4,14 @@ Universal dynamic model discovery engine for all providers
 Enhanced with modular discoverer architecture
 """
 
-import asyncio
 import logging
 import re
 import time
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Set, Any, Protocol
 from dataclasses import dataclass
-from pathlib import Path
+from typing import Any, Protocol
 
-from chuk_llm.configuration import Feature, ModelCapabilities, ProviderConfig
+from chuk_llm.configuration import Feature, ModelCapabilities
 
 log = logging.getLogger(__name__)
 
@@ -21,24 +19,25 @@ log = logging.getLogger(__name__)
 @dataclass
 class DiscoveredModel:
     """Universal model information from discovery"""
+
     name: str
     provider: str
 
     # Basic metadata
-    size_bytes: Optional[int] = None
-    created_at: Optional[str] = None
-    modified_at: Optional[str] = None
-    version: Optional[str] = None
+    size_bytes: int | None = None
+    created_at: str | None = None
+    modified_at: str | None = None
+    version: str | None = None
 
     # Provider-specific metadata
-    metadata: Dict[str, Any] = None
+    metadata: dict[str, Any] = None
 
     # Inferred properties
     family: str = "unknown"
-    capabilities: Set[Feature] = None
-    context_length: Optional[int] = None
-    max_output_tokens: Optional[int] = None
-    parameters: Optional[str] = None
+    capabilities: set[Feature] = None
+    context_length: int | None = None
+    max_output_tokens: int | None = None
+    parameters: str | None = None
 
     def __post_init__(self):
         if self.capabilities is None:
@@ -46,7 +45,7 @@ class DiscoveredModel:
         if self.metadata is None:
             self.metadata = {}
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization"""
         return {
             "name": self.name,
@@ -56,15 +55,17 @@ class DiscoveredModel:
             "modified_at": self.modified_at,
             "version": self.version,
             "family": self.family,
-            "capabilities": [f.value if hasattr(f, 'value') else str(f) for f in self.capabilities],
+            "capabilities": [
+                f.value if hasattr(f, "value") else str(f) for f in self.capabilities
+            ],
             "context_length": self.context_length,
             "max_output_tokens": self.max_output_tokens,
             "parameters": self.parameters,
-            "metadata": self.metadata or {}
+            "metadata": self.metadata or {},
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'DiscoveredModel':
+    def from_dict(cls, data: dict[str, Any]) -> "DiscoveredModel":
         """Create from dictionary"""
         capabilities = set()
         if data.get("capabilities"):
@@ -82,18 +83,18 @@ class DiscoveredModel:
             capabilities=capabilities,
             context_length=data.get("context_length"),
             max_output_tokens=data.get("max_output_tokens"),
-            parameters=data.get("parameters")
+            parameters=data.get("parameters"),
         )
 
 
 class ModelDiscoveryProtocol(Protocol):
     """Protocol for provider-specific model discovery"""
 
-    async def discover_models(self) -> List[Dict[str, Any]]:
+    async def discover_models(self) -> list[dict[str, Any]]:
         """Discover available models and return raw model data"""
         ...
 
-    async def get_model_metadata(self, model_name: str) -> Optional[Dict[str, Any]]:
+    async def get_model_metadata(self, model_name: str) -> dict[str, Any] | None:
         """Get detailed metadata for a specific model"""
         ...
 
@@ -104,20 +105,20 @@ class BaseModelDiscoverer(ABC):
     def __init__(self, provider_name: str, **config):
         self.provider_name = provider_name
         self.config = config
-        self._discovery_cache = {}
-        self._cache_timeout = config.get('cache_timeout', 300)
+        self._discovery_cache: dict[str, Any] = {}  # type: ignore[var-annotated]
+        self._cache_timeout = config.get("cache_timeout", 300)
         self._last_discovery = None
 
     @abstractmethod
-    async def discover_models(self) -> List[Dict[str, Any]]:
+    async def discover_models(self) -> list[dict[str, Any]]:
         """Discover available models and return raw model data"""
         pass
 
-    async def get_model_metadata(self, model_name: str) -> Optional[Dict[str, Any]]:
+    async def get_model_metadata(self, model_name: str) -> dict[str, Any] | None:
         """Get detailed metadata for a specific model (optional)"""
         return None
 
-    def normalize_model_data(self, raw_model: Dict[str, Any]) -> DiscoveredModel:
+    def normalize_model_data(self, raw_model: dict[str, Any]) -> DiscoveredModel:
         """Convert raw model data to DiscoveredModel"""
         return DiscoveredModel(
             name=raw_model.get("name", "unknown"),
@@ -126,10 +127,12 @@ class BaseModelDiscoverer(ABC):
             created_at=raw_model.get("created_at"),
             modified_at=raw_model.get("modified_at"),
             version=raw_model.get("version"),
-            metadata=raw_model
+            metadata=raw_model,
         )
 
-    async def discover_with_cache(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
+    async def discover_with_cache(
+        self, force_refresh: bool = False
+    ) -> list[dict[str, Any]]:
         """Discover models with caching support"""
         cache_key = f"{self.provider_name}_models"
         current_time = time.time()
@@ -155,21 +158,23 @@ class BaseModelDiscoverer(ABC):
                 return self._discovery_cache[cache_key][0]
             return []
 
-    def get_discovery_info(self) -> Dict[str, Any]:
+    def get_discovery_info(self) -> dict[str, Any]:
         """Get information about the discoverer"""
         return {
             "provider": self.provider_name,
             "cache_timeout": self._cache_timeout,
             "last_discovery": self._last_discovery,
-            "cached_models": len(self._discovery_cache.get(f"{self.provider_name}_models", ([], 0))[0]),
-            "config": {k: v for k, v in self.config.items() if not k.startswith('_')}
+            "cached_models": len(
+                self._discovery_cache.get(f"{self.provider_name}_models", ([], 0))[0]
+            ),
+            "config": {k: v for k, v in self.config.items() if not k.startswith("_")},
         }
 
 
 class ConfigDrivenInferenceEngine:
     """Universal inference engine that works with any provider"""
 
-    def __init__(self, provider_name: str, inference_config: Dict[str, Any]):
+    def __init__(self, provider_name: str, inference_config: dict[str, Any]):
         """
         Initialize inference engine for a provider.
 
@@ -181,7 +186,10 @@ class ConfigDrivenInferenceEngine:
         self.config = inference_config
 
         # Parse configuration sections
-        self.default_features = set(Feature.from_string(f) for f in self.config.get("default_features", ["text"]))
+        self.default_features = {
+            Feature.from_string(f)
+            for f in self.config.get("default_features", ["text"])
+        }
         self.default_context = self.config.get("default_context_length", 8192)
         self.default_max_output = self.config.get("default_max_output_tokens", 4096)
 
@@ -233,10 +241,14 @@ class ConfigDrivenInferenceEngine:
 
         return model
 
-    def _apply_model_override(self, model: DiscoveredModel, override_config: Dict[str, Any]):
+    def _apply_model_override(
+        self, model: DiscoveredModel, override_config: dict[str, Any]
+    ):
         """Apply specific model override configuration"""
         if "features" in override_config:
-            model.capabilities = set(Feature.from_string(f) for f in override_config["features"])
+            model.capabilities = {
+                Feature.from_string(f) for f in override_config["features"]
+            }
 
         if "context_length" in override_config:
             model.context_length = override_config["context_length"]
@@ -247,21 +259,29 @@ class ConfigDrivenInferenceEngine:
         if "family" in override_config:
             model.family = override_config["family"]
 
-    def _apply_universal_patterns(self, model: DiscoveredModel, model_name: str) -> DiscoveredModel:
+    def _apply_universal_patterns(
+        self, model: DiscoveredModel, model_name: str
+    ) -> DiscoveredModel:
         """Apply universal patterns that work across all providers"""
-        for pattern_name, pattern_config in self.universal_patterns.items():
+        for _pattern_name, pattern_config in self.universal_patterns.items():
             patterns = pattern_config.get("patterns", [])
 
             for pattern in patterns:
                 if re.search(pattern, model_name, re.IGNORECASE):
                     # Add features
                     if "add_features" in pattern_config:
-                        add_features = set(Feature.from_string(f) for f in pattern_config["add_features"])
+                        add_features = {
+                            Feature.from_string(f)
+                            for f in pattern_config["add_features"]
+                        }
                         model.capabilities.update(add_features)
 
                     # Remove features
                     if "remove_features" in pattern_config:
-                        remove_features = set(Feature.from_string(f) for f in pattern_config["remove_features"])
+                        remove_features = {
+                            Feature.from_string(f)
+                            for f in pattern_config["remove_features"]
+                        }
                         model.capabilities -= remove_features
 
                     # Set family
@@ -274,7 +294,9 @@ class ConfigDrivenInferenceEngine:
 
         return model
 
-    def _apply_family_rules(self, model: DiscoveredModel, model_name: str) -> DiscoveredModel:
+    def _apply_family_rules(
+        self, model: DiscoveredModel, model_name: str
+    ) -> DiscoveredModel:
         """Apply family-based inference rules"""
         for family, family_config in self.family_rules.items():
             patterns = family_config.get("patterns", [])
@@ -290,7 +312,9 @@ class ConfigDrivenInferenceEngine:
 
                     # Add family features
                     if "features" in family_config:
-                        family_features = set(Feature.from_string(f) for f in family_config["features"])
+                        family_features = {
+                            Feature.from_string(f) for f in family_config["features"]
+                        }
                         model.capabilities.update(family_features)
 
                     # Context rules override base
@@ -302,7 +326,9 @@ class ConfigDrivenInferenceEngine:
 
                     # Set max output tokens
                     if "base_max_output_tokens" in family_config:
-                        model.max_output_tokens = family_config["base_max_output_tokens"]
+                        model.max_output_tokens = family_config[
+                            "base_max_output_tokens"
+                        ]
 
                     # Handle restrictions (for reasoning models)
                     if "restrictions" in family_config:
@@ -310,33 +336,46 @@ class ConfigDrivenInferenceEngine:
                         if "no_streaming" in restrictions:
                             model.capabilities.discard(Feature.STREAMING)
                             model.metadata.setdefault("parameter_requirements", {})
-                            model.metadata["parameter_requirements"]["no_streaming"] = True
+                            model.metadata["parameter_requirements"]["no_streaming"] = (
+                                True
+                            )
                         if "no_system_messages" in restrictions:
                             model.capabilities.discard(Feature.SYSTEM_MESSAGES)
                             model.metadata.setdefault("parameter_requirements", {})
-                            model.metadata["parameter_requirements"]["no_system_messages"] = True
+                            model.metadata["parameter_requirements"][
+                                "no_system_messages"
+                            ] = True
                         if "org_verification_for_streaming" in restrictions:
-                            model.metadata["requires_org_verification_for_streaming"] = True
+                            model.metadata[
+                                "requires_org_verification_for_streaming"
+                            ] = True
 
                     # Handle special parameters
                     if "special_params" in family_config:
                         model.metadata.setdefault("special_parameters", {})
-                        model.metadata["special_parameters"] = family_config["special_params"]
+                        model.metadata["special_parameters"] = family_config[
+                            "special_params"
+                        ]
 
                     return model
 
         return model
 
-    def _apply_deployment_rules(self, model: DiscoveredModel, model_name: str) -> DiscoveredModel:
+    def _apply_deployment_rules(
+        self, model: DiscoveredModel, model_name: str
+    ) -> DiscoveredModel:
         """Apply deployment-specific rules (for Azure OpenAI, etc.)"""
-        for deployment_name, deployment_config in self.deployment_rules.items():
+        for _deployment_name, deployment_config in self.deployment_rules.items():
             patterns = deployment_config.get("patterns", [])
 
             for pattern in patterns:
                 if re.search(pattern, model_name, re.IGNORECASE):
                     # Add deployment features
                     if "features" in deployment_config:
-                        deployment_features = set(Feature.from_string(f) for f in deployment_config["features"])
+                        deployment_features = {
+                            Feature.from_string(f)
+                            for f in deployment_config["features"]
+                        }
                         model.capabilities.update(deployment_features)
 
                     # Set deployment context and output limits
@@ -344,27 +383,36 @@ class ConfigDrivenInferenceEngine:
                         model.context_length = deployment_config["base_context_length"]
 
                     if "base_max_output_tokens" in deployment_config:
-                        model.max_output_tokens = deployment_config["base_max_output_tokens"]
+                        model.max_output_tokens = deployment_config[
+                            "base_max_output_tokens"
+                        ]
 
                     break
 
         return model
 
-    def _apply_pattern_rules(self, model: DiscoveredModel, model_name: str) -> DiscoveredModel:
+    def _apply_pattern_rules(
+        self, model: DiscoveredModel, model_name: str
+    ) -> DiscoveredModel:
         """Apply pattern-based inference rules"""
-        for rule_name, rule_config in self.pattern_rules.items():
+        for _rule_name, rule_config in self.pattern_rules.items():
             patterns = rule_config.get("patterns", [])
 
             for pattern in patterns:
                 if re.search(pattern, model_name, re.IGNORECASE):
                     # Add features
                     if "add_features" in rule_config:
-                        add_features = set(Feature.from_string(f) for f in rule_config["add_features"])
+                        add_features = {
+                            Feature.from_string(f) for f in rule_config["add_features"]
+                        }
                         model.capabilities.update(add_features)
 
                     # Remove features
                     if "remove_features" in rule_config:
-                        remove_features = set(Feature.from_string(f) for f in rule_config["remove_features"])
+                        remove_features = {
+                            Feature.from_string(f)
+                            for f in rule_config["remove_features"]
+                        }
                         model.capabilities -= remove_features
 
                     # Override context
@@ -386,14 +434,16 @@ class ConfigDrivenInferenceEngine:
         if model.size_bytes is None:
             return model
 
-        for rule_name, rule_config in self.size_rules.items():
+        for _rule_name, rule_config in self.size_rules.items():
             min_size = rule_config.get("min_size_bytes", 0)
-            max_size = rule_config.get("max_size_bytes", float('inf'))
+            max_size = rule_config.get("max_size_bytes", float("inf"))
 
             if min_size <= model.size_bytes <= max_size:
                 # Add features based on size
                 if "add_features" in rule_config:
-                    add_features = set(Feature.from_string(f) for f in rule_config["add_features"])
+                    add_features = {
+                        Feature.from_string(f) for f in rule_config["add_features"]
+                    }
                     model.capabilities.update(add_features)
 
                 # Set context based on size
@@ -411,21 +461,25 @@ class ConfigDrivenInferenceEngine:
         if model.size_bytes is None:
             return model
 
-        for rule_name, rule_config in self.universal_size_rules.items():
+        for _rule_name, rule_config in self.universal_size_rules.items():
             min_size = rule_config.get("min_size_bytes", 0)
-            max_size = rule_config.get("max_size_bytes", float('inf'))
+            max_size = rule_config.get("max_size_bytes", float("inf"))
 
             if min_size <= model.size_bytes <= max_size:
                 # Add universal features based on size
                 if "add_features" in rule_config:
-                    add_features = set(Feature.from_string(f) for f in rule_config["add_features"])
+                    add_features = {
+                        Feature.from_string(f) for f in rule_config["add_features"]
+                    }
                     model.capabilities.update(add_features)
 
         return model
 
-    def _extract_parameters(self, model: DiscoveredModel, model_name: str) -> DiscoveredModel:
+    def _extract_parameters(
+        self, model: DiscoveredModel, model_name: str
+    ) -> DiscoveredModel:
         """Extract parameter count from model name"""
-        param_patterns = self.config.get("parameter_patterns", [r'(\d+(?:\.\d+)?)b'])
+        param_patterns = self.config.get("parameter_patterns", [r"(\d+(?:\.\d+)?)b"])
 
         for pattern in param_patterns:
             match = re.search(pattern, model_name, re.IGNORECASE)
@@ -476,7 +530,12 @@ class ConfigDrivenInferenceEngine:
 class UniversalModelDiscoveryManager:
     """Universal model discovery manager that works with any provider"""
 
-    def __init__(self, provider_name: str, discoverer: BaseModelDiscoverer, inference_config: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        provider_name: str,
+        discoverer: BaseModelDiscoverer,
+        inference_config: dict[str, Any] | None = None,
+    ):
         """
         Initialize universal discovery manager.
 
@@ -489,18 +548,23 @@ class UniversalModelDiscoveryManager:
         self.discoverer = discoverer
 
         # Load inference config
-        self.inference_config = inference_config or self._load_default_inference_config()
-        self.inference_engine = ConfigDrivenInferenceEngine(provider_name, self.inference_config)
+        self.inference_config = (
+            inference_config or self._load_default_inference_config()
+        )
+        self.inference_engine = ConfigDrivenInferenceEngine(
+            provider_name, self.inference_config
+        )
 
         # Caching
-        self._cached_models: Optional[List[DiscoveredModel]] = None
+        self._cached_models: list[DiscoveredModel] | None = None
         self._cache_timeout = 300  # 5 minutes
-        self._last_update: Optional[float] = None
+        self._last_update: float | None = None
 
-    def _load_default_inference_config(self) -> Dict[str, Any]:
+    def _load_default_inference_config(self) -> dict[str, Any]:
         """Load default inference configuration for provider"""
         try:
             from chuk_llm.configuration import get_config
+
             config_manager = get_config()
             provider_config = config_manager.get_provider(self.provider_name)
 
@@ -510,7 +574,10 @@ class UniversalModelDiscoveryManager:
 
             # Merge with any provider-level inference config
             if "model_inference" in provider_config.extra:
-                inference_config = {**provider_config.extra["model_inference"], **inference_config}
+                inference_config = {
+                    **provider_config.extra["model_inference"],
+                    **inference_config,
+                }
 
             return inference_config or self._get_minimal_config()
 
@@ -518,7 +585,7 @@ class UniversalModelDiscoveryManager:
             log.debug(f"Failed to load inference config for {self.provider_name}: {e}")
             return self._get_minimal_config()
 
-    def _get_minimal_config(self) -> Dict[str, Any]:
+    def _get_minimal_config(self) -> dict[str, Any]:
         """Get minimal fallback configuration"""
         return {
             "default_features": ["text"],
@@ -528,10 +595,12 @@ class UniversalModelDiscoveryManager:
             "pattern_rules": {},
             "size_rules": {},
             "model_overrides": {},
-            "parameter_patterns": [r'(\d+(?:\.\d+)?)b']
+            "parameter_patterns": [r"(\d+(?:\.\d+)?)b"],
         }
 
-    async def discover_models(self, force_refresh: bool = False) -> List[DiscoveredModel]:
+    async def discover_models(
+        self, force_refresh: bool = False
+    ) -> list[DiscoveredModel]:
         """Discover models using provider-specific discoverer and universal inference"""
         # Check cache
         if not force_refresh and self._cached_models and self._last_update:
@@ -555,21 +624,25 @@ class UniversalModelDiscoveryManager:
             self._cached_models = discovered_models
             self._last_update = time.time()
 
-            log.info(f"Discovered {len(discovered_models)} models for {self.provider_name} using universal inference")
+            log.info(
+                f"Discovered {len(discovered_models)} models for {self.provider_name} using universal inference"
+            )
             return discovered_models
 
         except Exception as e:
             log.error(f"Failed to discover models for {self.provider_name}: {e}")
             return self._cached_models or []
 
-    def update_inference_config(self, new_config: Dict[str, Any]):
+    def update_inference_config(self, new_config: dict[str, Any]):
         """Update inference configuration and clear cache"""
         self.inference_config = new_config
-        self.inference_engine = ConfigDrivenInferenceEngine(self.provider_name, new_config)
+        self.inference_engine = ConfigDrivenInferenceEngine(
+            self.provider_name, new_config
+        )
         self._cached_models = None  # Force refresh
         log.info(f"Updated inference configuration for {self.provider_name}")
 
-    def get_model_capabilities(self, model_name: str) -> Optional[ModelCapabilities]:
+    def get_model_capabilities(self, model_name: str) -> ModelCapabilities | None:
         """Get capabilities for a specific model"""
         if not self._cached_models:
             return None
@@ -590,10 +663,10 @@ class UniversalModelDiscoveryManager:
             pattern=f"^{re.escape(target_model.name)}$",
             features=target_model.capabilities,
             max_context_length=target_model.context_length,
-            max_output_tokens=target_model.max_output_tokens
+            max_output_tokens=target_model.max_output_tokens,
         )
 
-    def get_available_models(self) -> List[str]:
+    def get_available_models(self) -> list[str]:
         """Get list of available model names"""
         if not self._cached_models:
             return []
@@ -618,7 +691,7 @@ class UniversalModelDiscoveryManager:
             config_lines.append("\nmodel_capabilities:")
 
             # Group by capabilities to reduce duplication
-            capability_groups = {}
+            capability_groups: dict[tuple, list] = {}  # type: ignore[var-annotated]
             for model in text_models:
                 cap_key = (
                     tuple(sorted(f.value for f in model.capabilities)),
@@ -630,7 +703,11 @@ class UniversalModelDiscoveryManager:
                     capability_groups[cap_key] = []
                 capability_groups[cap_key].append(model.name)
 
-            for (features, context_length, max_output_tokens), model_names in capability_groups.items():
+            for (
+                features,
+                context_length,
+                max_output_tokens,
+            ), model_names in capability_groups.items():
                 # Create regex pattern for models
                 if len(model_names) == 1:
                     pattern = f"^{re.escape(model_names[0])}$"
@@ -639,22 +716,22 @@ class UniversalModelDiscoveryManager:
                     pattern = f"^({'|'.join(escaped_names)})$"
 
                 config_lines.append(f'  - pattern: "{pattern}"')
-                config_lines.append(f'    features: [{", ".join(features)}]')
+                config_lines.append(f"    features: [{', '.join(features)}]")
                 if context_length:
-                    config_lines.append(f'    max_context_length: {context_length}')
+                    config_lines.append(f"    max_context_length: {context_length}")
                 if max_output_tokens:
-                    config_lines.append(f'    max_output_tokens: {max_output_tokens}')
+                    config_lines.append(f"    max_output_tokens: {max_output_tokens}")
                 config_lines.append("")
 
         return "\n".join(config_lines)
 
-    def get_discovery_stats(self) -> Dict[str, Any]:
+    def get_discovery_stats(self) -> dict[str, Any]:
         """Get statistics about discovered models"""
         if not self._cached_models:
             return {"total": 0}
 
-        families = {}
-        feature_counts = {}
+        families: dict[str, int] = {}  # type: ignore[var-annotated]
+        feature_counts: dict[str, int] = {}  # type: ignore[var-annotated]
         total_size = 0
 
         for model in self._cached_models:
@@ -674,6 +751,8 @@ class UniversalModelDiscoveryManager:
             "families": families,
             "features": feature_counts,
             "total_size_gb": round(total_size / (1024**3), 1),
-            "cache_age_seconds": int(time.time() - self._last_update) if self._last_update else 0,
-            "provider": self.provider_name
+            "cache_age_seconds": int(time.time() - self._last_update)
+            if self._last_update
+            else 0,
+            "provider": self.provider_name,
         }

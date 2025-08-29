@@ -8,7 +8,9 @@ that provide unified access to multiple LLM providers.
 """
 
 import os
+
 from chuk_llm import ask_sync, stream_sync_iter
+
 
 def demo_litellm():
     """
@@ -17,7 +19,7 @@ def demo_litellm():
     """
     print("\n🚀 LITELLM GATEWAY")
     print("-" * 40)
-    
+
     # Check if LiteLLM is configured
     if not os.getenv("LITELLM_API_KEY"):
         print("ℹ️  LiteLLM Setup Instructions:")
@@ -38,18 +40,19 @@ model_list:
       api_key: $ANTHROPIC_API_KEY
 """)
         return
-    
+
     # Use LiteLLM gateway
     try:
         response = ask_sync(
             "What is LiteLLM?",
             provider="litellm",
             model="gpt-3.5-turbo",  # Or any model configured in your gateway
-            max_tokens=50
+            max_tokens=50,
         )
         print(f"✅ Response: {response}")
     except Exception as e:
         print(f"⚠️  Error: {e}")
+
 
 def demo_openrouter():
     """
@@ -58,7 +61,7 @@ def demo_openrouter():
     """
     print("\n🌐 OPENROUTER")
     print("-" * 40)
-    
+
     if not os.getenv("OPENROUTER_API_KEY"):
         print("ℹ️  OpenRouter Setup:")
         print("1. Sign up at https://openrouter.ai")
@@ -71,7 +74,7 @@ def demo_openrouter():
         print("  - meta-llama/llama-3-70b-instruct")
         print("  - deepseek/deepseek-chat")
         return
-    
+
     try:
         # OpenRouter requires model names with provider prefix
         response = ask_sync(
@@ -82,23 +85,24 @@ def demo_openrouter():
             # OpenRouter supports custom headers
             extra_headers={
                 "HTTP-Referer": "https://github.com/chuk-ai/chuk-llm",
-                "X-Title": "ChukLLM Example"
-            }
+                "X-Title": "ChukLLM Example",
+            },
         )
         print(f"✅ Response: {response}")
-        
+
         # Check different model pricing
         print("\n💰 Cost-effective option:")
         response = ask_sync(
             "Hello!",
             provider="openrouter",
             model="meta-llama/llama-3-70b-instruct",
-            max_tokens=10
+            max_tokens=10,
         )
         print(f"   Llama response: {response}")
-        
+
     except Exception as e:
         print(f"⚠️  Error: {e}")
+
 
 def demo_vllm():
     """
@@ -107,10 +111,10 @@ def demo_vllm():
     """
     print("\n⚡ VLLM SERVER")
     print("-" * 40)
-    
+
     # Check if vLLM is running
     vllm_base = os.getenv("VLLM_API_BASE", "http://localhost:8000/v1")
-    
+
     print("ℹ️  vLLM Setup:")
     print("1. Install: pip install vllm")
     print("2. Start server:")
@@ -119,7 +123,7 @@ def demo_vllm():
     print("     --port 8000")
     print("3. (Optional) export VLLM_API_BASE=http://localhost:8000/v1")
     print(f"\nConfigured endpoint: {vllm_base}")
-    
+
     # Try to use vLLM if available
     try:
         response = ask_sync(
@@ -127,26 +131,25 @@ def demo_vllm():
             provider="vllm",
             model="meta-llama/Llama-3-8b-hf",  # Or your served model
             max_tokens=50,
-            temperature=0.7
+            temperature=0.7,
         )
         print(f"\n✅ Response: {response}")
-        
+
         # vLLM supports streaming
         print("\n🌊 Streaming response: ", end="", flush=True)
         for chunk in stream_sync_iter(
-            "Count from 1 to 5",
-            provider="vllm",
-            max_tokens=20
+            "Count from 1 to 5", provider="vllm", max_tokens=20
         ):
             content = chunk if isinstance(chunk, str) else chunk.get("response", "")
             print(content, end="", flush=True)
         print()
-        
+
     except Exception as e:
         if "Connection refused" in str(e):
             print(f"\n⚠️  vLLM server not running at {vllm_base}")
         else:
             print(f"\n⚠️  Error: {e}")
+
 
 def demo_togetherai():
     """
@@ -155,7 +158,7 @@ def demo_togetherai():
     """
     print("\n🤝 TOGETHER AI")
     print("-" * 40)
-    
+
     if not os.getenv("TOGETHER_API_KEY"):
         print("ℹ️  Together AI Setup:")
         print("1. Sign up at https://api.together.xyz")
@@ -167,7 +170,7 @@ def demo_togetherai():
         print("  - mistralai/Mixtral-8x7B-Instruct-v0.1")
         print("  - Qwen/QwQ-32B-Preview (reasoning)")
         return
-    
+
     try:
         # Test with DeepSeek V3
         print("\n🧠 Testing DeepSeek V3:")
@@ -176,10 +179,10 @@ def demo_togetherai():
             provider="togetherai",
             model="deepseek-ai/deepseek-v3",
             max_tokens=50,
-            temperature=0
+            temperature=0,
         )
         print(f"Response: {response}")
-        
+
         # Test with Llama 3.3
         print("\n🦙 Testing Llama 3.3:")
         response = ask_sync(
@@ -187,17 +190,18 @@ def demo_togetherai():
             provider="togetherai",
             model="meta-llama/Llama-3.3-70B-Instruct-Turbo",
             max_tokens=50,
-            temperature=0.7
+            temperature=0.7,
         )
         print(f"Response: {response}")
-        
+
         # Test vision model
         print("\n👁️ Vision models available:")
         print("  - meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo")
         print("  - meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo")
-        
+
     except Exception as e:
         print(f"⚠️  Error: {e}")
+
 
 def demo_openai_compatible():
     """
@@ -206,7 +210,7 @@ def demo_openai_compatible():
     """
     print("\n🔧 GENERIC OPENAI-COMPATIBLE")
     print("-" * 40)
-    
+
     print("The openai_compatible provider works with any OpenAI-compatible service.")
     print("\nSupported services include:")
     print("  - LocalAI (local models)")
@@ -214,12 +218,12 @@ def demo_openai_compatible():
     print("  - LM Studio (local GUI)")
     print("  - Ollama with OpenAI endpoint")
     print("  - Any custom OpenAI-compatible server")
-    
+
     print("\nConfiguration options:")
     print("1. Use environment variables:")
     print("   export OPENAI_COMPATIBLE_API_BASE=http://localhost:8080/v1")
     print("   export OPENAI_COMPATIBLE_API_KEY=your-key")
-    
+
     print("\n2. Or use dynamic registration:")
     print("""
 from chuk_llm import register_openai_compatible
@@ -230,18 +234,15 @@ register_openai_compatible(
     models=["llama3", "mistral", "phi3"]
 )
 """)
-    
+
     # Try to use if configured
     if os.getenv("OPENAI_COMPATIBLE_API_BASE"):
         try:
-            response = ask_sync(
-                "Hello!",
-                provider="openai_compatible",
-                max_tokens=10
-            )
+            response = ask_sync("Hello!", provider="openai_compatible", max_tokens=10)
             print(f"\n✅ Response: {response}")
         except Exception as e:
             print(f"\n⚠️  Error: {e}")
+
 
 def compare_gateways():
     """
@@ -250,7 +251,7 @@ def compare_gateways():
     print("\n" + "=" * 60)
     print("GATEWAY COMPARISON")
     print("=" * 60)
-    
+
     comparison = """
 ┌─────────────┬────────────────┬───────────┬──────────────┐
 │ Gateway     │ Best For       │ Pricing   │ Key Features │
@@ -274,6 +275,7 @@ def compare_gateways():
 """
     print(comparison)
 
+
 def main():
     print("=" * 60)
     print("GATEWAY PROVIDERS EXAMPLE")
@@ -282,7 +284,7 @@ def main():
 Gateway providers offer unified access to multiple LLM models,
 making it easy to switch between providers and compare performance.
 """)
-    
+
     # Run demonstrations
     demo_litellm()
     demo_openrouter()
@@ -290,7 +292,7 @@ making it easy to switch between providers and compare performance.
     demo_togetherai()
     demo_openai_compatible()
     compare_gateways()
-    
+
     # Summary
     print("\n" + "=" * 60)
     print("SUMMARY")
@@ -314,6 +316,7 @@ Quick Start:
 All gateways use the OpenAI-compatible client, ensuring
 consistent behavior and feature support.
 """)
+
 
 if __name__ == "__main__":
     main()
