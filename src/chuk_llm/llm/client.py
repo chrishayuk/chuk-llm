@@ -139,7 +139,7 @@ def get_client(
         resolved_model = config_manager._ensure_model_available(provider, target_model)
         if resolved_model:
             target_model = resolved_model
-        elif target_model not in provider_config.models:
+        elif target_model not in provider_config.models and "*" not in provider_config.models:
             # Check if it's an alias
             resolved_model = provider_config.model_aliases.get(target_model)
             if resolved_model and resolved_model in provider_config.models:

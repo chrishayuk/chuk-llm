@@ -41,10 +41,72 @@ if not os.getenv("GEMINI_API_KEY"):
 try:
     from chuk_llm.llm.client import get_client, get_provider_info, validate_provider_setup
     from chuk_llm.configuration import get_config, CapabilityChecker, Feature
+    import httpx  # For API calls if needed
 except ImportError as e:
     print(f"❌ Import error: {e}")
     print("   Please make sure you're running from the chuk-llm directory")
     sys.exit(1)
+
+def get_available_models():
+    """Get available Gemini models from configuration and API discovery"""
+    config = get_config()
+    configured_models = []
+    discovered_models = []
+    
+    # Get configured models
+    if 'gemini' in config.providers:
+        provider = config.providers['gemini']
+        if hasattr(provider, 'models'):
+            configured_models = list(provider.models)
+    
+    # Try to discover models from Google API
+    api_key = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY')
+    if api_key:
+        try:
+            # Google Gemini API endpoint for listing models
+            response = httpx.get(
+                'https://generativelanguage.googleapis.com/v1beta/models',
+                params={'key': api_key},
+                timeout=5.0
+            )
+            if response.status_code == 200:
+                api_models = response.json()
+                # Extract model names from the response
+                for model in api_models.get('models', []):
+                    model_name = model.get('name', '').replace('models/', '')
+                    if model_name and 'gemini' in model_name.lower():
+                        discovered_models.append(model_name)
+        except Exception as e:
+            print(f"⚠️  Could not fetch models from API: {e}")
+    
+    # Combine models (configured first, then discovered)
+    all_models = list(configured_models)
+    for model in discovered_models:
+        if model not in all_models:
+            all_models.append(model)
+    
+    return {
+        'configured': configured_models,
+        'discovered': discovered_models,
+        'all': all_models
+    }
+
+def get_response_content(response):
+    """Extract content from response, handling different response formats"""
+    if isinstance(response, dict):
+        # Try different possible keys
+        if 'response' in response:
+            # Even if empty string, return it
+            return response['response'] if response['response'] else "[Empty response from model]"
+        if 'content' in response and response['content']:
+            return response['content']
+        if 'text' in response and response['text']:
+            return response['text']
+        if 'message' in response and response['message']:
+            return response['message']
+    elif isinstance(response, str):
+        return response if response else "[Empty response from model]"
+    return "[No content available in response]"
 
 def create_test_image(color="red", size=20):
     """Create a test image as base64 - tries PIL first, fallback to hardcoded"""
@@ -86,7 +148,8 @@ async def basic_text_example(model: str = "gemini-2.5-flash"):
     duration = time.time() - start_time
     
     print(f"✅ Response ({duration:.2f}s):")
-    print(f"   {response['response']}")
+    content = get_response_content(response)
+    print(f"   {content}")
     
     return response
 
@@ -117,11 +180,19 @@ async def streaming_example(model: str = "gemini-2.5-flash"):
     start_time = time.time()
     full_response = ""
     
-    async for chunk in client.create_completion(messages, stream=True):
-        if chunk.get("response"):
-            content = chunk["response"]
-            print(content, end="", flush=True)
-            full_response += content
+    try:
+        async for chunk in client.create_completion(messages, stream=True):
+            if chunk.get("response"):
+                content = chunk["response"]
+                print(content, end="", flush=True)
+                full_response += content
+    except Exception as e:
+        # If streaming fails, try non-streaming as fallback
+        print(f"\n⚠️  Streaming error: {e}")
+        print("   Falling back to non-streaming...")
+        response = await client.create_completion(messages)
+        full_response = get_response_content(response)
+        print(f"   {full_response}")
     
     duration = time.time() - start_time
     print(f"\n✅ Streaming completed ({duration:.2f}s)")
@@ -238,12 +309,14 @@ async def function_calling_example(model: str = "gemini-2.5-flash"):
         print("🔄 Getting final response...")
         final_response = await client.create_completion(messages)
         print(f"✅ Final response:")
-        print(f"   {final_response['response']}")
+        content = get_response_content(final_response)
+        print(f"   {content}")
         
         return final_response
     else:
         print("ℹ️  No tool calls were made")
-        print(f"   Response: {response['response']}")
+        content = get_response_content(response)
+        print(f"   Response: {content}")
         return response
 
 # =============================================================================
@@ -251,8 +324,8 @@ async def function_calling_example(model: str = "gemini-2.5-flash"):
 # =============================================================================
 
 async def universal_vision_example(model: str = "gemini-2.5-flash"):
-    """Vision capabilities using universal image_url format"""
-    print(f"\n👁️  Universal Vision Format Example with {model}")
+    """Vision capabilities using universal image_url format - Showcasing Gemini 2.5 Flash"""
+    print(f"\n👁️  Vision Example with {model}")
     print("=" * 60)
     
     # Check if model supports vision using unified config
@@ -270,14 +343,22 @@ async def universal_vision_example(model: str = "gemini-2.5-flash"):
         
         return None
     
+    # Special showcase for Gemini 2.5 Flash
+    if '2.5' in model and 'flash' in model.lower():
+        print("🌟 Gemini 2.5 Flash Vision Capabilities:")
+        print("   • Fast multimodal processing")
+        print("   • High-quality image understanding")
+        print("   • 2M token context window")
+        print("   • Perfect for vision + reasoning tasks")
+    
     client = get_client("gemini", model=model)
     
     # Create a proper test image
-    print("🖼️  Creating test image...")
+    print("\n🖼️  Creating test image...")
     test_image_b64 = create_test_image("blue", 30)
     
-    # Note: Current Gemini client has image processing limitations
-    print("⚠️  Note: Current Gemini client has image processing limitations")
+    # Note about current implementation
+    print("⚠️  Note: Full image processing through base64 in development")
     
     # Test with a simple text query instead since vision isn't working properly
     messages = [
@@ -292,13 +373,29 @@ async def universal_vision_example(model: str = "gemini-2.5-flash"):
     try:
         # Add timeout to prevent hanging on vision requests
         response = await asyncio.wait_for(
-            client.create_completion(messages, max_tokens=100),
+            client.create_completion(messages),  # max_tokens causes issues with Gemini
             timeout=30.0  # 30 second timeout
         )
         
-        print(f"✅ Vision-related response:")
-        print(f"   {response['response']}")
-        print(f"   💡 Note: Actual image processing requires client improvements")
+        content = get_response_content(response)
+        
+        # Check if we got an actual response
+        if "[No content available" in content or "[Empty response" in content:
+            print(f"⚠️  Vision processing not fully supported yet")
+            print(f"   Testing with text-only fallback...")
+            
+            # Try text-only version
+            text_messages = [
+                {"role": "user", "content": "If I showed you a red square image, what color would it be?"}
+            ]
+            fallback_response = await client.create_completion(text_messages)
+            fallback_content = get_response_content(fallback_response)
+            print(f"   ✅ Text fallback: {fallback_content}")
+        else:
+            print(f"✅ Vision response:")
+            print(f"   {content}")
+        
+        print(f"   💡 Note: Full vision support requires Gemini client updates")
         
         return response
         
@@ -353,24 +450,30 @@ async def system_parameter_example(model: str = "gemini-2.5-flash"):
         try:
             # Method 1: Try system parameter (should work with updated client)
             messages = [{"role": "user", "content": persona['query']}]
+            # Note: Gemini has issues with max_tokens parameter
             response = await client.create_completion(
                 messages, 
-                system=persona['system'],
-                max_tokens=150
+                system=persona['system']
             )
-            print(f"   ✅ System parameter: {response['response'][:200]}...")
+            content = get_response_content(response)
+            
+            # Check if we got the error message from the client
+            if "[No content available" in content or "[Empty response" in content:
+                print(f"   ⚠️  System parameter not working, trying fallback...")
+                raise Exception("System parameter returned empty response")
+            
+            print(f"   ✅ System parameter: {content[:200]}...")
             
         except Exception as e:
-            print(f"   ⚠️  System parameter failed: {str(e)[:100]}...")
-            
             # Method 2: Fallback to system message in conversation
             try:
                 messages = [
                     {"role": "system", "content": persona['system']},
                     {"role": "user", "content": persona['query']}
                 ]
-                response = await client.create_completion(messages, max_tokens=150)
-                print(f"   ✅ System message: {response['response'][:200]}...")
+                response = await client.create_completion(messages)
+                content = get_response_content(response)
+                print(f"   ✅ System message: {content[:200]}...")
                 
             except Exception as e2:
                 print(f"   ❌ Both methods failed: {str(e2)[:100]}...")
@@ -424,7 +527,7 @@ async def json_mode_example(model: str = "gemini-2.5-flash"):
         try:
             response = await client.create_completion(
                 messages,
-                max_tokens=300,
+                # max_tokens=300,  # Causes issues with Gemini
                 temperature=0.3  # Lower temperature for more consistent JSON
             )
             
@@ -469,7 +572,8 @@ async def json_mode_example(model: str = "gemini-2.5-flash"):
                         
                 except json.JSONDecodeError as e:
                     print(f"   ⚠️  JSON parsing issue: {e}")
-                    print(f"   📄 Raw response: {response['response'][:200]}...")
+                    content = get_response_content(response)
+                    print(f"   📄 Raw response: {content[:200]}...")
             else:
                 print(f"   ❌ No response received")
         
@@ -592,7 +696,70 @@ async def feature_detection_example(model: str = "gemini-2.5-flash"):
     return model_info
 
 # =============================================================================
-# Example 9: Comprehensive Feature Test
+# Example 9: Model Discovery
+# =============================================================================
+
+async def model_discovery_example():
+    """Discover available Gemini models from API"""
+    print(f"\n🔍 Model Discovery")
+    print("=" * 60)
+    
+    model_info = get_available_models()
+    
+    print(f"📦 Configured models ({len(model_info['configured'])}):")
+    for model in model_info['configured'][:10]:  # Show first 10
+        # Identify model capabilities
+        if '2.5' in model:
+            print(f"   • {model} [🧠 enhanced reasoning, 👁️ vision]")
+        elif '2.0' in model:
+            print(f"   • {model} [⚡ next-gen features]")
+        elif 'pro' in model:
+            print(f"   • {model} [💪 powerful]")
+        elif 'flash' in model and '8b' in model:
+            print(f"   • {model} [🚀 fast & efficient]")
+        else:
+            print(f"   • {model}")
+    
+    if len(model_info['discovered']) > 0:
+        print(f"\n🌐 Discovered from API ({len(model_info['discovered'])}):")
+        # Show models that are not in config
+        new_models = [m for m in model_info['discovered'] if m not in model_info['configured']]
+        if new_models:
+            print(f"   New models not in config:")
+            for model in new_models[:5]:  # Show first 5
+                print(f"   ✨ {model}")
+        else:
+            print("   All API models are already configured")
+    
+    print(f"\n📊 Total available: {len(model_info['all'])} models")
+    
+    # Show special models
+    print(f"\n🌟 Special Models:")
+    vision_models = [m for m in model_info['all'] if '2.5' in m or 'vision' in m.lower()]
+    if vision_models:
+        print(f"   👁️ Vision-capable: {', '.join(vision_models[:3])}")
+    
+    reasoning_models = [m for m in model_info['all'] if '2.5' in m or 'pro' in m]
+    if reasoning_models:
+        print(f"   🧠 Advanced reasoning: {', '.join(reasoning_models[:3])}")
+    
+    # Test a model if available
+    if model_info['configured']:
+        test_model = model_info['configured'][0]
+        print(f"\n🧪 Testing model: {test_model}")
+        try:
+            client = get_client("gemini", model=test_model)
+            messages = [{"role": "user", "content": "Say hello in 3 words"}]
+            response = await client.create_completion(messages)
+            content = get_response_content(response)
+            print(f"   ✅ Model works: {content[:50]}...")
+        except Exception as e:
+            print(f"   ⚠️ Model test failed: {e}")
+    
+    return model_info
+
+# =============================================================================
+# Example 10: Comprehensive Feature Test
 # =============================================================================
 
 async def comprehensive_feature_test(model: str = "gemini-2.5-flash"):
@@ -637,7 +804,7 @@ async def comprehensive_feature_test(model: str = "gemini-2.5-flash"):
             client.create_completion(
                 messages,
                 tools=tools,
-                max_tokens=300
+                # max_tokens=300  # Causes issues with Gemini
             ),
             timeout=30.0
         )
@@ -647,7 +814,8 @@ async def comprehensive_feature_test(model: str = "gemini-2.5-flash"):
             for tc in response["tool_calls"]:
                 print(f"   🔧 {tc['function']['name']}: {tc['function']['arguments'][:100]}...")
         else:
-            print(f"ℹ️  Direct response: {response['response'][:150]}...")
+            content = get_response_content(response)
+            print(f"ℹ️  Direct response: {content[:150]}...")
     
     except asyncio.TimeoutError:
         print("❌ Comprehensive test timed out after 30 seconds")
@@ -690,12 +858,13 @@ async def multimodal_example(model: str = "gemini-2.5-flash"):
     
     try:
         response = await asyncio.wait_for(
-            client.create_completion(messages, max_tokens=200),
+            client.create_completion(messages),  # max_tokens causes issues
             timeout=30.0
         )
         
         print(f"✅ Multimodal reasoning response:")
-        print(f"   {response['response']}")
+        content = get_response_content(response)
+        print(f"   {content}")
         print(f"   💡 Note: Actual image processing requires Gemini client vision updates")
         
         return response
@@ -786,6 +955,7 @@ async def main():
     
     examples = [
         ("Feature Detection", lambda: feature_detection_example(args.model)),
+        ("Model Discovery", model_discovery_example),
         ("Basic Text", lambda: basic_text_example(args.model)),
         ("Streaming", lambda: streaming_example(args.model)),
         ("System Parameter", lambda: system_parameter_example(args.model)),

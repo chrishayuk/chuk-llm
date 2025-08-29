@@ -41,10 +41,50 @@ if not os.getenv("DEEPSEEK_API_KEY"):
 try:
     from chuk_llm.llm.client import get_client, get_provider_info
     from chuk_llm.configuration import get_config, Feature
+    import httpx
 except ImportError as e:
     print(f"❌ Import error: {e}")
     print("   Make sure you installed chuk-llm and are running from the repo root")
     sys.exit(1)
+
+def get_available_models():
+    """Get available DeepSeek models from configuration and optionally from API"""
+    config = get_config()
+    configured_models = []
+    discovered_models = []
+    
+    # Get configured models
+    if 'deepseek' in config.providers:
+        provider = config.providers['deepseek']
+        if hasattr(provider, 'models'):
+            configured_models = list(provider.models)
+    
+    # Try to get models from DeepSeek API (uses OpenAI-compatible endpoint)
+    api_key = os.getenv('DEEPSEEK_API_KEY')
+    if api_key:
+        try:
+            response = httpx.get(
+                'https://api.deepseek.com/v1/models',
+                headers={'Authorization': f'Bearer {api_key}'},
+                timeout=5.0
+            )
+            if response.status_code == 200:
+                api_models = response.json()
+                discovered_models = [m.get('id') for m in api_models.get('data', []) if m.get('id')]
+        except Exception as e:
+            print(f"⚠️  Could not fetch models from API: {e}")
+    
+    # Combine models (configured first, then discovered)
+    all_models = list(configured_models)
+    for model in discovered_models:
+        if model not in all_models:
+            all_models.append(model)
+    
+    return {
+        'configured': configured_models,
+        'discovered': discovered_models,
+        'all': all_models
+    }
 
 # =============================================================================
 # Example 1: Basic Text Completion
@@ -122,32 +162,72 @@ async def reasoning_example(model: str = "deepseek-reasoner"):
     config = get_config()
     if not config.supports_feature("deepseek", Feature.REASONING, model):
         print(f"⚠️  Model {model} doesn't have enhanced reasoning")
+        print(f"💡 Use deepseek-reasoner for advanced reasoning capabilities")
         return None
 
     client = get_client("deepseek", model=model)
 
-    # Use a complex reasoning task that the model should respond to
+    # DeepSeek Reasoner is very selective - it needs truly complex reasoning tasks
+    # It may not respond to simple problems that deepseek-chat can handle
     messages = [
         {
             "role": "user", 
-            "content": "I have a 3-gallon jug and a 5-gallon jug. I need to measure exactly 4 gallons of water. How can I do this? Please think through this step-by-step and explain your reasoning process."
+            "content": """I need to solve a complex optimization problem:
+
+A factory produces widgets using two machines. Machine A produces 100 widgets per hour but has a 5% defect rate. Machine B produces 70 widgets per hour with a 2% defect rate. 
+
+The factory needs to produce exactly 5000 good widgets. Running Machine A costs $50 per hour, and Machine B costs $40 per hour. There's also a penalty of $2 for each defective widget that needs to be scrapped.
+
+What is the most cost-effective way to produce exactly 5000 good widgets? Show all calculations and reasoning."""
         }
     ]
 
     print("🧠 Processing complex reasoning task...")
+    print("   ⚠️ Note: DeepSeek Reasoner is extremely selective")
+    print("   - May take 30-60+ seconds to respond")
+    print("   - May return empty responses for many prompts")
+    print("   - Best for very complex mathematical/logical problems")
+    
     start_time = time.time()
-    response = await client.create_completion(messages, max_tokens=500)
+    
+    # Don't set max_tokens too low for reasoning tasks
+    response = await client.create_completion(messages, temperature=0.1)
     duration = time.time() - start_time
 
     # Handle empty responses
     response_text = response.get('response', '').strip()
     if not response_text:
         print(f"⚠️  Empty response received ({duration:.2f}s)")
-        print(f"   Note: deepseek-reasoner may only respond to complex reasoning tasks")
-        return response
+        print(f"   Trying with a different reasoning problem...")
+        
+        # Try a mathematical reasoning problem instead
+        messages = [
+            {
+                "role": "user",
+                "content": "If a train travels 120 miles in 2 hours, then slows down to 40 mph for the next 80 miles, what is the average speed for the entire journey? Think step by step."
+            }
+        ]
+        
+        response = await client.create_completion(messages, temperature=0.1)
+        response_text = response.get('response', '').strip()
+        
+        if not response_text:
+            print(f"   Note: DeepSeek Reasoner requires very complex reasoning tasks")
+            print(f"   Try more challenging mathematical or logical problems")
+            return response
     
     print(f"✅ Reasoning response ({duration:.2f}s):")
-    print(f"   {response_text}")
+    
+    # Check if response contains thinking process
+    if '<think>' in response_text or 'Step' in response_text or 'First' in response_text:
+        print("   [Contains step-by-step reasoning]")
+    
+    # Truncate very long responses for display
+    if len(response_text) > 500:
+        print(f"   {response_text[:500]}...")
+        print(f"   [Response truncated - {len(response_text)} total characters]")
+    else:
+        print(f"   {response_text}")
     
     return response
 
@@ -160,11 +240,18 @@ async def function_calling_example(model: str = "deepseek-chat"):
     print(f"\n🔧 Function Calling with {model}")
     print("=" * 60)
 
+    # DeepSeek Reasoner doesn't support function calling
+    if 'reasoner' in model.lower():
+        print(f"⚠️  {model} doesn't support function calling")
+        print(f"💡 DeepSeek Reasoner is designed for complex reasoning tasks, not tool use")
+        print(f"   Use deepseek-chat for function calling capabilities")
+        return None
+
     # Check if model supports tools
     config = get_config()
     if not config.supports_feature("deepseek", Feature.TOOLS, model):
         print(f"⚠️  Skipping function calling: Model {model} doesn't support tools")
-        print(f"💡 DeepSeek models may not support function calling yet")
+        print(f"💡 Try deepseek-chat for function calling capabilities")
         return None
 
     client = get_client("deepseek", model=model)
@@ -363,7 +450,65 @@ async def model_comparison_example():
     return results
 
 # =============================================================================
-# Example 7: Feature Detection
+# Example 7: Model Discovery
+# =============================================================================
+
+async def model_discovery_example():
+    """Discover available DeepSeek models"""
+    print(f"\n🔍 Model Discovery")
+    print("=" * 60)
+    
+    model_info = get_available_models()
+    
+    print(f"📦 Configured models ({len(model_info['configured'])}):")
+    for model in model_info['configured']:
+        # Identify model capabilities
+        if 'reasoner' in model.lower():
+            print(f"   • {model} [🧠 advanced reasoning]")
+        elif 'chat' in model.lower():
+            print(f"   • {model} [💬 conversational]")
+        else:
+            print(f"   • {model}")
+    
+    if len(model_info['discovered']) > 0:
+        print(f"\n🌐 Discovered from API ({len(model_info['discovered'])}):")
+        # Show models that are not in config
+        new_models = [m for m in model_info['discovered'] if m not in model_info['configured']]
+        if new_models:
+            print(f"   New models not in config:")
+            for model in new_models[:5]:  # Show first 5
+                print(f"   ✨ {model}")
+        else:
+            print("   All API models are already configured")
+    
+    print(f"\n📊 Total available: {len(model_info['all'])} models")
+    
+    # Special notes about DeepSeek models
+    print(f"\n🌟 Model Capabilities:")
+    print(f"   🧠 deepseek-reasoner: Advanced reasoning with thinking process")
+    print(f"   💬 deepseek-chat: General conversation and function calling")
+    print(f"   ⚡ Both models use OpenAI-compatible API")
+    
+    # Test a model if available
+    if model_info['configured']:
+        test_model = model_info['configured'][0]
+        print(f"\n🧪 Testing model: {test_model}")
+        try:
+            client = get_client("deepseek", model=test_model)
+            messages = [{"role": "user", "content": "Say hello"}]
+            response = await client.create_completion(messages)
+            content = response.get('response', '')
+            if content:
+                print(f"   ✅ Model works: {content[:50]}...")
+            else:
+                print(f"   ⚠️ Empty response (model may need complex prompts)")
+        except Exception as e:
+            print(f"   ⚠️ Model test failed: {e}")
+    
+    return model_info
+
+# =============================================================================
+# Example 8: Feature Detection
 # =============================================================================
 
 async def feature_detection_example(model: str = "deepseek-reasoner"):
@@ -402,6 +547,12 @@ async def feature_detection_example(model: str = "deepseek-reasoner"):
         print(f"   Streaming: {'✅' if client_info.get('supports_streaming') else '❌'}")
         print(f"   JSON Mode: {'✅' if client_info.get('supports_json_mode') else '❌'}")
         print(f"   System Messages: {'✅' if client_info.get('supports_system_messages') else '❌'}")
+        # DeepSeek Reasoner doesn't support function calling
+        if 'reasoner' in model.lower():
+            print(f"   Function Calling: ❌ (Reasoner models focus on reasoning, not tools)")
+        else:
+            supports_tools = model_info['supports'].get('tools', False) if 'model_info' in locals() else False
+            print(f"   Function Calling: {'✅' if supports_tools else '❌'}")
         
     except Exception as e:
         print(f"⚠️  Could not get client info: {e}")
@@ -535,6 +686,7 @@ async def main():
 
     examples = [
         ("Feature Detection", lambda: feature_detection_example(args.model)),
+        ("Model Discovery", model_discovery_example),
         ("Basic Text", lambda: basic_text_example(args.model)),
         ("Streaming", lambda: streaming_example(args.model)),
         ("Reasoning", lambda: reasoning_example(args.model)),

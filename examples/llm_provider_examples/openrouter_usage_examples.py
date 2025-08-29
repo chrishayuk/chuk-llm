@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-# examples/mistral_usage_examples.py
+# examples/openrouter_usage_examples.py
 """
-Mistral Provider Example Usage Script
-====================================
+OpenRouter Provider Example Usage Script
+========================================
 
-Demonstrates all the features of the Mistral provider in the chuk-llm library.
-Run this script to see Mistral in action with various capabilities.
+Demonstrates all the features of the OpenRouter provider in the chuk-llm library.
+Run this script to see various models from different providers in action.
 
 Requirements:
-- pip install mistralai chuk-llm
-- Set MISTRAL_API_KEY environment variable
+- pip install chuk-llm
+- Set OPENROUTER_API_KEY environment variable
 
 Usage:
-    python mistral_example.py
-    python mistral_example.py --model mistral-medium-2505
-    python mistral_example.py --skip-vision
+    python openrouter_usage_examples.py
+    python openrouter_usage_examples.py --model anthropic/claude-3-sonnet
+    python openrouter_usage_examples.py --skip-vision
+    python openrouter_usage_examples.py --list-models
 """
 
 import asyncio
@@ -32,9 +33,10 @@ from dotenv import load_dotenv
 load_dotenv() 
 
 # Ensure we have the required environment
-if not os.getenv("MISTRAL_API_KEY"):
-    print("❌ Please set MISTRAL_API_KEY environment variable")
-    print("   export MISTRAL_API_KEY='your_api_key_here'")
+if not os.getenv("OPENROUTER_API_KEY"):
+    print("❌ Please set OPENROUTER_API_KEY environment variable")
+    print("   export OPENROUTER_API_KEY='your_api_key_here'")
+    print("   Get your key at: https://openrouter.ai/keys")
     sys.exit(1)
 
 try:
@@ -53,17 +55,17 @@ def get_available_models():
     discovered_models = []
     
     # Get configured models
-    if 'mistral' in config.providers:
-        provider = config.providers['mistral']
+    if 'openrouter' in config.providers:
+        provider = config.providers['openrouter']
         if hasattr(provider, 'models'):
-            configured_models = list(provider.models)
+            configured_models = [m for m in provider.models if m != '*']
     
-    # Try to get models from Mistral API
-    api_key = os.getenv('MISTRAL_API_KEY')
+    # Try to get models from API
+    api_key = os.getenv('OPENROUTER_API_KEY')
     if api_key:
         try:
             response = httpx.get(
-                'https://api.mistral.ai/v1/models',
+                'https://openrouter.ai/api/v1/models',
                 headers={'Authorization': f'Bearer {api_key}'},
                 timeout=5.0
             )
@@ -71,7 +73,7 @@ def get_available_models():
                 api_models = response.json()
                 discovered_models = [m.get('id') for m in api_models.get('data', []) if m.get('id')]
         except Exception as e:
-            print(f"⚠️  Could not fetch models from API: {e}")
+            print(f"Warning: Could not fetch models from API: {e}")
     
     # Combine models (configured first, then discovered)
     all_models = list(configured_models)
@@ -103,22 +105,22 @@ def create_test_image(color: str = "red", size: int = 15) -> str:
     except ImportError:
         print("⚠️  PIL not available, using fallback image")
         # Fallback: 15x15 red square (valid PNG)
-        return "iVBORw0KGgoAAAANSUhEUgAAAA8AAAAPCAYAAAA71pVKAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAdgAAAHYBTnsmCAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAABYSURBVCiRY2RgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBgZGBgYGAAAgAANgAOAUUe1wAAAABJRU5ErkJggg=="
+        return "iVBORw0KGgoAAAANSUhEUgAAAA8AAAAPCAYAAAA71pVKAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAdgAAAHYBTnsmCAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAABYSURBVCiRY2RgYGBkYGBgZGBgYGRkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGAAAgAANgAOAUUe1wAAAABJRU5ErkJggg=="
 
 # =============================================================================
 # Example 1: Basic Text Completion
 # =============================================================================
 
-async def basic_text_example(model: str = "mistral-medium-2505"):
+async def basic_text_example(model: str = "openai/gpt-3.5-turbo"):
     """Basic text completion example"""
     print(f"\n🤖 Basic Text Completion with {model}")
     print("=" * 60)
     
-    client = get_client("mistral", model=model)
+    client = get_client("openrouter", model=model)
     
     messages = [
         {"role": "system", "content": "You are a helpful AI assistant."},
-        {"role": "user", "content": "Explain quantum computing in simple terms (2-3 sentences)."}
+        {"role": "user", "content": "Explain neural networks in simple terms (2-3 sentences)."}
     ]
     
     start_time = time.time()
@@ -134,18 +136,18 @@ async def basic_text_example(model: str = "mistral-medium-2505"):
 # Example 2: Streaming Response
 # =============================================================================
 
-async def streaming_example(model: str = "mistral-medium-2505"):
+async def streaming_example(model: str = "openai/gpt-3.5-turbo"):
     """Real-time streaming example"""
     print(f"\n⚡ Streaming Example with {model}")
     print("=" * 60)
     
     # Check streaming support
     config = get_config()
-    if not config.supports_feature("mistral", Feature.STREAMING, model):
+    if not config.supports_feature("openrouter", Feature.STREAMING, model):
         print(f"⚠️  Model {model} doesn't support streaming")
         return None
     
-    client = get_client("mistral", model=model)
+    client = get_client("openrouter", model=model)
     
     messages = [
         {"role": "user", "content": "Write a short haiku about artificial intelligence."}
@@ -172,69 +174,67 @@ async def streaming_example(model: str = "mistral-medium-2505"):
 # Example 3: Function Calling
 # =============================================================================
 
-async def function_calling_example(model: str = "mistral-medium-2505"):
+async def function_calling_example(model: str = "openai/gpt-4"):
     """Function calling with tools"""
     print(f"\n🔧 Function Calling with {model}")
     print("=" * 60)
     
     # Check if model supports tools
     config = get_config()
-    if not config.supports_feature("mistral", Feature.TOOLS, model):
+    if not config.supports_feature("openrouter", Feature.TOOLS, model):
         print(f"⚠️  Skipping function calling: Model {model} doesn't support tools")
-        print(f"💡 Try a tools-capable model like: mistral-medium-2505, mistral-large-2411, pixtral-large-2411")
         return None
     
-    client = get_client("mistral", model=model)
+    client = get_client("openrouter", model=model)
     
     # Define tools
     tools = [
         {
             "type": "function",
             "function": {
-                "name": "calculate_tip",
-                "description": "Calculate tip amount and total bill",
+                "name": "search_web",
+                "description": "Search the web for information",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "bill_amount": {
-                            "type": "number",
-                            "description": "The bill amount in dollars"
+                        "query": {
+                            "type": "string",
+                            "description": "The search query"
                         },
-                        "tip_percentage": {
-                            "type": "number", 
-                            "description": "Tip percentage (default: 18)"
+                        "max_results": {
+                            "type": "integer", 
+                            "description": "Maximum number of results to return"
                         }
                     },
-                    "required": ["bill_amount"]
+                    "required": ["query"]
                 }
             }
         },
         {
             "type": "function",
             "function": {
-                "name": "get_weather",
-                "description": "Get current weather for a location",
+                "name": "calculate_math",
+                "description": "Perform mathematical calculations",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "location": {
+                        "expression": {
                             "type": "string",
-                            "description": "City name"
+                            "description": "Mathematical expression to evaluate"
                         },
-                        "units": {
-                            "type": "string",
-                            "enum": ["celsius", "fahrenheit"],
-                            "description": "Temperature units"
+                        "precision": {
+                            "type": "integer",
+                            "description": "Number of decimal places"
                         }
                     },
-                    "required": ["location"]
+                    "required": ["expression"]
                 }
             }
         }
     ]
     
     messages = [
-        {"role": "user", "content": "Calculate a 20% tip on a $85 bill and tell me the weather in Paris."}
+        {"role": "user", "content": "Search for 'latest AI research' and calculate 25.5 * 14.2 with 3 decimal places."}
     ]
     
     print("🔄 Making function calling request...")
@@ -258,10 +258,10 @@ async def function_calling_example(model: str = "mistral-medium-2505"):
         for tool_call in response["tool_calls"]:
             func_name = tool_call["function"]["name"]
             
-            if func_name == "calculate_tip":
-                result = '{"tip_amount": 17.0, "total_amount": 102.0}'
-            elif func_name == "get_weather":
-                result = '{"temperature": "22°C", "condition": "Sunny", "humidity": "65%"}'
+            if func_name == "search_web":
+                result = '{"results": ["Latest breakthrough in transformer models", "New multimodal AI research", "Advances in reasoning capabilities"]}'
+            elif func_name == "calculate_math":
+                result = '{"result": 361.100, "expression": "25.5 * 14.2", "precision": 3}'
             else:
                 result = '{"status": "success"}'
             
@@ -288,19 +288,19 @@ async def function_calling_example(model: str = "mistral-medium-2505"):
 # Example 4: Vision Capabilities
 # =============================================================================
 
-async def vision_example(model: str = "mistral-medium-2505"):
-    """Vision capabilities with multimodal models"""
+async def vision_example(model: str = "openai/gpt-4-turbo"):
+    """Vision capabilities with models that support it"""
     print(f"\n👁️  Vision Example with {model}")
     print("=" * 60)
     
     # Check if model supports vision
     config = get_config()
-    if not config.supports_feature("mistral", Feature.VISION, model):
+    if not config.supports_feature("openrouter", Feature.VISION, model):
         print(f"⚠️  Skipping vision: Model {model} doesn't support vision")
-        print(f"💡 Try a vision-capable model like: mistral-medium-2505, pixtral-large-2411, pixtral-12b-2409")
+        print(f"💡 Try a vision-capable model like: anthropic/claude-3.5-sonnet, openai/gpt-4o")
         return None
     
-    client = get_client("mistral", model=model)
+    client = get_client("openrouter", model=model)
     
     # Create a proper test image
     print("🖼️  Creating test image...")
@@ -333,108 +333,77 @@ async def vision_example(model: str = "mistral-medium-2505"):
     return response
 
 # =============================================================================
-# Example 5: Model Discovery
+# Example 5: JSON Mode
 # =============================================================================
 
-async def model_discovery_example():
-    """Discover available models from Mistral API"""
-    print(f"\n🔍 Model Discovery")
+async def json_mode_example(model: str = "openai/gpt-4-turbo"):
+    """JSON mode example with structured output"""
+    print(f"\n📋 JSON Mode Example with {model}")
     print("=" * 60)
     
-    model_info = get_available_models()
+    # Check JSON mode support
+    config = get_config()
+    if not config.supports_feature("openrouter", Feature.JSON_MODE, model):
+        print(f"⚠️  Model {model} doesn't support JSON mode")
+        return None
     
-    print(f"📦 Configured models ({len(model_info['configured'])}):")
-    for model in model_info['configured'][:10]:  # Show first 10
-        # Check if it's a reasoning model
-        if 'magistral' in model.lower():
-            print(f"   • {model} [🧠 reasoning]")
-        elif 'codestral' in model.lower() or 'devstral' in model.lower():
-            print(f"   • {model} [💻 coding]")
-        elif 'pixtral' in model.lower():
-            print(f"   • {model} [👁️ vision]")
-        else:
-            print(f"   • {model}")
-    
-    if len(model_info['discovered']) > 0:
-        print(f"\n🌐 Discovered from API ({len(model_info['discovered'])}):")
-        # Show models that are not in config
-        new_models = [m for m in model_info['discovered'] if m not in model_info['configured']]
-        if new_models:
-            print(f"   New models not in config:")
-            for model in new_models[:5]:  # Show first 5
-                print(f"   ✨ {model}")
-        else:
-            print("   All API models are already configured")
-    
-    print(f"\n📊 Total available: {len(model_info['all'])} models")
-    
-    # Test a discovered model if available
-    if model_info['discovered'] and len(model_info['discovered']) > 0:
-        test_model = model_info['discovered'][0]
-        print(f"\n🧪 Testing discovered model: {test_model}")
-        try:
-            client = get_client("mistral", model=test_model)
-            messages = [{"role": "user", "content": "Say hello"}]
-            response = await client.create_completion(messages, max_tokens=20)
-            print(f"   ✅ Model works: {response['response'][:50]}...")
-        except Exception as e:
-            print(f"   ⚠️ Model test failed: {e}")
-    
-    return model_info
-
-# =============================================================================
-# Example 6: Reasoning Models Test
-# =============================================================================
-
-async def reasoning_example(model: str = "magistral-medium-2506"):
-    """Test reasoning capabilities with Magistral models"""
-    print(f"\n🧠 Reasoning Example with {model}")
-    print("=" * 60)
-    
-    # Check if it's a magistral reasoning model
-    if 'magistral' not in model.lower():
-        print(f"💡 Note: {model} is not a Magistral reasoning model")
-        print(f"   Switching to: magistral-medium-2506 for reasoning demonstration")
-        model = "magistral-medium-2506"
-    else:
-        print(f"✅ Using Magistral model: {model}")
-        print(f"   This model generates <think> tags for step-by-step reasoning")
-    
-    client = get_client("mistral", model=model)
+    client = get_client("openrouter", model=model)
     
     messages = [
         {
+            "role": "system", 
+            "content": "You are a helpful assistant designed to output JSON. Generate a JSON object with information about a programming language."
+        },
+        {
             "role": "user", 
-            "content": "I have a 3-gallon jug and a 5-gallon jug. How can I measure exactly 4 gallons of water? Think step by step."
+            "content": "Tell me about Python programming language in JSON format with fields: name, year_created, creator, main_features (array), and popularity_score (1-10)."
         }
     ]
     
-    print("🧠 Processing reasoning task...")
-    start_time = time.time()
-    response = await client.create_completion(messages, max_tokens=500)
-    duration = time.time() - start_time
+    print("📝 Requesting JSON output...")
     
-    print(f"✅ Reasoning response ({duration:.2f}s):")
-    print(f"   {response['response']}")
+    try:
+        response = await client.create_completion(
+            messages,
+            response_format={"type": "json_object"},
+            temperature=0.7
+        )
+        
+        print(f"✅ JSON response:")
+        print(f"   {response['response']}")
+        
+        # Try to parse as JSON to verify
+        import json
+        try:
+            parsed = json.loads(response['response'])
+            print(f"✅ Valid JSON structure with keys: {list(parsed.keys())}")
+        except json.JSONDecodeError:
+            print("⚠️  Response is not valid JSON")
+        
+    except Exception as e:
+        print(f"❌ JSON mode failed: {e}")
+        # Fallback to regular request
+        response = await client.create_completion(messages)
+        print(f"📝 Fallback response: {response['response'][:200]}...")
     
     return response
 
 # =============================================================================
-# Example 6: Model Comparison
+# Example 6: Multi-Provider Comparison
 # =============================================================================
 
-async def model_comparison_example():
-    """Compare different Mistral models"""
-    print(f"\n📊 Model Comparison")
+async def multi_provider_comparison():
+    """Compare different models from different providers via OpenRouter"""
+    print(f"\n🌐 Multi-Provider Comparison via OpenRouter")
     print("=" * 60)
     
-    # Updated model list based on config
+    # Sample of models from different providers - using more available models
     models = [
-        "mistral-medium-2505",      # Flagship multimodal model
-        "mistral-large-2411",       # Top-tier reasoning
-        "magistral-medium-2506",    # Reasoning specialist
-        "codestral-2501",           # Latest coding model
-        "ministral-8b-2410"         # Edge model
+        "openai/gpt-3.5-turbo",            # OpenAI
+        "openai/gpt-4-turbo",              # OpenAI Premium
+        "meta-llama/llama-3.1-8b-instruct", # Meta (often available)
+        "mistralai/mistral-7b-instruct:free", # Mistral Free
+        "google/gemini-flash-1.5",        # Google
     ]
     
     prompt = "What is machine learning? (One sentence)"
@@ -443,7 +412,7 @@ async def model_comparison_example():
     for model in models:
         try:
             print(f"🔄 Testing {model}...")
-            client = get_client("mistral", model=model)
+            client = get_client("openrouter", model=model)
             messages = [{"role": "user", "content": prompt}]
             
             start_time = time.time()
@@ -468,8 +437,9 @@ async def model_comparison_example():
     print("\n📈 Results:")
     for model, result in results.items():
         status = "✅" if result["success"] else "❌"
-        model_short = model.replace("mistral-", "").replace("-2505", "").replace("-2411", "").replace("-2506", "").replace("-2501", "").replace("-2410", "")
-        print(f"   {status} {model_short}:")
+        provider = model.split("/")[0]
+        model_name = model.split("/")[1]
+        print(f"   {status} {provider}/{model_name[:20]}:")
         print(f"      Time: {result['time']:.2f}s")
         print(f"      Length: {result['length']} chars")
         print(f"      Response: {result['response'][:80]}...")
@@ -478,50 +448,136 @@ async def model_comparison_example():
     return results
 
 # =============================================================================
-# Example 7: Feature Detection
+# Example 7: Discovered Models Test
 # =============================================================================
 
-async def feature_detection_example(model: str = "mistral-medium-2505"):
+async def discovered_models_example():
+    """Test models that are discovered but not in configuration"""
+    print(f"\n🌐 Testing Discovered Models (Not in Config)")
+    print("=" * 60)
+    
+    model_info = get_available_models()
+    
+    # Find models that are only discovered, not configured
+    only_discovered = [
+        m for m in model_info['discovered'] 
+        if m not in model_info['configured']
+    ][:5]  # Test first 5
+    
+    if not only_discovered:
+        print("⚠️  No discovered-only models found")
+        # Try with any discovered model
+        if model_info['discovered']:
+            print("Testing with first discovered model instead...")
+            only_discovered = model_info['discovered'][:1]
+        else:
+            return None
+    
+    print(f"Found {len(model_info['discovered'])} total discovered models")
+    print(f"Testing {len(only_discovered)} models:\n")
+    
+    for model in only_discovered:
+        try:
+            print(f"🔄 Testing {model}:")
+            client = get_client("openrouter", model=model)
+            
+            messages = [{"role": "user", "content": "Say hello in 5 words or less"}]
+            
+            start_time = time.time()
+            response = await client.create_completion(messages, max_tokens=20)
+            duration = time.time() - start_time
+            
+            print(f"   ✅ Response: {response['response'][:50]}")
+            print(f"   Time: {duration:.2f}s\n")
+            
+        except Exception as e:
+            error_msg = str(e)
+            if "404" in error_msg:
+                print(f"   ❌ Model not available for this account\n")
+            elif "402" in error_msg:
+                print(f"   💳 Requires payment/credits\n")
+            else:
+                print(f"   ❌ Error: {error_msg[:100]}...\n")
+    
+    return True
+
+# =============================================================================
+# Example 8: Cost-Aware Routing
+# =============================================================================
+
+async def cost_aware_example():
+    """Demonstrate cost-aware model selection"""
+    print(f"\n💰 Cost-Aware Model Selection")
+    print("=" * 60)
+    
+    # Models with different cost tiers - using more available options
+    models = [
+        ("openai/gpt-4-turbo", "Premium"),
+        ("openai/gpt-3.5-turbo", "Balanced"),
+        ("mistralai/mistral-7b-instruct:free", "Free Tier"),
+        ("meta-llama/llama-3.1-8b-instruct", "Cost Effective"),
+    ]
+    
+    prompt = "Generate a creative business name for a tech startup (one suggestion only)"
+    
+    for model, tier in models:
+        try:
+            print(f"\n💎 {tier} - {model}:")
+            client = get_client("openrouter", model=model)
+            
+            messages = [{"role": "user", "content": prompt}]
+            
+            start_time = time.time()
+            response = await client.create_completion(messages, max_tokens=50)
+            duration = time.time() - start_time
+            
+            print(f"   Response: {response['response']}")
+            print(f"   Time: {duration:.2f}s")
+            
+        except Exception as e:
+            print(f"   ❌ Error: {e}")
+    
+    return True
+
+# =============================================================================
+# Example 9: Feature Detection
+# =============================================================================
+
+async def feature_detection_example(model: str = "openai/gpt-3.5-turbo"):
     """Detect and display model features"""
     print(f"\n🔬 Feature Detection for {model}")
     print("=" * 60)
     
     # Get model info
     try:
-        model_info = get_provider_info("mistral", model)
+        model_info = get_provider_info("openrouter", model)
         
         print("📋 Model Information:")
-        print(f"   Provider: {model_info['provider']}")
+        print(f"   Provider: OpenRouter")
         print(f"   Model: {model_info['model']}")
-        print(f"   Max Context: {model_info['max_context_length']:,} tokens")
-        print(f"   Max Output: {model_info['max_output_tokens']:,} tokens")
+        print(f"   Max Context: {model_info.get('max_context_length', 'N/A'):,} tokens")
+        print(f"   Max Output: {model_info.get('max_output_tokens', 'N/A'):,} tokens")
         
         print("\n🎯 Supported Features:")
-        for feature, supported in model_info['supports'].items():
+        supports = model_info.get('supports', {})
+        for feature, supported in supports.items():
             status = "✅" if supported else "❌"
             print(f"   {status} {feature}")
-        
-        print("\n📊 Rate Limits:")
-        for tier, limit in model_info['rate_limits'].items():
-            print(f"   {tier}: {limit} requests/min")
         
     except Exception as e:
         print(f"⚠️  Could not get model info: {e}")
     
     # Test actual client info
     try:
-        client = get_client("mistral", model=model)
+        client = get_client("openrouter", model=model)
         client_info = client.get_model_info()
         
         print(f"\n🔧 Client Features:")
-        # Mistral supports function calling through tools
-        supports_tools = model_info['supports'].get('tools', False) if 'model_info' in locals() else False
-        print(f"   Function Calling: {'✅' if supports_tools else '❌'}")
-        print(f"   Vision: {'✅' if client_info.get('supports_vision') else '❌'}")
         print(f"   Streaming: {'✅' if client_info.get('supports_streaming') else '❌'}")
+        print(f"   Tools: {'✅' if client_info.get('supports_tools') else '❌'}")
+        print(f"   Vision: {'✅' if client_info.get('supports_vision') else '❌'}")
+        print(f"   JSON Mode: {'✅' if client_info.get('supports_json_mode') else '❌'}")
         print(f"   System Messages: {'✅' if client_info.get('supports_system_messages') else '❌'}")
-        # Magistral models support reasoning
-        print(f"   Reasoning: {'✅ (Magistral thinking model)' if 'magistral' in model.lower() else '❌'}")
         
     except Exception as e:
         print(f"⚠️  Could not get client info: {e}")
@@ -529,21 +585,21 @@ async def feature_detection_example(model: str = "mistral-medium-2505"):
     return model_info if 'model_info' in locals() else None
 
 # =============================================================================
-# Example 8: Simple Chat Interface
+# Example 10: Simple Chat Interface
 # =============================================================================
 
-async def simple_chat_example(model: str = "mistral-medium-2505"):
+async def simple_chat_example(model: str = "openai/gpt-3.5-turbo"):
     """Simple chat interface simulation"""
     print(f"\n💬 Simple Chat Interface with {model}")
     print("=" * 60)
     
-    client = get_client("mistral", model=model)
+    client = get_client("openrouter", model=model)
     
     # Simulate a simple conversation
     conversation = [
-        "Hello! How are you?",
-        "What's your favorite programming language?", 
-        "Can you write a simple Python function?"
+        "Hello! What's the weather like?",
+        "What's the most exciting development in AI recently?", 
+        "Can you help me write a JavaScript function to sort an array?"
     ]
     
     messages = [
@@ -557,7 +613,7 @@ async def simple_chat_example(model: str = "mistral-medium-2505"):
         messages.append({"role": "user", "content": user_input})
         
         # Get response
-        response = await client.create_completion(messages, max_tokens=150)
+        response = await client.create_completion(messages, max_tokens=200)
         assistant_response = response.get("response", "No response")
         
         print(f"🤖 Assistant: {assistant_response}")
@@ -569,18 +625,111 @@ async def simple_chat_example(model: str = "mistral-medium-2505"):
     return messages
 
 # =============================================================================
-# Example 9: Comprehensive Feature Test
+# Example 11: Temperature and Parameters Test
 # =============================================================================
 
-async def comprehensive_test(model: str = "mistral-medium-2505"):
+async def parameters_example(model: str = "openai/gpt-3.5-turbo"):
+    """Test different parameters and settings"""
+    print(f"\n🎛️  Parameters Test with {model}")
+    print("=" * 60)
+    
+    client = get_client("openrouter", model=model)
+    
+    # Test different temperatures
+    temperatures = [0.1, 0.7, 1.2]
+    prompt = "Write a creative opening line for a science fiction story."
+    
+    for temp in temperatures:
+        print(f"\n🌡️  Temperature {temp}:")
+        
+        messages = [{"role": "user", "content": prompt}]
+        
+        try:
+            response = await client.create_completion(
+                messages,
+                temperature=temp,
+                max_tokens=50
+            )
+            print(f"   {response['response']}")
+        except Exception as e:
+            print(f"   ❌ Error: {e}")
+    
+    # Test with system message
+    print(f"\n🎭 With System Message:")
+    messages = [
+        {"role": "system", "content": "You are a poetic AI that speaks in rhymes."},
+        {"role": "user", "content": "Tell me about the ocean."}
+    ]
+    
+    response = await client.create_completion(messages, temperature=0.8, max_tokens=100)
+    print(f"   {response['response']}")
+    
+    return True
+
+# =============================================================================
+# Example 12: Specialized Models Test
+# =============================================================================
+
+async def specialized_models_example():
+    """Test specialized models available on OpenRouter"""
+    print(f"\n🎯 Specialized Models Test")
+    print("=" * 60)
+    
+    # Test different specialized models
+    tests = [
+        {
+            "model": "openai/gpt-4-turbo",
+            "type": "Vision & Tools",
+            "prompt": "Describe the capabilities of modern AI assistants.",
+        },
+        {
+            "model": "openai/gpt-3.5-turbo",
+            "type": "Fast Response",
+            "prompt": "Explain the difference between correlation and causation with an example.",
+        },
+        {
+            "model": "mistralai/mistral-7b-instruct:free",
+            "type": "Free Tier",
+            "prompt": "Write a Python function to calculate fibonacci numbers efficiently.",
+        },
+        {
+            "model": "meta-llama/llama-3.1-8b-instruct",
+            "type": "Open Source",
+            "prompt": "List three advantages of using open source AI models.",
+        },
+    ]
+    
+    for test in tests:
+        print(f"\n🔍 Testing {test['type']} - {test['model']}:")
+        try:
+            client = get_client("openrouter", model=test["model"])
+            messages = [{"role": "user", "content": test["prompt"]}]
+            
+            start_time = time.time()
+            response = await client.create_completion(messages, max_tokens=150)
+            duration = time.time() - start_time
+            
+            print(f"   Response: {response['response'][:200]}...")
+            print(f"   Time: {duration:.2f}s")
+            
+        except Exception as e:
+            print(f"   ❌ Error: {str(e)[:100]}")
+    
+    return True
+
+# =============================================================================
+# Example 13: Comprehensive Feature Test
+# =============================================================================
+
+async def comprehensive_test(model: str = "openai/gpt-4"):
     """Test multiple features in one comprehensive example"""
     print(f"\n🚀 Comprehensive Feature Test with {model}")
     print("=" * 60)
     
     # Check what features this model supports
     config = get_config()
-    supports_tools = config.supports_feature("mistral", Feature.TOOLS, model)
-    supports_vision = config.supports_feature("mistral", Feature.VISION, model)
+    supports_tools = config.supports_feature("openrouter", Feature.TOOLS, model)
+    supports_vision = config.supports_feature("openrouter", Feature.VISION, model)
     
     print(f"Model capabilities: Tools={supports_tools}, Vision={supports_vision}")
     
@@ -588,7 +737,7 @@ async def comprehensive_test(model: str = "mistral-medium-2505"):
         print("⚠️  Model doesn't support tools or vision - using text-only test")
         return await simple_chat_example(model)
     
-    client = get_client("mistral", model=model)
+    client = get_client("openrouter", model=model)
     
     # Define tools if supported
     tools = None
@@ -670,57 +819,88 @@ async def comprehensive_test(model: str = "mistral-medium-2505"):
 
 async def main():
     """Run all examples"""
-    parser = argparse.ArgumentParser(description="Mistral Provider Example Script")
-    parser.add_argument("--model", default="mistral-medium-2505", help="Model to use (default: mistral-medium-2505)")
+    parser = argparse.ArgumentParser(description="OpenRouter Provider Example Script")
+    parser.add_argument("--model", default="openai/gpt-3.5-turbo", help="Model to use (default: openai/gpt-3.5-turbo)")
+    parser.add_argument("--list-models", action="store_true", help="List available models and exit")
     parser.add_argument("--skip-vision", action="store_true", help="Skip vision examples")
     parser.add_argument("--skip-functions", action="store_true", help="Skip function calling")
-    parser.add_argument("--test-reasoning", action="store_true", help="Test reasoning models")
     parser.add_argument("--quick", action="store_true", help="Run only basic examples")
     
     args = parser.parse_args()
     
-    print("🚀 Mistral Provider Examples")
+    # Handle --list-models
+    if args.list_models:
+        print("📋 Available OpenRouter Models")
+        print("=" * 60)
+        model_info = get_available_models()
+        
+        print(f"\n📦 Configured Models ({len(model_info['configured'])}):")
+        for model in model_info['configured'][:10]:
+            print(f"  - {model}")
+        if len(model_info['configured']) > 10:
+            print(f"  ... and {len(model_info['configured']) - 10} more")
+        
+        print(f"\n🌐 Discovered Models ({len(model_info['discovered'])}):")
+        # Show some popular discovered models
+        popular_discovered = [
+            m for m in model_info['discovered'] 
+            if any(p in m for p in ['gpt', 'claude', 'llama', 'mistral', 'gemini'])
+        ][:10]
+        for model in popular_discovered:
+            status = "✅" if model not in model_info['configured'] else "🔄"
+            print(f"  {status} {model}")
+        if len(model_info['discovered']) > 10:
+            print(f"  ... and {len(model_info['discovered']) - 10} more")
+        
+        print(f"\n💡 Total Available: {len(model_info['all'])} models")
+        print("\n✅ = Only in discovery, 🔄 = Also in config")
+        return
+    
+    print("🚀 OpenRouter Provider Examples")
     print("=" * 60)
     print(f"Using model: {args.model}")
-    print(f"API Key: {'✅ Set' if os.getenv('MISTRAL_API_KEY') else '❌ Missing'}")
+    print(f"API Key: {'✅ Set' if os.getenv('OPENROUTER_API_KEY') else '❌ Missing'}")
+    print(f"Website: https://openrouter.ai")
     
     # Show model capabilities
     try:
         config = get_config()
-        supports_tools = config.supports_feature("mistral", Feature.TOOLS, args.model)
-        supports_vision = config.supports_feature("mistral", Feature.VISION, args.model)
-        # Magistral models support reasoning (they generate <think> tags)
-        supports_reasoning = 'magistral' in args.model.lower()
+        supports_tools = config.supports_feature("openrouter", Feature.TOOLS, args.model)
+        supports_vision = config.supports_feature("openrouter", Feature.VISION, args.model)
+        supports_streaming = config.supports_feature("openrouter", Feature.STREAMING, args.model)
+        supports_json = config.supports_feature("openrouter", Feature.JSON_MODE, args.model)
         
         print(f"Model capabilities:")
         print(f"  Tools: {'✅' if supports_tools else '❌'}")
         print(f"  Vision: {'✅' if supports_vision else '❌'}")
-        print(f"  Reasoning: {'✅ (Magistral thinking model)' if supports_reasoning else '❌'}")
+        print(f"  Streaming: {'✅' if supports_streaming else '❌'}")
+        print(f"  JSON Mode: {'✅' if supports_json else '❌'}")
         
     except Exception as e:
         print(f"⚠️  Could not check capabilities: {e}")
-    
+
     examples = [
         ("Feature Detection", lambda: feature_detection_example(args.model)),
-        ("Model Discovery", model_discovery_example),
         ("Basic Text", lambda: basic_text_example(args.model)),
         ("Streaming", lambda: streaming_example(args.model)),
     ]
     
     if not args.quick:
         if not args.skip_functions:
-            examples.append(("Function Calling", lambda: function_calling_example(args.model)))
+            examples.append(("Function Calling", lambda: function_calling_example("openai/gpt-4")))
         
         if not args.skip_vision:
-            examples.append(("Vision", lambda: vision_example(args.model)))
-        
-        if args.test_reasoning:
-            examples.append(("Reasoning", lambda: reasoning_example("magistral-medium-2506")))
+            examples.append(("Vision", lambda: vision_example("openai/gpt-4-turbo")))
         
         examples.extend([
-            ("Model Comparison", model_comparison_example),
+            ("JSON Mode", lambda: json_mode_example("openai/gpt-4-turbo")),
+            ("Discovered Models", discovered_models_example),
+            ("Multi-Provider Comparison", multi_provider_comparison),
+            ("Cost-Aware Routing", cost_aware_example),
             ("Simple Chat", lambda: simple_chat_example(args.model)),
-            ("Comprehensive Test", lambda: comprehensive_test(args.model)),
+            ("Parameters Test", lambda: parameters_example(args.model)),
+            ("Specialized Models", specialized_models_example),
+            ("Comprehensive Test", lambda: comprehensive_test("openai/gpt-4")),
         ])
     
     # Run examples
@@ -756,17 +936,18 @@ async def main():
     
     if successful == total:
         print(f"\n🎉 All examples completed successfully!")
-        print(f"🔗 Mistral provider is working perfectly with chuk-llm!")
-        print(f"✨ Features tested: {args.model} capabilities")
+        print(f"🔗 OpenRouter provider is working perfectly with chuk-llm!")
+        print(f"✨ You have access to models from: OpenAI, Anthropic, Google, Meta, and more!")
     else:
         print(f"\n⚠️  Some examples failed. Check your API key and model access.")
         
         # Show model recommendations
-        print(f"\n💡 Model Recommendations:")
-        print(f"   • For tools + vision: mistral-medium-2505, pixtral-large-2411")
-        print(f"   • For reasoning: magistral-medium-2506, magistral-small-2506")
-        print(f"   • For coding: codestral-2501, devstral-small-2505")
-        print(f"   • For general use: mistral-large-2411")
+        print(f"\n💡 Popular OpenRouter Models:")
+        print(f"   • For general use: openai/gpt-3.5-turbo, openai/gpt-4-turbo")
+        print(f"   • For vision: openai/gpt-4-turbo, google/gemini-flash-1.5")
+        print(f"   • For free tier: mistralai/mistral-7b-instruct:free, meta-llama/llama-3.1-8b-instruct:free")
+        print(f"   • For coding: openai/gpt-4-turbo, deepseek/deepseek-coder")
+        print(f"   • Check available models with: --list-models")
 
 if __name__ == "__main__":
     try:

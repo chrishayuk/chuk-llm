@@ -280,15 +280,15 @@ uvx chuk-llm ask "Test GPT-5" --provider openai --model gpt-5
 ### Major Cloud Providers
 | Provider | Models | Special Features |
 |----------|---------|------------------|
-| **OpenAI** | GPT-5, GPT-4o, GPT-3.5-turbo | Reasoning models, function calling |
-| **Azure OpenAI** | Enterprise GPT-5, GPT-4 | Private endpoints, compliance |
-| **Anthropic** | Claude 4.1 Opus, Claude 4 Sonnet | Advanced reasoning |
-| **Google Gemini** | Gemini 2.5 Flash, 2.5 Pro | Multimodal, 2M context |
-| **Groq** | Llama 3.3, GPT-OSS | Ultra-fast inference (131K context) |
-| **Perplexity** | Sonar models | Real-time web search |
-| **Mistral AI** | Magistral, Mistral Large | European, reasoning models |
-| **DeepSeek** | DeepSeek-Reasoner, Chat | Advanced reasoning |
-| **IBM watsonx** | Granite, Llama 4 | Enterprise compliance |
+| **OpenAI** | GPT-5, GPT-4o, GPT-3.5-turbo, O1/O3 series | Reasoning models, function calling, JSON mode |
+| **Azure OpenAI** | Enterprise GPT-5, GPT-4, Custom deployments | Private endpoints, compliance, auto-discovery |
+| **Anthropic** | Claude 4.1 Opus, Claude 4 Sonnet, Claude 3.7 | Advanced reasoning, 200K context, vision |
+| **Google Gemini** | Gemini 2.5 Flash/Pro, 2.0 Flash, 1.5 Pro | Multimodal, 2M context, thinking capabilities |
+| **Groq** | Llama 3.3, Mixtral, GPT-OSS | Ultra-fast inference (245+ tokens/sec), 131K context |
+| **Perplexity** | Sonar models | Real-time web search, citations |
+| **Mistral AI** | Magistral (reasoning), Codestral, Pixtral | European, <think> tags, vision models |
+| **DeepSeek** | DeepSeek-Reasoner, DeepSeek-Chat | Complex reasoning (30-60s), OpenAI-compatible |
+| **IBM watsonx** | Granite 3.3, Llama 4, Custom models | Enterprise compliance, IBM Cloud integration |
 
 ### OpenAI-Compatible Gateways
 | Provider | Description | Use Case |
@@ -379,6 +379,8 @@ asyncio.run(chat_example())
 
 ### Dynamic Model Discovery
 
+ChukLLM automatically discovers and generates functions for available models:
+
 ```python
 # Ollama models are discovered automatically
 # ollama pull gpt-oss
@@ -396,6 +398,36 @@ from chuk_llm.api.providers import trigger_ollama_discovery_and_refresh
 new_functions = trigger_ollama_discovery_and_refresh()
 print(f"Discovered {len(new_functions)} new functions")
 ```
+
+#### Provider Discovery Examples
+
+Run the discovery examples to see available models for each provider:
+
+```bash
+# Discover OpenAI models
+uv run examples/llm_provider_examples/openai_usage_examples.py
+
+# Discover Anthropic models  
+uv run examples/llm_provider_examples/anthropic_usage_examples.py
+
+# Discover local Ollama models
+uv run examples/llm_provider_examples/ollama_usage_examples.py
+
+# Discover Azure OpenAI deployments
+uv run examples/llm_provider_examples/azure_usage_examples.py
+```
+
+Available provider examples:
+- `anthropic_usage_examples.py` - Claude models with Opus/Sonnet/Haiku families
+- `azure_usage_examples.py` - Azure OpenAI deployments with auto-discovery
+- `deepseek_usage_examples.py` - DeepSeek reasoning and chat models
+- `gemini_usage_examples.py` - Google Gemini models with multimodal support
+- `groq_usage_examples.py` - Groq's ultra-fast inference models
+- `mistral_usage_examples.py` - Mistral AI models including Magistral
+- `openai_usage_examples.py` - OpenAI GPT models including O1/O3 reasoning
+- `openrouter_usage_examples.py` - OpenRouter's model marketplace
+- `perplexity_usage_examples.py` - Perplexity's search-enhanced models
+- `watsonx_usage_examples.py` - IBM Watsonx Granite models
 
 ### Session Analytics
 

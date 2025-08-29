@@ -171,8 +171,10 @@ class OpenAILLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, OpenAISt
             "supports_tools": True  # Assume new models support tools
         }
     
-    def _has_explicit_model_config(self, model: str) -> bool:
+    def _has_explicit_model_config(self, model: str = None) -> bool:
         """Check if model has explicit configuration"""
+        if model is None:
+            model = self.model
         try:
             config_manager = get_config()
             provider_config = config_manager.get_provider(self.detected_provider)

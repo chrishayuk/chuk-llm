@@ -41,10 +41,57 @@ if not os.getenv("ANTHROPIC_API_KEY"):
 try:
     from chuk_llm.llm.client import get_client, get_provider_info, validate_provider_setup
     from chuk_llm.configuration import get_config, CapabilityChecker, Feature
+    import httpx
 except ImportError as e:
     print(f"❌ Import error: {e}")
     print("   Please make sure you're running from the chuk-llm directory")
     sys.exit(1)
+
+def get_available_models():
+    """Get available Anthropic models from configuration and optionally from API"""
+    config = get_config()
+    configured_models = []
+    discovered_models = []
+    
+    # Get configured models
+    if 'anthropic' in config.providers:
+        provider = config.providers['anthropic']
+        if hasattr(provider, 'models'):
+            configured_models = list(provider.models)
+    
+    # Note: Anthropic doesn't have a public models endpoint like OpenAI
+    # But we can check which models are available by attempting to use them
+    # For now, we'll use a predefined list of known models
+    known_models = [
+        'claude-opus-4-1-20250805',
+        'claude-opus-4-20250514',
+        'claude-sonnet-4-20250514',
+        'claude-3-7-sonnet-20250219',
+        'claude-3.5-sonnet-20241022',
+        'claude-3-opus-20240229',
+        'claude-3-sonnet-20240229',
+        'claude-3-haiku-20240307',
+        'claude-2.1',
+        'claude-2.0',
+        'claude-instant-1.2'
+    ]
+    
+    # Models that might be available but not configured
+    for model in known_models:
+        if model not in configured_models:
+            discovered_models.append(model)
+    
+    # Combine models (configured first, then discovered)
+    all_models = list(configured_models)
+    for model in discovered_models:
+        if model not in all_models:
+            all_models.append(model)
+    
+    return {
+        'configured': configured_models,
+        'discovered': discovered_models,
+        'all': all_models
+    }
 
 def create_test_image(color="red", size=20):
     """Create a test image as base64 - tries PIL first, fallback to hardcoded"""
@@ -540,7 +587,80 @@ async def feature_detection_example(model: str = "claude-sonnet-4-20250514"):
     return model_info
 
 # =============================================================================
-# Example 9: Comprehensive Feature Test
+# Example 9: Model Discovery
+# =============================================================================
+
+async def model_discovery_example():
+    """Discover available Anthropic models"""
+    print(f"\n🔍 Model Discovery")
+    print("=" * 60)
+    
+    model_info = get_available_models()
+    
+    print(f"📦 Configured models ({len(model_info['configured'])}):")
+    for model in model_info['configured'][:10]:  # Show first 10
+        # Identify model capabilities
+        if 'opus-4-1' in model:
+            print(f"   • {model} [🎭 Opus 4.1 - Latest flagship]")
+        elif 'opus-4' in model:
+            print(f"   • {model} [🎭 Opus 4 - Flagship model]")
+        elif 'sonnet-4' in model:
+            print(f"   • {model} [🎵 Sonnet 4 - Balanced performance]")
+        elif '3-7-sonnet' in model:
+            print(f"   • {model} [🎵 Sonnet 3.7 - Fast & capable]")
+        elif 'haiku' in model:
+            print(f"   • {model} [🍃 Haiku - Fast & efficient]")
+        elif 'instant' in model:
+            print(f"   • {model} [⚡ Instant - Ultra-fast]")
+        else:
+            print(f"   • {model}")
+    
+    if len(model_info['discovered']) > 0:
+        print(f"\n🌐 Known models not in config ({len(model_info['discovered'])}):")
+        # Show models that are not in config
+        for model in model_info['discovered'][:5]:  # Show first 5
+            if 'opus' in model.lower():
+                print(f"   ○ {model} [may require API access]")
+            elif 'sonnet' in model.lower():
+                print(f"   ○ {model} [may require API access]")
+            else:
+                print(f"   ○ {model}")
+    
+    print(f"\n📊 Total known: {len(model_info['all'])} models")
+    
+    # Show model families
+    print(f"\n🌟 Model Families:")
+    opus_models = [m for m in model_info['all'] if 'opus' in m.lower()]
+    sonnet_models = [m for m in model_info['all'] if 'sonnet' in m.lower()]
+    haiku_models = [m for m in model_info['all'] if 'haiku' in m.lower()]
+    
+    if opus_models:
+        print(f"   🎭 Opus (Flagship): {len(opus_models)} models")
+    if sonnet_models:
+        print(f"   🎵 Sonnet (Balanced): {len(sonnet_models)} models")
+    if haiku_models:
+        print(f"   🍃 Haiku (Fast): {len(haiku_models)} models")
+    
+    # Test a configured model if available
+    if model_info['configured']:
+        test_model = model_info['configured'][0]
+        print(f"\n🧪 Testing model: {test_model}")
+        try:
+            client = get_client("anthropic", model=test_model)
+            messages = [{"role": "user", "content": "Say hello in 3 words"}]
+            response = await client.create_completion(messages, max_tokens=20)
+            content = response.get('response', '')
+            if content:
+                print(f"   ✅ Model works: {content[:50]}...")
+            else:
+                print(f"   ⚠️ Empty response")
+        except Exception as e:
+            print(f"   ⚠️ Model test failed: {e}")
+    
+    return model_info
+
+# =============================================================================
+# Example 10: Comprehensive Feature Test
 # =============================================================================
 
 async def comprehensive_feature_test(model: str = "claude-sonnet-4-20250514"):
@@ -741,6 +861,7 @@ async def main():
     
     examples = [
         ("Feature Detection", lambda: feature_detection_example(args.model)),
+        ("Model Discovery", model_discovery_example),
         ("Basic Text", lambda: basic_text_example(args.model)),
         ("Streaming", lambda: streaming_example(args.model)),
         ("System Parameter", lambda: system_parameter_example(args.model)),
