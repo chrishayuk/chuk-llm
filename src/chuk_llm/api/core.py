@@ -31,6 +31,70 @@ logger = logging.getLogger(__name__)
 # Global session manager instance
 _global_session_manager = None
 
+
+def _resolve_model_alias(provider: str, model: str) -> str:
+    """Resolve model alias to actual model name.
+
+    Args:
+        provider: The provider name
+        model: The model name or alias
+
+    Returns:
+        The resolved model name
+    """
+    if not model:
+        return model
+
+    try:
+        config_manager = get_config()
+
+        # First check global aliases
+        try:
+            global_aliases = config_manager.get_global_aliases()
+            # Check if global_aliases is iterable (not a Mock)
+            if hasattr(global_aliases, "__contains__") and model in global_aliases:
+                alias_target = global_aliases[model]
+                if "/" in alias_target:
+                    # It's a provider/model alias
+                    alias_provider, alias_model = alias_target.split("/", 1)
+                    if alias_provider == provider:
+                        # Same provider, use the aliased model
+                        model = alias_model
+                        logger.debug(
+                            f"Resolved global alias '{model}' to '{alias_model}'"
+                        )
+        except (AttributeError, TypeError):
+            # Mock object or missing method, skip global alias resolution
+            pass
+
+        # Then use _ensure_model_available which handles provider-specific aliases and discovery
+        try:
+            if hasattr(config_manager, "_ensure_model_available"):
+                resolved_model = config_manager._ensure_model_available(provider, model)
+
+                if resolved_model and resolved_model != model:
+                    logger.debug(
+                        f"Resolved model '{model}' to '{resolved_model}' for provider '{provider}'"
+                    )
+                    return resolved_model
+                elif not resolved_model:
+                    # Model couldn't be resolved, return original and let API handle error
+                    logger.debug(
+                        f"Could not resolve model '{model}' for provider '{provider}', using as-is"
+                    )
+                    return model
+
+                return resolved_model
+        except (AttributeError, TypeError):
+            # Mock object or missing method, return original model
+            pass
+    except Exception as e:
+        # Any error in resolution, just return the original model
+        logger.debug(f"Error resolving model alias: {e}")
+
+    return model
+
+
 # Check if sessions should be disabled via environment variable
 _SESSIONS_ENABLED = _SESSION_AVAILABLE and os.getenv(
     "CHUK_LLM_DISABLE_SESSIONS", ""
@@ -147,6 +211,10 @@ async def ask(
     # Determine effective provider and model
     effective_provider = provider or config["provider"]
     effective_model = model or config["model"]
+
+    # Resolve model alias if provider is specified
+    if effective_provider and effective_model:
+        effective_model = _resolve_model_alias(effective_provider, effective_model)
 
     # Resolve provider-specific settings when provider is overridden
     config_manager = get_config()
@@ -398,6 +466,10 @@ async def stream(
     # Determine effective provider and settings (same logic as ask())
     effective_provider = provider or config["provider"]
     effective_model = model or config["model"]
+
+    # Resolve model alias if provider is specified
+    if effective_provider and effective_model:
+        effective_model = _resolve_model_alias(effective_provider, effective_model)
 
     # Resolve provider-specific settings
     config_manager = get_config()

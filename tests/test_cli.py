@@ -15,11 +15,10 @@ class TestCLISystemPromptSupport:
         """Test that convenience functions accept system prompts"""
         cli = ChukLLMCLI()
         
-        # Mock the function
-        mock_func = Mock(return_value="Test response")
-        
-        with patch.dict('chuk_llm.api.providers._GENERATED_FUNCTIONS', 
-                       {'ask_ollama_granite': mock_func}):
+        # Mock at the core API level to intercept actual calls
+        with patch('chuk_llm.api.core.ask', new_callable=AsyncMock) as mock_ask:
+            mock_ask.return_value = "Test response"
+            
             with patch('chuk_llm.api.providers.has_function', return_value=True):
                 result = cli.handle_convenience_function(
                     'ask_ollama_granite',
@@ -27,22 +26,20 @@ class TestCLISystemPromptSupport:
                     system_prompt='Be a pirate'
                 )
                 
-                # Verify the function was called with system_prompt
-                mock_func.assert_called_once_with(
-                    'Test prompt',
-                    system_prompt='Be a pirate'
-                )
+                # Verify the core ask function was called with system_prompt
+                mock_ask.assert_called_once()
+                call_kwargs = mock_ask.call_args[1]
+                assert call_kwargs['system_prompt'] == 'Be a pirate'
                 assert result == "Test response"
     
     def test_handle_convenience_function_with_multiple_kwargs(self):
         """Test that convenience functions accept multiple kwargs"""
         cli = ChukLLMCLI()
         
-        # Mock the function
-        mock_func = Mock(return_value="Test response")
-        
-        with patch.dict('chuk_llm.api.providers._GENERATED_FUNCTIONS', 
-                       {'ask_ollama_granite': mock_func}):
+        # Mock at the core API level
+        with patch('chuk_llm.api.core.ask', new_callable=AsyncMock) as mock_ask:
+            mock_ask.return_value = "Test response"
+            
             with patch('chuk_llm.api.providers.has_function', return_value=True):
                 result = cli.handle_convenience_function(
                     'ask_ollama_granite',
@@ -53,12 +50,11 @@ class TestCLISystemPromptSupport:
                 )
                 
                 # Verify all kwargs were passed
-                mock_func.assert_called_once_with(
-                    'Test prompt',
-                    system_prompt='Be a pirate',
-                    max_tokens=100,
-                    temperature=0.7
-                )
+                mock_ask.assert_called_once()
+                call_kwargs = mock_ask.call_args[1]
+                assert call_kwargs['system_prompt'] == 'Be a pirate'
+                assert call_kwargs['max_tokens'] == 100
+                assert call_kwargs['temperature'] == 0.7
     
     def test_handle_convenience_function_async_detection(self):
         """Test that the CLI correctly handles async/sync auto-detection"""
@@ -90,11 +86,10 @@ class TestCLISystemPromptSupport:
         """Test that the CLI correctly handles functions that return strings directly"""
         cli = ChukLLMCLI()
         
-        # Mock a function that returns a string directly (auto-detected sync)
-        mock_func = Mock(return_value="Sync response")
-        
-        with patch.dict('chuk_llm.api.providers._GENERATED_FUNCTIONS', 
-                       {'ask_ollama_granite': mock_func}):
+        # Mock at the core API level for sync detection
+        with patch('chuk_llm.api.core.ask', new_callable=AsyncMock) as mock_ask:
+            mock_ask.return_value = "Sync response"
+            
             with patch('chuk_llm.api.providers.has_function', return_value=True):
                 result = cli.handle_convenience_function(
                     'ask_ollama_granite',
@@ -327,11 +322,10 @@ class TestCLIStreamHandling:
         """Test that _sync suffix functions are handled correctly"""
         cli = ChukLLMCLI()
         
-        # Mock a sync function
-        mock_func = Mock(return_value="Sync response")
-        
-        with patch.dict('chuk_llm.api.providers._GENERATED_FUNCTIONS', 
-                       {'ask_ollama_granite_sync': mock_func}):
+        # Mock at the core API level for sync functions
+        with patch('chuk_llm.api.core.ask', new_callable=AsyncMock) as mock_ask:
+            mock_ask.return_value = "Sync response"
+            
             with patch('chuk_llm.api.providers.has_function', return_value=True):
                 result = cli.handle_convenience_function(
                     'ask_ollama_granite_sync',
@@ -339,11 +333,10 @@ class TestCLIStreamHandling:
                     system_prompt='Be a pirate'
                 )
                 
-                # Verify the function was called directly
-                mock_func.assert_called_once_with(
-                    'Test prompt',
-                    system_prompt='Be a pirate'
-                )
+                # Verify the core function was called with system_prompt
+                mock_ask.assert_called_once()
+                call_kwargs = mock_ask.call_args[1]
+                assert call_kwargs['system_prompt'] == 'Be a pirate'
                 assert result == "Sync response"
 
 

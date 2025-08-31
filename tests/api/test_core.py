@@ -90,6 +90,9 @@ class TestAskFunction:
                     )
                     mock_config_manager.get_api_key.return_value = "sk-test123"
                     mock_config_manager.supports_feature.return_value = True
+                    mock_config_manager.get_global_aliases.return_value = {}
+                    # Mock _ensure_model_available to return the model unchanged
+                    mock_config_manager._ensure_model_available.return_value = "gpt-4"
                     mock_get_config.return_value = mock_config_manager
 
                     with patch("chuk_llm.api.core.ConfigValidator") as mock_validator:
@@ -469,6 +472,8 @@ class TestStreamFunction:
                 with patch("chuk_llm.api.core.get_config") as mock_get_config:
                     mock_config_manager = Mock()
                     mock_config_manager.supports_feature.return_value = True
+                    mock_config_manager.get_global_aliases.return_value = {}
+                    mock_config_manager._ensure_model_available.return_value = "gpt-4"
                     mock_get_config.return_value = mock_config_manager
 
                     with patch(
@@ -542,6 +547,8 @@ class TestStreamFunction:
                 with patch("chuk_llm.api.core.get_config") as mock_get_config:
                     mock_config_manager = Mock()
                     mock_config_manager.supports_feature.return_value = True
+                    mock_config_manager.get_global_aliases.return_value = {}
+                    mock_config_manager._ensure_model_available.return_value = "gpt-4"
                     mock_get_config.return_value = mock_config_manager
 
                     with patch("chuk_llm.api.core.ask") as mock_ask:

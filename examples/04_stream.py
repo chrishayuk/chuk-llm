@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from chuk_llm import stream_anthropic_sonnet, stream_openai_gpt4o_mini
+from chuk_llm import stream_anthropic_sonnet, stream_openai_gpt_4o_mini
 
 
 async def main():
@@ -17,7 +17,7 @@ async def main():
 
     # Stream from OpenAI
     print("Streaming from OpenAI:")
-    async for chunk in stream_openai_gpt4o_mini("Write a haiku about AI"):
+    async for chunk in stream_openai_gpt_4o_mini("Write a haiku about AI"):
         print(chunk, end="", flush=True)
     print("\n")
 
