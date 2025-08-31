@@ -49,15 +49,56 @@ pip install chuk_llm[all]
 ```bash
 # Zero installation required - try it instantly with uv!
 uvx chuk-llm stream_ollama_gpt_oss "What is Python?"
+
+# Or use convenience functions directly
+uvx chuk-llm ask_ollama_granite3_3 "What is machine learning?"
 ```
 
 Or in Python:
 ```python
-from chuk_llm import quick_question
+from chuk_llm import quick_question, ask_sync
 
 # Ultra-simple one-liner
 answer = quick_question("What is 2+2?")
 print(answer)  # "2 + 2 equals 4."
+
+# Simple synchronous usage
+response = ask_sync("Tell me a joke")
+print(response)
+```
+
+### 🎯 Getting Started - Pick Your Style
+
+```python
+# 1️⃣ Simplest - Let ChukLLM choose the provider
+from chuk_llm import quick_question
+answer = quick_question("What is the capital of France?")
+
+# 2️⃣ Direct Provider Functions (Auto-generated)
+from chuk_llm import ask_ollama_granite3_3, ask_openai_gpt4o_mini
+response = ask_ollama_granite3_3("Explain Python in one sentence")
+response = ask_openai_gpt4o_mini("What's the weather like?")
+
+# 3️⃣ Flexible API with provider selection
+from chuk_llm import ask_sync
+response = ask_sync("Tell me a story", provider="openai", model="gpt-4o")
+response = ask_sync("Explain quantum physics", provider="anthropic", model="claude-3-sonnet")
+
+# 4️⃣ Async for high-performance apps
+import asyncio
+from chuk_llm import ask
+
+async def main():
+    response = await ask("What is AI?", provider="gemini")
+    print(response)
+
+asyncio.run(main())
+
+# 5️⃣ Streaming for real-time output
+from chuk_llm import stream_sync_iter
+
+for chunk in stream_sync_iter("Write a poem about code", provider="ollama"):
+    print(chunk, end="", flush=True)
 ```
 
 ## 🤖 NEW: Smart Sync/Async Auto-Detection
@@ -356,6 +397,54 @@ uvx chuk-llm ask "Test GPT-5" --provider openai --model gpt-5
 | **LM Studio** | Desktop model server | Personal use |
 | **Text Generation WebUI** | Gradio-based UI | Experimentation |
 
+## 🎭 System Prompts - Control AI Personality
+
+System prompts let you define the AI's personality, behavior, and response style:
+
+```python
+from chuk_llm import ask_sync, ask_ollama_granite3_3
+
+# Make the AI respond like a pirate
+pirate_prompt = """You are a pirate captain. Always speak like a pirate with 'arr', 
+'matey', 'ahoy', and other pirate expressions. Be dramatic and mention the sea."""
+
+response = ask_ollama_granite3_3(
+    "What is Python programming?",
+    system_prompt=pirate_prompt
+)
+print(response)  # "Arr matey! Python be a mighty fine programming language..."
+
+# Professional technical writer
+tech_prompt = "You are a technical documentation expert. Be precise, clear, and use proper terminology."
+response = ask_sync(
+    "Explain REST APIs",
+    provider="openai",
+    system_prompt=tech_prompt
+)
+
+# Streaming with system prompt
+async def stream_with_personality():
+    async for chunk in stream(
+        "Tell me about databases",
+        provider="ollama",
+        model="granite",
+        system_prompt="You are a database expert. Use SQL examples in your explanations."
+    ):
+        print(chunk, end="", flush=True)
+```
+
+CLI with system prompts:
+```bash
+# Short form
+chuk-llm ask "What is coding?" -p ollama -m granite3.3 -s "You are a pirate"
+
+# Long form  
+chuk-llm ask "Explain databases" --provider openai --system-prompt "You are a 5-year-old"
+
+# With convenience functions
+chuk-llm ask_ollama_granite "What is AI?" --system-prompt "Be extremely technical"
+```
+
 ## 🛠️ Advanced Features
 
 ### Real-time Tool Streaming
@@ -402,27 +491,61 @@ async def stream_with_tools():
 asyncio.run(stream_with_tools())
 ```
 
-### Conversations with Memory
+### Conversations with Memory & Branching
 
 ```python
 from chuk_llm import conversation
+import asyncio
 
 async def chat_example():
-    # Conversation with automatic session tracking
-    async with conversation(provider="openai", model="gpt-5") as chat:
-        await chat.say("My name is Alice")
+    # Start a conversation with automatic session tracking
+    async with conversation(provider="openai", model="gpt-4o") as chat:
+        await chat.say("My name is Alice and I'm learning Python")
         response = await chat.say("What's my name?")
-        # Remembers: "Your name is Alice"
+        print(response)  # "Your name is Alice"
         
-        # Save conversation
+        # Create a branch to explore different paths
+        branch_id = await chat.branch("explore_web_dev")
+        
+        # Main conversation continues with Python
+        await chat.say("What Python framework should I learn first?")
+        
+        # Switch to the branch for web development
+        await chat.switch_branch("explore_web_dev")
+        await chat.say("Actually, I want to learn web development instead")
+        response = await chat.say("What should I start with?")
+        print(response)  # Web development advice
+        
+        # Switch back to main branch
+        await chat.switch_branch("main")
+        response = await chat.say("What were we discussing?")
+        print(response)  # Back to Python discussion
+        
+        # Save conversation with all branches
         conversation_id = await chat.save()
         
-    # Resume later
+    # Resume later with full history
     async with conversation(resume_from=conversation_id) as chat:
-        response = await chat.say("Do you remember me?")
-        # Still remembers the context!
+        # List available branches
+        branches = await chat.list_branches()
+        print(f"Available branches: {branches}")
+        
+        response = await chat.say("Do you remember what I'm learning?")
+        print(response)  # Still remembers Python context
 
 asyncio.run(chat_example())
+```
+
+Sync conversation API:
+```python
+from chuk_llm import conversation_sync
+
+# Simpler sync version for scripts
+with conversation_sync(provider="ollama", model="granite3.3") as chat:
+    chat.say("I need help with a recipe")
+    chat.say("I have tomatoes, pasta, and garlic")
+    response = chat.say("What can I make?")
+    print(response)
 ```
 
 ### Dynamic Model Discovery
@@ -499,6 +622,52 @@ for msg in history:
     print(f"{msg['role']}: {msg['content'][:50]}...")
 ```
 
+## 🏷️ Model Aliases - Simplify Your Life
+
+ChukLLM supports global and provider-specific aliases to make model names easier to remember:
+
+```python
+from chuk_llm import ask_sync
+
+# Global aliases work across providers
+response = ask_sync("Hello", provider="ollama", model="granite")  # Resolves to granite3.3
+response = ask_sync("Hello", provider="openai", model="gpt")      # Resolves to gpt-4o-mini  
+response = ask_sync("Hello", provider="anthropic", model="claude") # Resolves to claude-3-sonnet
+
+# Direct alias functions (auto-generated)
+from chuk_llm import ask_granite, ask_claude, ask_gpt
+response = ask_granite("What is Python?")  # Uses ollama/granite3.3
+response = ask_claude("Explain REST APIs")  # Uses anthropic/claude-3-sonnet
+response = ask_gpt("Tell me a joke")       # Uses openai/gpt-4o-mini
+```
+
+CLI with aliases:
+```bash
+# Global aliases as commands
+chuk-llm ask_granite "What is machine learning?"
+chuk-llm ask_claude "Explain quantum computing"
+chuk-llm ask_gpt "Write a haiku"
+
+# Using aliases with providers
+chuk-llm ask "Hello" --provider ollama --model granite
+chuk-llm ask "Test" --provider openai --model gpt
+```
+
+Configure your own aliases in `providers.yaml`:
+```yaml
+__global_aliases__:
+  # Your custom aliases
+  fast: ollama/granite3.3
+  smart: openai/gpt-4o
+  creative: anthropic/claude-3-opus
+  
+ollama:
+  model_aliases:
+    # Provider-specific aliases
+    local: granite3.3
+    quick: llama3.2
+```
+
 ## 🔧 Configuration
 
 ### Environment Variables
@@ -570,6 +739,73 @@ switch_provider("anthropic", model="claude-4-sonnet")
 | `uv add chuk_llm[cli]` | Core + Enhanced CLI | CLI tools |
 | `uv add chuk_llm[all]` | Everything | Full features |
 | `pip install chuk_llm[all]` | Everything (alternative) | If not using uv |
+
+## 🔍 Troubleshooting
+
+### Common Issues and Solutions
+
+```python
+# Issue: "Provider not found"
+# Solution: Check available providers
+from chuk_llm import list_providers
+print(list_providers())  # Shows all configured providers
+
+# Issue: "Model not found"  
+# Solution: Check available models for a provider
+from chuk_llm import list_models
+print(list_models("openai"))  # Shows ['gpt-4o', 'gpt-4o-mini', ...]
+
+# Issue: Ollama functions not appearing
+# Solution: Trigger discovery
+from chuk_llm.api.providers import trigger_ollama_discovery_and_refresh
+trigger_ollama_discovery_and_refresh()
+
+# Issue: API key not configured
+# Solution: Set environment variable or use config
+import os
+os.environ['OPENAI_API_KEY'] = 'your-key'
+# Or use dynamic registration
+from chuk_llm import register_provider
+register_provider("openai", api_key="your-key")
+
+# Issue: Connection timeouts
+# Solution: Increase timeout
+from chuk_llm import ask_sync
+response = ask_sync("Hello", timeout=60)  # 60 second timeout
+
+# Issue: Rate limiting
+# Solution: Add retry logic
+import time
+for attempt in range(3):
+    try:
+        response = ask_sync("Hello")
+        break
+    except Exception as e:
+        if "rate limit" in str(e).lower():
+            time.sleep(2 ** attempt)  # Exponential backoff
+        else:
+            raise
+```
+
+### Debugging Tips
+
+```bash
+# Enable verbose mode in CLI
+chuk-llm ask "test" --provider openai --verbose
+
+# Check your configuration
+chuk-llm config
+
+# Test provider connectivity
+chuk-llm test openai
+chuk-llm test ollama
+
+# List all available functions
+chuk-llm functions
+
+# Check discovered models
+chuk-llm discovered ollama
+```
 
 ## 🤝 Contributing
 
@@ -644,6 +880,133 @@ for provider, result in results.items():
 ```
 
 ## 📚 Examples
+
+### 🖼️ Vision - Analyze Images
+
+```python
+from chuk_llm import ask_openai_gpt4o, ask_anthropic_sonnet, ask_gemini_flash
+
+# Analyze local image file
+response = ask_openai_gpt4o(
+    "What objects do you see in this image?",
+    "photo.png"  # Supports PNG, JPG, etc.
+)
+
+# With image bytes
+from PIL import Image
+import io
+
+img = Image.new("RGB", (200, 200), color="blue")
+img_bytes = io.BytesIO()
+img.save(img_bytes, format="PNG")
+
+response = ask_anthropic_sonnet(
+    "What color is this image?",
+    img_bytes.getvalue()
+)
+
+# Compare vision models
+providers = [
+    ("GPT-4o", ask_openai_gpt4o),
+    ("Claude", ask_anthropic_sonnet),
+    ("Gemini", ask_gemini_flash),
+]
+
+for name, func in providers:
+    response = func("Describe this chart", "sales_chart.png")
+    print(f"{name}: {response[:100]}...")
+```
+
+### 🔄 Multi-Provider Workflows
+
+```python
+from chuk_llm import ask_sync
+
+# Use different providers for different tasks
+def analyze_document(text):
+    # Use GPT for extraction
+    summary = ask_sync(
+        f"Summarize this text: {text}",
+        provider="openai",
+        model="gpt-4o-mini"
+    )
+    
+    # Use Claude for analysis
+    analysis = ask_sync(
+        f"Analyze the sentiment of: {summary}",
+        provider="anthropic",
+        model="claude-3-sonnet"
+    )
+    
+    # Use local model for classification
+    category = ask_sync(
+        f"Categorize this into one word: {summary}",
+        provider="ollama",
+        model="granite3.3"
+    )
+    
+    return {
+        "summary": summary,
+        "sentiment": analysis,
+        "category": category
+    }
+```
+
+### 🎯 Model-Specific Features
+
+```python
+# GPT-5 and O1/O3 Reasoning Models
+from chuk_llm import ask_sync
+
+# GPT-5 - No temperature or max_tokens needed
+response = ask_sync(
+    "Solve this complex problem step by step...",
+    provider="openai",
+    model="gpt-5"
+)
+
+# O1 Reasoning - Longer thinking time
+response = ask_sync(
+    "Explain the solution to this puzzle...",
+    provider="openai",
+    model="o1-preview",
+    # O1 models think for 10-30 seconds
+)
+
+# DeepSeek Reasoner - Extended reasoning
+response = ask_sync(
+    "Prove this mathematical theorem...",
+    provider="deepseek",
+    model="deepseek-reasoner",
+    # Can take 30-60 seconds for complex reasoning
+)
+
+# Mistral Magistral with thinking tags
+response = ask_sync(
+    "Debug this code and explain your reasoning...",
+    provider="mistral",
+    model="mistral-large-2411"
+    # Returns <think> tags with reasoning process
+)
+```
+
+### 📝 Structured Output with JSON Mode
+
+```python
+from chuk_llm import ask_json
+
+# Get structured JSON responses
+recipe = ask_json(
+    "Give me a recipe for chocolate cake with ingredients and steps",
+    provider="openai"
+)
+
+print(recipe["ingredients"])  # List of ingredients
+print(recipe["steps"])  # List of steps
+
+# Works with CLI too
+# chuk-llm ask "List 3 colors" --json --provider openai
+```
 
 ### Compare Multiple Providers
 
