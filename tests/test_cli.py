@@ -243,18 +243,21 @@ class TestCLICommandNormalization:
             mock_cli = MockCLI.return_value
             mock_cli.handle_convenience_function.return_value = "Response"
             
+            # Mock has_function to return True so we don't exit early
             with patch('chuk_llm.api.providers.has_function', return_value=True):
                 with patch('chuk_llm.cli.parse_convenience_function', 
                           return_value=('ollama', 'granite3.3', False, False)):
-                    try:
-                        main()
-                    except SystemExit:
-                        pass
-                    
-                    # Verify the function was called with normalized name
-                    mock_cli.handle_convenience_function.assert_called()
-                    call_args = mock_cli.handle_convenience_function.call_args[0]
-                    assert call_args[0] == 'ask_ollama_granite3_3'  # Normalized
+                    # Mock trigger_discovery_for_provider to avoid actual discovery
+                    with patch('chuk_llm.cli.trigger_discovery_for_provider'):
+                        try:
+                            main()
+                        except SystemExit:
+                            pass
+                        
+                        # Verify the function was called with normalized name
+                        mock_cli.handle_convenience_function.assert_called()
+                        call_args = mock_cli.handle_convenience_function.call_args[0]
+                        assert call_args[0] == 'ask_ollama_granite3_3'  # Normalized
         
         sys.argv = original_argv
     
@@ -272,18 +275,21 @@ class TestCLICommandNormalization:
             mock_cli = MockCLI.return_value
             mock_cli.handle_convenience_function.return_value = "Response"
             
+            # Mock has_function to return True so we don't exit early
             with patch('chuk_llm.api.providers.has_function', return_value=True):
                 with patch('chuk_llm.cli.parse_convenience_function', 
                           return_value=('ollama', 'granite3_3_latest', False, False)):
-                    try:
-                        main()
-                    except SystemExit:
-                        pass
-                    
-                    # Verify the function was called with normalized name
-                    mock_cli.handle_convenience_function.assert_called()
-                    call_args = mock_cli.handle_convenience_function.call_args[0]
-                    assert call_args[0] == 'ask_ollama_granite3_3_latest'  # Normalized
+                    # Mock trigger_discovery_for_provider to avoid actual discovery
+                    with patch('chuk_llm.cli.trigger_discovery_for_provider'):
+                        try:
+                            main()
+                        except SystemExit:
+                            pass
+                        
+                        # Verify the function was called with normalized name
+                        mock_cli.handle_convenience_function.assert_called()
+                        call_args = mock_cli.handle_convenience_function.call_args[0]
+                        assert call_args[0] == 'ask_ollama_granite3_3_latest'  # Normalized
         
         sys.argv = original_argv
 
