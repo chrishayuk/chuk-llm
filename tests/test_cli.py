@@ -243,8 +243,8 @@ class TestCLICommandNormalization:
             mock_cli = MockCLI.return_value
             mock_cli.handle_convenience_function.return_value = "Response"
             
-            # Mock has_function to return True so we don't exit early
-            with patch('chuk_llm.api.providers.has_function', return_value=True):
+            # Mock has_function at the CLI module level to return True so we don't exit early
+            with patch('chuk_llm.cli.has_function', return_value=True):
                 with patch('chuk_llm.cli.parse_convenience_function', 
                           return_value=('ollama', 'granite3.3', False, False)):
                     # Mock trigger_discovery_for_provider to avoid actual discovery
@@ -275,8 +275,8 @@ class TestCLICommandNormalization:
             mock_cli = MockCLI.return_value
             mock_cli.handle_convenience_function.return_value = "Response"
             
-            # Mock has_function to return True so we don't exit early
-            with patch('chuk_llm.api.providers.has_function', return_value=True):
+            # Mock has_function at the CLI module level to return True so we don't exit early
+            with patch('chuk_llm.cli.has_function', return_value=True):
                 with patch('chuk_llm.cli.parse_convenience_function', 
                           return_value=('ollama', 'granite3_3_latest', False, False)):
                     # Mock trigger_discovery_for_provider to avoid actual discovery
