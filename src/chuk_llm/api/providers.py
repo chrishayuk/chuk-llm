@@ -480,11 +480,11 @@ def _prepare_vision_message(
 def _create_provider_function(
     provider_name: str, model_name: str | None = None, supports_vision: bool = False
 ):
-    """Create async provider function with optional vision support"""
+    """Create smart provider function that auto-detects sync/async context"""
     if model_name:
         if supports_vision:
 
-            async def provider_model_func(
+            async def provider_model_func_async(
                 prompt: str, image: str | Path | bytes | None = None, **kwargs
             ) -> str:
                 from .core import ask
@@ -497,20 +497,70 @@ def _create_provider_function(
                 return await ask(
                     prompt, provider=provider_name, model=model_name, **kwargs
                 )
+
+            def provider_model_func(
+                prompt: str, image: str | Path | bytes | None = None, **kwargs
+            ):
+                """Smart wrapper that auto-detects sync/async context"""
+                import asyncio
+
+                # Check if we're in an async context
+                try:
+                    # Try to get the running loop
+                    asyncio.get_running_loop()
+                    # If we get here, we're in an async context
+                    # Return the coroutine for await
+                    return provider_model_func_async(prompt, image, **kwargs)
+                except RuntimeError:
+                    # No running loop, we're in sync context
+                    # Use event loop manager for clean sync execution
+                    try:
+                        from .event_loop_manager import run_sync
+
+                        return run_sync(
+                            provider_model_func_async(prompt, image, **kwargs)
+                        )
+                    except ImportError:
+                        # Fallback to _run_sync if event loop manager not available
+                        return _run_sync(
+                            provider_model_func_async(prompt, image, **kwargs)
+                        )
         else:
 
-            async def provider_model_func(prompt: str, **kwargs) -> str:
+            async def provider_model_func_async(prompt: str, **kwargs) -> str:
                 from .core import ask
 
                 return await ask(
                     prompt, provider=provider_name, model=model_name, **kwargs
                 )
 
+            def provider_model_func(prompt: str, **kwargs):
+                """Smart wrapper that auto-detects sync/async context"""
+                import asyncio
+
+                # Check if we're in an async context
+                try:
+                    # Try to get the running loop
+                    asyncio.get_running_loop()
+                    # If we get here, we're in an async context
+                    # Return the coroutine for await
+                    return provider_model_func_async(prompt, **kwargs)
+                except RuntimeError:
+                    # No running loop, we're in sync context
+                    # Use event loop manager for clean sync execution
+                    try:
+                        from .event_loop_manager import run_sync
+
+                        return run_sync(provider_model_func_async(prompt, **kwargs))
+                    except ImportError:
+                        # Fallback to _run_sync if event loop manager not available
+                        return _run_sync(provider_model_func_async(prompt, **kwargs))
+
         return provider_model_func
     else:
         if supports_vision:
 
-            async def provider_func(
+            async def provider_func_async(
                 prompt: str,
                 image: str | Path | bytes | None = None,
                 model: str | None = None,
@@ -524,14 +574,67 @@ def _create_provider_function(
                     )
                     kwargs["messages"] = [vision_message]
                 return await ask(prompt, provider=provider_name, model=model, **kwargs)
+
+            def provider_func(
+                prompt: str,
+                image: str | Path | bytes | None = None,
+                model: str | None = None,
+                **kwargs,
+            ):
+                """Smart wrapper that auto-detects sync/async context"""
+                import asyncio
+
+                # Check if we're in an async context
+                try:
+                    # Try to get the running loop
+                    asyncio.get_running_loop()
+                    # If we get here, we're in an async context
+                    # Return the coroutine for await
+                    return provider_func_async(prompt, image, model, **kwargs)
+                except RuntimeError:
+                    # No running loop, we're in sync context
+                    # Use event loop manager for clean sync execution
+                    try:
+                        from .event_loop_manager import run_sync
+
+                        return run_sync(
+                            provider_func_async(prompt, image, model, **kwargs)
+                        )
+                    except ImportError:
+                        # Fallback to _run_sync if event loop manager not available
+                        return _run_sync(
+                            provider_func_async(prompt, image, model, **kwargs)
+                        )
         else:
 
-            async def provider_func(
+            async def provider_func_async(
                 prompt: str, model: str | None = None, **kwargs
             ) -> str:
                 from .core import ask
 
                 return await ask(prompt, provider=provider_name, model=model, **kwargs)
+
+            def provider_func(prompt: str, model: str | None = None, **kwargs):
+                """Smart wrapper that auto-detects sync/async context"""
+                import asyncio
+
+                # Check if we're in an async context
+                try:
+                    # Try to get the running loop
+                    asyncio.get_running_loop()
+                    # If we get here, we're in an async context
+                    # Return the coroutine for await
+                    return provider_func_async(prompt, model, **kwargs)
+                except RuntimeError:
+                    # No running loop, we're in sync context
+                    # Use event loop manager for clean sync execution
+                    try:
+                        from .event_loop_manager import run_sync
+
+                        return run_sync(provider_func_async(prompt, model, **kwargs))
+                    except ImportError:
+                        # Fallback to _run_sync if event loop manager not available
+                        return _run_sync(provider_func_async(prompt, model, **kwargs))
 
         return provider_func
 

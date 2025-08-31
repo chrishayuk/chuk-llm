@@ -228,15 +228,56 @@ class ChukLLMCLI:
         stream: bool = True,
         base_url: str | None = None,
         api_key: str | None = None,
+        system_prompt: str | None = None,
     ) -> str:
         """Ask a question to a specific model using sync API with optional streaming"""
         try:
+            # Try to resolve the model name
+            if model:
+                # Check if the model is a global alias that points to a different provider
+                global_aliases = self.config.get_global_aliases()
+                if model in global_aliases:
+                    alias_target = global_aliases[model]
+                    if "/" in alias_target:
+                        # It's a provider/model alias
+                        alias_provider, alias_model = alias_target.split("/", 1)
+                        if alias_provider == provider:
+                            # Same provider, just use the aliased model
+                            model = alias_model
+                            if self.verbose:
+                                self.print_rich(
+                                    f"📝 Using aliased model '{model}' for global alias",
+                                    "info",
+                                )
+                        # If different provider, we keep the original model and let it fail
+                        # (user explicitly specified a provider)
+
+                # Now try resolution with the config (handles provider-specific aliases and discovery)
+                resolved_model = self.config._ensure_model_available(provider, model)
+
+                if resolved_model and resolved_model != model:
+                    if self.verbose:
+                        self.print_rich(
+                            f"📝 Using model '{resolved_model}' for '{model}'", "info"
+                        )
+                    model = resolved_model
+                elif not resolved_model:
+                    # Model couldn't be resolved
+                    # Let it pass through - the API will give a proper error message
+                    if self.verbose:
+                        self.print_rich(
+                            f"⚠️ Model '{model}' not found in config, trying anyway",
+                            "warning",
+                        )
+
             # Apply dynamic configuration if provided
             extra_kwargs = {}
             if base_url:
                 extra_kwargs["base_url"] = base_url
             if api_key:
                 extra_kwargs["api_key"] = api_key
+            if system_prompt:
+                extra_kwargs["system_prompt"] = system_prompt
 
             if stream and not json_mode:
                 # Use streaming (this prints as it goes)
@@ -299,7 +340,9 @@ class ChukLLMCLI:
         except Exception as e:
             raise Exception(f"Alias or provider '{alias}' not available: {e}") from e
 
-    def handle_convenience_function(self, function_name: str, prompt: str) -> str:
+    def handle_convenience_function(
+        self, function_name: str, prompt: str, **kwargs
+    ) -> str:
         """Handle convenience function calls like ask_ollama_gemma3"""
         try:
             # Check if the function exists
@@ -322,7 +365,7 @@ class ChukLLMCLI:
             # Handle different function types
             if function_name.endswith("_sync"):
                 # Sync function - call directly
-                response = func(prompt)
+                response = func(prompt, **kwargs)
                 print(response)
                 return response
             elif function_name.startswith("stream_"):
@@ -331,7 +374,7 @@ class ChukLLMCLI:
 
                 async def stream_and_print() -> None:
                     full_response = ""
-                    async for chunk in func(prompt):
+                    async for chunk in func(prompt, **kwargs):
                         if isinstance(chunk, dict):
                             content = chunk.get("response", "")
                         else:
@@ -343,10 +386,21 @@ class ChukLLMCLI:
 
                 return run_sync(stream_and_print())
             else:
-                # Regular async function - run and print result
-                from .api.event_loop_manager import run_sync
+                # Regular function - might be sync or async due to auto-detection
+                result = func(prompt, **kwargs)
 
-                response = run_sync(func(prompt))
+                # Check if it's a coroutine (async) or already a result (sync)
+                import inspect
+
+                if inspect.iscoroutine(result):
+                    # It's async, need to run it
+                    from .api.event_loop_manager import run_sync
+
+                    response = run_sync(result)
+                else:
+                    # It's already a result (auto-detected sync context)
+                    response = result
+
                 print(response)
                 return response
 
@@ -690,10 +744,60 @@ class ChukLLMCLI:
         except Exception as e:
             self.print_rich(f"Error discovering models for {provider}: {e}", "error")
 
-    def show_functions(self) -> None:
+    def show_functions(self, provider: str = None) -> None:
         """List all available provider functions"""
         try:
             all_functions = list_provider_functions()
+
+            # Filter by provider if specified
+            if provider:
+                # Trigger discovery for the provider first
+                self.print_rich(
+                    f"🔍 Fetching available {provider} functions from API...", "info"
+                )
+
+                discovered_count = 0
+                if provider == "ollama":
+                    try:
+                        from chuk_llm.api.providers import (
+                            trigger_ollama_discovery_and_refresh,
+                        )
+
+                        new_functions = trigger_ollama_discovery_and_refresh()
+                        discovered_count = len(new_functions)
+                    except Exception as e:
+                        self.print_rich(
+                            f"⚠️  Ollama discovery unavailable: {e}", "error"
+                        )
+                else:
+                    try:
+                        success = trigger_discovery_for_provider(provider, quiet=False)
+                        if success:
+                            discovered = get_discovered_functions(provider)
+                            if discovered and provider in discovered:
+                                discovered_count = len(discovered[provider])
+                    except Exception as e:
+                        self.print_rich(
+                            f"⚠️  Discovery failed for {provider}: {e}", "error"
+                        )
+
+                # Filter functions for this provider
+                provider_prefix = f"ask_{provider}_"
+                stream_prefix = f"stream_{provider}_"
+                all_functions = [
+                    f
+                    for f in all_functions
+                    if f.startswith(provider_prefix) or f.startswith(stream_prefix)
+                ]
+
+            if not all_functions:
+                if provider:
+                    self.print_rich(
+                        f"No functions found for provider '{provider}'", "error"
+                    )
+                else:
+                    self.print_rich("No functions found", "error")
+                return
 
             # Group by type
             ask_funcs = [
@@ -701,24 +805,94 @@ class ChukLLMCLI:
                 for f in all_functions
                 if f.startswith("ask_") and not f.endswith("_sync")
             ]
-            [f for f in all_functions if f.startswith("stream_")]
-            sync_funcs = [f for f in all_functions if f.endswith("_sync")]
+            stream_funcs = [
+                f
+                for f in all_functions
+                if f.startswith("stream_") and not f.endswith("_sync")
+            ]
+            ask_sync_funcs = [
+                f for f in all_functions if f.startswith("ask_") and f.endswith("_sync")
+            ]
+            stream_sync_funcs = [
+                f
+                for f in all_functions
+                if f.startswith("stream_") and f.endswith("_sync")
+            ]
 
-            self.print_rich(f"Total provider functions: {len(all_functions)}", "info")
+            # Calculate counts
+            async_count = len(ask_funcs) + len(stream_funcs)
+            sync_count = len(ask_sync_funcs) + len(stream_sync_funcs)
 
-            if ask_funcs:
-                self.print_rich(f"\nAsync functions ({len(ask_funcs)}):", "info")
-                for func in ask_funcs[:10]:  # Show first 10
-                    self.print_rich(f'  - chuk-llm {func} "your question"')
-                if len(ask_funcs) > 10:
-                    self.print_rich(f"  ... and {len(ask_funcs) - 10} more")
+            # Get discovered functions to mark source
+            discovered_all = get_discovered_functions(provider)
+            discovered_funcs = set()
+            if discovered_all:
+                for prov, funcs in discovered_all.items():
+                    if not provider or prov == provider:
+                        discovered_funcs.update(funcs.keys())
 
-            if sync_funcs:
-                self.print_rich(f"\nSync functions ({len(sync_funcs)}):", "info")
-                for func in sync_funcs[:10]:  # Show first 10
-                    self.print_rich(f'  - chuk-llm {func} "your question"')
-                if len(sync_funcs) > 10:
-                    self.print_rich(f"  ... and {len(sync_funcs) - 10} more")
+            # Build the table
+            rows = []
+
+            # Add async functions
+            for func in sorted(ask_funcs):
+                source = (
+                    "🔍 Discovered" if func in discovered_funcs else "📋 Configured"
+                )
+                rows.append(["ask", func, source, "async"])
+
+            for func in sorted(stream_funcs):
+                source = (
+                    "🔍 Discovered" if func in discovered_funcs else "📋 Configured"
+                )
+                rows.append(["stream", func, source, "async"])
+
+            # Add separator
+            if ask_funcs or stream_funcs:
+                rows.append(["", "--- SYNC FUNCTIONS ---", "", ""])
+
+            # Add sync functions
+            for func in sorted(ask_sync_funcs):
+                source = (
+                    "🔍 Discovered" if func in discovered_funcs else "📋 Configured"
+                )
+                rows.append(["ask", func, source, "sync"])
+
+            for func in sorted(stream_sync_funcs):
+                source = (
+                    "🔍 Discovered" if func in discovered_funcs else "📋 Configured"
+                )
+                rows.append(["stream", func, source, "sync"])
+
+            # Create title
+            if provider:
+                configured_count = len(
+                    [f for f in all_functions if f not in discovered_funcs]
+                )
+                title = f"Functions for {provider} ({len(all_functions)} total, {configured_count} configured, {discovered_count} discovered)"
+            else:
+                title = f"All Provider Functions ({len(all_functions)} total, {async_count} async, {sync_count} sync)"
+
+            # Print the table
+            self.print_table(["Type", "Function", "Source", "Mode"], rows, title)
+
+            # Add usage examples below the table
+            if rows:
+                self.print_rich("\n📖 Usage examples:", "info")
+                if ask_funcs or ask_sync_funcs:
+                    example_func = ask_funcs[0] if ask_funcs else ask_sync_funcs[0]
+                    self.print_rich(f'  chuk-llm {example_func} "your question"')
+                if stream_funcs or stream_sync_funcs:
+                    example_func = (
+                        stream_funcs[0] if stream_funcs else stream_sync_funcs[0]
+                    )
+                    self.print_rich(f'  chuk-llm {example_func} "tell me a story"')
+
+            if provider == "ollama":
+                self.print_rich(
+                    "\n💡 Tip: Make sure Ollama is running to see available functions",
+                    "info",
+                )
 
         except Exception as e:
             self.print_rich(f"Error listing functions: {e}", "error")
@@ -916,22 +1090,27 @@ def main() -> None:
         return
 
     command = args[0]
+
+    # Normalize command name: convert dots to underscores for function names
+    # This allows users to type ask_ollama_granite3.3 instead of ask_ollama_granite3_3
+    normalized_command = command.replace(".", "_")
+
     # Update sys.argv to reflect the filtered args for subcommand parsing
     sys.argv = ["chuk-llm"] + args
 
     cli = ChukLLMCLI(verbose=verbose)
 
     # 🎯 AUTO-DISCOVERY: Check if this is a convenience function and trigger discovery if needed
-    parsed_convenience = parse_convenience_function(command)
+    parsed_convenience = parse_convenience_function(normalized_command)
     if parsed_convenience:
         provider, model, is_sync, is_stream = parsed_convenience
 
         # Check if function exists, if not trigger discovery silently
-        if not has_function(command):
+        if not has_function(normalized_command):
             trigger_discovery_for_provider(provider, quiet=True)
 
             # Check again after discovery
-            if not has_function(command):
+            if not has_function(normalized_command):
                 # Only show error if discovery didn't help
                 print(f"❌ Function '{command}' not available")
                 print(
@@ -942,25 +1121,83 @@ def main() -> None:
     try:
         # 🎯 Handle convenience functions first (ask_provider_model pattern)
         if parsed_convenience:
-            if len(args) < 2:
-                print(f'Usage: chuk-llm {command} "your question here"')
-                sys.exit(1)
+            # Parse arguments for convenience functions
+            parser = argparse.ArgumentParser(description=f"Use {command} function")
+            parser.add_argument("prompt", help="The question to ask")
+            parser.add_argument(
+                "--system-prompt",
+                "-s",
+                help="System prompt to set the AI's behavior/personality",
+            )
+            parser.add_argument(
+                "--max-tokens", type=int, help="Maximum tokens in response"
+            )
+            parser.add_argument(
+                "--temperature", type=float, help="Temperature for sampling"
+            )
 
-            prompt = args[1]
-            cli.handle_convenience_function(command, prompt)
-            return
+            try:
+                parsed_args = parser.parse_args(args[1:])
+
+                # Build kwargs from parsed args
+                kwargs = {}
+                if parsed_args.system_prompt:
+                    kwargs["system_prompt"] = parsed_args.system_prompt
+                if parsed_args.max_tokens:
+                    kwargs["max_tokens"] = parsed_args.max_tokens
+                if parsed_args.temperature:
+                    kwargs["temperature"] = parsed_args.temperature
+
+                cli.handle_convenience_function(
+                    normalized_command, parsed_args.prompt, **kwargs
+                )
+                return
+            except SystemExit:
+                # argparse calls sys.exit on error, catch and show usage
+                print(
+                    f'Usage: chuk-llm {command} "your question here" [--system-prompt "..."]'
+                )
+                sys.exit(1)
 
         # Handle ask_alias commands (ask_granite, ask_claude, etc.)
-        elif command.startswith("ask_"):
-            if len(args) < 2:
-                print(f'Usage: chuk-llm {command} "your question here"')
+        elif normalized_command.startswith("ask_"):
+            # Parse arguments for ask_alias commands
+            parser = argparse.ArgumentParser(description=f"Use {command} alias")
+            parser.add_argument("prompt", help="The question to ask")
+            parser.add_argument(
+                "--system-prompt",
+                "-s",
+                help="System prompt to set the AI's behavior/personality",
+            )
+            parser.add_argument(
+                "--max-tokens", type=int, help="Maximum tokens in response"
+            )
+            parser.add_argument(
+                "--temperature", type=float, help="Temperature for sampling"
+            )
+
+            try:
+                parsed_args = parser.parse_args(args[1:])
+
+                alias = normalized_command[4:]  # Remove 'ask_' prefix
+
+                # Build kwargs from parsed args
+                kwargs = {}
+                if parsed_args.system_prompt:
+                    kwargs["system_prompt"] = parsed_args.system_prompt
+                if parsed_args.max_tokens:
+                    kwargs["max_tokens"] = parsed_args.max_tokens
+                if parsed_args.temperature:
+                    kwargs["temperature"] = parsed_args.temperature
+
+                # Note: We don't need to print the response since streaming handles it
+                cli.handle_ask_alias(alias, parsed_args.prompt, **kwargs)
+            except SystemExit:
+                # argparse calls sys.exit on error, catch and show usage
+                print(
+                    f'Usage: chuk-llm {command} "your question here" [--system-prompt "..."]'
+                )
                 sys.exit(1)
-
-            alias = command[4:]  # Remove 'ask_' prefix
-            prompt = args[1]
-
-            # Note: We don't need to print the response since streaming handles it
-            cli.handle_ask_alias(alias, prompt)
 
         # Handle general ask command
         elif command == "ask":
@@ -981,6 +1218,11 @@ def main() -> None:
             )
             parser.add_argument(
                 "--no-stream", action="store_true", help="Disable streaming"
+            )
+            parser.add_argument(
+                "--system-prompt",
+                "-s",
+                help="System prompt to set the AI's behavior/personality",
             )
 
             try:
@@ -1009,6 +1251,7 @@ def main() -> None:
                     stream=not parsed_args.no_stream,
                     base_url=parsed_args.base_url,
                     api_key=parsed_args.api_key,
+                    system_prompt=parsed_args.system_prompt,
                 )
 
                 # The streaming methods should already print, but ensure we have output
@@ -1024,6 +1267,7 @@ def main() -> None:
                         stream=False,
                         base_url=parsed_args.base_url,
                         api_key=parsed_args.api_key,
+                        system_prompt=parsed_args.system_prompt,
                     )
                     if response:
                         print(response)
@@ -1059,7 +1303,9 @@ def main() -> None:
             cli.discover_models(args[1])
 
         elif command == "functions":
-            cli.show_functions()
+            # Support optional provider filter like models command
+            provider = args[1] if len(args) > 1 else None
+            cli.show_functions(provider)
 
         elif command == "discovered":
             provider = args[1] if len(args) > 1 else None

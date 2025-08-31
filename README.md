@@ -9,6 +9,7 @@ A unified, production-ready Python library for Large Language Model (LLM) provid
 ✅ **🛠️ Advanced Tool Streaming** - Real-time tool calls with incremental JSON parsing  
 ✅ **200+ Auto-Generated Functions** - Every provider & model + discovered models  
 ✅ **🚀 GPT-5 & Reasoning Models** - Full support for GPT-5, O1, O3+ series, Claude 4, and GPT-OSS  
+✅ **🤖 Smart Sync/Async Detection** - Functions auto-detect context, no more coroutine confusion  
 ✅ **3-7x Performance Boost** - Concurrent requests vs sequential  
 ✅ **Real-time Streaming** - Token-by-token output as it's generated  
 ✅ **Memory Management** - Stateful conversations with context  
@@ -58,6 +59,43 @@ from chuk_llm import quick_question
 answer = quick_question("What is 2+2?")
 print(answer)  # "2 + 2 equals 4."
 ```
+
+## 🤖 NEW: Smart Sync/Async Auto-Detection
+
+ChukLLM's `ask_*` functions now automatically detect whether they're being called from sync or async context:
+
+```python
+from chuk_llm import ask_ollama_granite
+
+# ✅ Sync context - works without _sync suffix!
+result = ask_ollama_granite("What is Python?")
+print(result)  # Direct result, not a coroutine!
+
+# ✅ Async context - same function with await
+async def my_async_function():
+    result = await ask_ollama_granite("What is Python?")
+    return result
+
+# No more confusion! The same function works in both contexts
+```
+
+### Before vs After
+
+```python
+# ❌ OLD WAY - Confusing coroutine errors
+from chuk_llm import ask_ollama_granite
+print(ask_ollama_granite("Hello"))  # <coroutine object...> 😕
+
+# ❌ OLD WAY - Need to remember _sync suffix
+from chuk_llm import ask_ollama_granite_sync
+print(ask_ollama_granite_sync("Hello"))  # Works but verbose
+
+# ✅ NEW WAY - Just works!
+from chuk_llm import ask_ollama_granite
+print(ask_ollama_granite("Hello"))  # "Hello! How can I help?" 🎉
+```
+
+**Note:** Streaming functions (`stream_*`) remain async-only as streaming is inherently asynchronous.
 
 ## 🔌 NEW: OpenAI-Compatible Providers
 
@@ -255,8 +293,17 @@ chuk-llm ask_ollama_gpt_oss "Think through this step by step"
 chuk-llm ask_ollama_mistral_small_latest "Tell me a joke"
 chuk-llm stream_ollama_llama3_2 "Write a long explanation"
 
+# Dot notation is automatically converted to underscores
+chuk-llm ask_ollama_granite3.3 "What is AI?"  # Works with dots!
+chuk-llm ask_ollama_llama3.2 "Explain quantum computing"
+
 # JSON responses for structured output
-chuk-llm ask "List 3 Python libraries" --json --provider openai --model gpt-5
+chuk-llm ask "List 3 Python libraries as json " --json --provider openai --model gpt-5
+
+# Set system prompts to control AI personality
+chuk-llm ask "What is coding?" -p ollama -m granite3.3:latest -s "You are a pirate. Use pirate speak."
+chuk-llm ask "Explain databases" --provider openai --system-prompt "You are a 5-year-old. Use simple words."
+chuk-llm ask "Review my code" -p anthropic -s "Be extremely critical and thorough."
 
 # Provider and model management
 chuk-llm providers              # Show all available providers
@@ -267,6 +314,7 @@ chuk-llm discover ollama        # Discover new Ollama models
 # Configuration and diagnostics
 chuk-llm config                 # Show current configuration
 chuk-llm functions              # List all auto-generated functions
+chuk-llm functions ollama       # Filter functions by provider
 chuk-llm help                   # Comprehensive help
 
 # Use with uv for zero-install usage
@@ -387,11 +435,12 @@ ChukLLM automatically discovers and generates functions for available models:
 # ollama pull llama3.2
 
 from chuk_llm import (
-    ask_ollama_gpt_oss_sync,     # Auto-generated!
-    ask_ollama_llama3_2_sync,    # Auto-generated!
+    ask_ollama_gpt_oss,          # Auto-generated with smart detection!
+    ask_ollama_llama3_2,         # Works in both sync and async!
 )
 
-response = ask_ollama_gpt_oss_sync("Think through this problem")
+# No need for _sync suffix anymore!
+response = ask_ollama_gpt_oss("Think through this problem")
 
 # Trigger discovery manually
 from chuk_llm.api.providers import trigger_ollama_discovery_and_refresh
@@ -670,6 +719,27 @@ async def chatbot():
             print(f"Bot: {response}\n")
 
 asyncio.run(chatbot())
+```
+
+### Use System Prompts for Custom Personalities
+
+```python
+from chuk_llm import ask_sync, ask_ollama_granite
+
+# Make the AI respond with different personalities
+pirate_prompt = "You are a pirate captain. Speak in pirate dialect with 'arr' and 'matey'."
+response = ask_sync("What is Python?", provider="ollama", model="granite3.3:latest", 
+                   system_prompt=pirate_prompt)
+print(f"🏴‍☠️ {response}")
+
+# Works with auto-detection too!
+professor_prompt = "You are a university professor. Be academic and thorough."
+response = ask_ollama_granite("Explain recursion", system_prompt=professor_prompt)
+print(f"👨‍🏫 {response}")
+
+# CLI examples
+# chuk-llm ask "What is AI?" -p ollama -m granite3.3:latest -s "Explain like I'm 5"
+# chuk-llm ask "Debug this" --provider openai --system-prompt "You are a senior developer"
 ```
 
 ### Function Calling Example

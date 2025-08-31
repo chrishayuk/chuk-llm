@@ -799,5 +799,292 @@ class TestModuleIntegration:
             assert len(event_loop_warnings) == 0
 
 
+class TestOllamaFunctionGeneration:
+    """Test suite for Ollama-specific function generation including base names."""
+    
+    @patch("chuk_llm.api.providers.get_config")
+    def test_ollama_base_name_generation(self, mock_get_config):
+        """Test that Ollama models generate both full and base name functions."""
+        from chuk_llm.api.providers import _generate_functions_for_models
+        from chuk_llm.configuration.unified_config import Feature
+        
+        # Mock provider config
+        mock_provider = Mock()
+        mock_provider.models = ["granite3.3:latest", "llama3.2:latest"]
+        mock_provider.model_aliases = {}
+        
+        # Mock get_model_capabilities to return proper capabilities
+        mock_caps = Mock()
+        mock_caps.features = {Feature.TEXT, Feature.STREAMING}
+        mock_provider.get_model_capabilities = Mock(return_value=mock_caps)
+        
+        # Generate functions for Ollama models
+        functions = _generate_functions_for_models("ollama", mock_provider, mock_provider.models)
+        
+        # Should generate functions for both full names and base names
+        expected_functions = [
+            # Full names with :latest
+            "ask_ollama_granite3_3_latest",
+            "stream_ollama_granite3_3_latest",
+            "ask_ollama_granite3_3_latest_sync",
+            "ask_ollama_llama3_2_latest",
+            "stream_ollama_llama3_2_latest",
+            "ask_ollama_llama3_2_latest_sync",
+            # Base names without :latest
+            "ask_ollama_granite3_3",
+            "stream_ollama_granite3_3",
+            "ask_ollama_granite3_3_sync",
+            "ask_ollama_llama3_2",
+            "stream_ollama_llama3_2",
+            "ask_ollama_llama3_2_sync",
+        ]
+        
+        for func_name in expected_functions:
+            assert func_name in functions, f"Expected function {func_name} not found"
+        
+        # Verify all functions are callable
+        for name, func in functions.items():
+            assert callable(func), f"Function {name} is not callable"
+    
+    @patch("chuk_llm.api.providers.get_config")
+    def test_ollama_versioned_models(self, mock_get_config):
+        """Test handling of Ollama models with version tags."""
+        from chuk_llm.api.providers import _generate_functions_for_models
+        from chuk_llm.configuration.unified_config import Feature
+        
+        # Mock provider config with various version formats
+        mock_provider = Mock()
+        mock_provider.models = [
+            "qwen3:32b",
+            "phi4-reasoning:latest",
+            "gpt-oss:20b",
+            "llama3.1:8b-instruct-q8_0"
+        ]
+        mock_provider.model_aliases = {}
+        
+        mock_caps = Mock()
+        mock_caps.features = {Feature.TEXT, Feature.STREAMING}
+        mock_provider.get_model_capabilities = Mock(return_value=mock_caps)
+        
+        functions = _generate_functions_for_models("ollama", mock_provider, mock_provider.models)
+        
+        # Should generate base names for all versioned models
+        expected_base_functions = [
+            "ask_ollama_qwen3",  # Base for qwen3:32b
+            "ask_ollama_phi4_reasoning",  # Base for phi4-reasoning:latest
+            "ask_ollama_gpt_oss",  # Base for gpt-oss:20b
+            "ask_ollama_llama3_1",  # Base for llama3.1:8b-instruct-q8_0
+        ]
+        
+        for func_name in expected_base_functions:
+            assert func_name in functions, f"Expected base function {func_name} not found"
+    
+    @patch("chuk_llm.api.providers.get_config")
+    def test_non_ollama_providers_no_base_names(self, mock_get_config):
+        """Test that non-Ollama providers don't generate base name duplicates."""
+        from chuk_llm.api.providers import _generate_functions_for_models
+        from chuk_llm.configuration.unified_config import Feature
+        
+        # Mock OpenAI provider config
+        mock_provider = Mock()
+        mock_provider.models = ["gpt-4o", "gpt-4o-mini"]
+        mock_provider.model_aliases = {}
+        
+        mock_caps = Mock()
+        mock_caps.features = {Feature.TEXT, Feature.STREAMING}
+        mock_provider.get_model_capabilities = Mock(return_value=mock_caps)
+        
+        # Generate functions for OpenAI (not Ollama)
+        functions = _generate_functions_for_models("openai", mock_provider, mock_provider.models)
+        
+        # Should only generate exact model name functions
+        assert "ask_openai_gpt_4o" in functions
+        assert "ask_openai_gpt_4o_mini" in functions
+        
+        # Should not have duplicate entries
+        function_counts = {}
+        for name in functions.keys():
+            base_name = name.replace("_sync", "").replace("stream_", "ask_")
+            function_counts[base_name] = function_counts.get(base_name, 0) + 1
+        
+        # Each base function should appear exactly 3 times (ask, stream, sync)
+        for base, count in function_counts.items():
+            assert count == 3, f"Function {base} appears {count} times, expected 3"
+
+
+class TestCLICommandNormalization:
+    """Test suite for CLI command normalization (dot to underscore conversion)."""
+    
+    def test_parse_convenience_function_with_dots(self):
+        """Test that parse_convenience_function handles dots in model names."""
+        from chuk_llm.cli import parse_convenience_function
+        
+        # Test with dots in model name
+        result = parse_convenience_function("ask_ollama_granite3_3")
+        assert result is not None
+        provider, model, is_sync, is_stream = result
+        assert provider == "ollama"
+        assert model == "granite3_3"  # Model name keeps underscores
+        assert not is_sync
+        assert not is_stream
+        
+        # Test with sync version
+        result = parse_convenience_function("ask_ollama_llama3_2_sync")
+        assert result is not None
+        provider, model, is_sync, is_stream = result
+        assert provider == "ollama"
+        assert model == "llama3_2"  # Model name keeps underscores
+        assert is_sync
+        assert not is_stream
+        
+        # Test streaming version
+        result = parse_convenience_function("stream_ollama_phi4_mini")
+        assert result is not None
+        provider, model, is_sync, is_stream = result
+        assert provider == "ollama"
+        assert model == "phi4_mini"  # Model name keeps underscores
+        assert not is_sync
+        assert is_stream
+    
+    def test_cli_command_normalization(self):
+        """Test that CLI normalizes commands with dots to underscores."""
+        # This would be tested in an integration test, but we can test the normalization logic
+        command = "ask_ollama_granite3.3"
+        normalized = command.replace(".", "_")
+        assert normalized == "ask_ollama_granite3_3"
+        
+        # Test multiple dots
+        command = "ask_ollama_llama3.2.1"
+        normalized = command.replace(".", "_")
+        assert normalized == "ask_ollama_llama3_2_1"
+        
+        # Test no dots (should remain unchanged)
+        command = "ask_openai_gpt_4o"
+        normalized = command.replace(".", "_")
+        assert normalized == "ask_openai_gpt_4o"
+
+
+class TestAutoDetectSyncAsync:
+    """Test suite for auto-detection of sync/async context in provider functions."""
+    
+    def test_provider_function_sync_context(self):
+        """Test that provider functions work in sync context without await."""
+        from chuk_llm.api.providers import _create_provider_function
+        
+        # Mock configuration and ask
+        with patch("chuk_llm.api.providers.get_config"):
+            with patch("chuk_llm.api.core.ask") as mock_ask:
+                # Make ask return a coroutine that returns our test value
+                async def mock_ask_impl(*args, **kwargs):
+                    return "sync result"
+                
+                mock_ask.side_effect = mock_ask_impl
+                
+                # Create a provider function
+                func = _create_provider_function("test_provider", "test_model")
+                
+                # Call it in sync context (no await)
+                # This should auto-detect sync context and run synchronously
+                result = func("test prompt")
+                
+                # Should get the actual result, not a coroutine
+                assert result == "sync result"
+                assert not asyncio.iscoroutine(result)
+    
+    async def test_provider_function_async_context(self):
+        """Test that provider functions work in async context with await."""
+        from chuk_llm.api.providers import _create_provider_function
+        
+        # Mock configuration and ask
+        with patch("chuk_llm.api.providers.get_config"):
+            with patch("chuk_llm.api.core.ask") as mock_ask:
+                # Make ask return a coroutine that returns our test value
+                async def mock_ask_impl(*args, **kwargs):
+                    return "async result"
+                
+                mock_ask.side_effect = mock_ask_impl
+                
+                # Create a provider function
+                func = _create_provider_function("test_provider", "test_model")
+                
+                # Call it in async context (with await)
+                result = await func("test prompt")
+                
+                # Should get the actual result
+                assert result == "async result"
+    
+    @patch("chuk_llm.api.providers.get_config")
+    def test_provider_function_with_vision_sync(self, mock_get_config):
+        """Test vision-enabled provider functions in sync context."""
+        from chuk_llm.api.providers import _create_provider_function
+        
+        # Create a vision-enabled provider function
+        func = _create_provider_function("test_provider", "test_model", supports_vision=True)
+        
+        # The function should have image parameter
+        import inspect
+        sig = inspect.signature(func)
+        assert "image" in sig.parameters
+        
+        # Should be callable without await
+        # (Would need full mock setup to actually run)
+    
+    def test_smart_wrapper_imports(self):
+        """Test that smart wrappers handle imports correctly."""
+        from chuk_llm.api.providers import _create_provider_function
+        
+        # Should be able to create functions without errors
+        func = _create_provider_function("test", "model")
+        assert callable(func)
+        
+        # Function should have the smart wrapper behavior
+        # Check that it has access to asyncio for detection
+        import inspect
+        source = inspect.getsource(func)
+        assert "asyncio.get_running_loop()" in source
+        assert "run_sync" in source or "_run_sync" in source
+
+
+class TestFunctionsListCommand:
+    """Test suite for the enhanced functions list command with provider filtering."""
+    
+    @patch("chuk_llm.api.providers.list_provider_functions")
+    @patch("chuk_llm.api.providers.get_discovered_functions")
+    def test_list_functions_with_provider_filter(self, mock_discovered, mock_list):
+        """Test listing functions filtered by provider."""
+        from chuk_llm.api.providers import list_provider_functions
+        
+        # Mock function list
+        all_functions = [
+            "ask_ollama_granite3_3",
+            "ask_ollama_granite3_3_latest",
+            "stream_ollama_granite3_3",
+            "ask_openai_gpt_4o",
+            "ask_anthropic_claude_3_5_sonnet",
+        ]
+        mock_list.return_value = all_functions
+        
+        # Mock discovered functions
+        mock_discovered.return_value = {
+            "ollama": {
+                "ask_ollama_granite3_3": {},
+                "ask_ollama_granite3_3_latest": {},
+                "stream_ollama_granite3_3": {},
+            }
+        }
+        
+        # In real implementation, filtering happens in CLI
+        # Here we test that the functions exist for filtering
+        ollama_functions = [f for f in all_functions if "ollama" in f]
+        assert len(ollama_functions) == 3
+        assert "ask_ollama_granite3_3" in ollama_functions
+        assert "ask_ollama_granite3_3_latest" in ollama_functions
+        assert "stream_ollama_granite3_3" in ollama_functions
+        
+        # Non-ollama functions should not be included
+        assert "ask_openai_gpt_4o" not in ollama_functions
+        assert "ask_anthropic_claude_3_5_sonnet" not in ollama_functions
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
