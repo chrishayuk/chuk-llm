@@ -104,10 +104,10 @@ class ConversationContext:
         """Get unique conversation ID."""
         return self._conversation_id
 
-    async def say(
+    async def ask(
         self, prompt: str, image: str | Path | bytes | None = None, **kwargs: Any
     ) -> str:
-        """Send a message in the conversation and get a response."""
+        """Ask a question in the conversation and get a response."""
         # Track user message automatically
         if self.session_manager:
             try:
@@ -177,10 +177,10 @@ class ConversationContext:
 
             return error_msg
 
-    async def stream_say(
+    async def stream(
         self, prompt: str, image: str | Path | bytes | None = None, **kwargs: Any
     ) -> AsyncIterator[str]:
-        """Send a message and stream the response."""
+        """Ask a question and stream the response."""
         # Track user message automatically
         if self.session_manager:
             try:

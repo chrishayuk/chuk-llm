@@ -94,9 +94,10 @@ async def main():
 
 asyncio.run(main())
 
-# 5️⃣ Streaming for real-time output
+# 5️⃣ Streaming for real-time output (standalone)
 from chuk_llm import stream_sync_iter
 
+# Note: This is for one-off streaming. For conversations, use async conversation API
 for chunk in stream_sync_iter("Write a poem about code", provider="ollama"):
     print(chunk, end="", flush=True)
 ```
@@ -136,7 +137,7 @@ from chuk_llm import ask_ollama_granite
 print(ask_ollama_granite("Hello"))  # "Hello! How can I help?" 🎉
 ```
 
-**Note:** Streaming functions (`stream_*`) remain async-only as streaming is inherently asynchronous.
+**Note:** Real-time streaming in conversations requires the async API. For standalone streaming, use `stream_sync_iter` (shown above) or async `stream()` functions.
 
 ## 🔌 NEW: OpenAI-Compatible Providers
 
@@ -493,59 +494,74 @@ asyncio.run(stream_with_tools())
 
 ### Conversations with Memory & Branching
 
+#### Async Conversation (Recommended for performance)
+
 ```python
 from chuk_llm import conversation
 import asyncio
 
 async def chat_example():
     # Start a conversation with automatic session tracking
-    async with conversation(provider="openai", model="gpt-4o") as chat:
-        await chat.say("My name is Alice and I'm learning Python")
-        response = await chat.say("What's my name?")
+    async with conversation(provider="openai", model="gpt-4o-mini") as chat:
+        # Basic ask
+        response = await chat.ask("My name is Alice and I'm learning Python")
+        print(response)
+        
+        # Memory persists
+        response = await chat.ask("What's my name?")
         print(response)  # "Your name is Alice"
         
-        # Create a branch to explore different paths
-        branch_id = await chat.branch("explore_web_dev")
+        # Stream responses for real-time output
+        async for chunk in chat.stream("Tell me about Python"):
+            print(chunk, end="", flush=True)
         
-        # Main conversation continues with Python
-        await chat.say("What Python framework should I learn first?")
+        # Branch to explore alternatives without affecting main conversation
+        async with chat.branch() as branch:
+            await branch.ask("Actually, I want to learn Rust instead")
+            response = await branch.ask("What makes Rust special?")
+            print(response)  # Rust information
         
-        # Switch to the branch for web development
-        await chat.switch_branch("explore_web_dev")
-        await chat.say("Actually, I want to learn web development instead")
-        response = await chat.say("What should I start with?")
-        print(response)  # Web development advice
+        # Main conversation still remembers Python context
+        response = await chat.ask("What Python framework should I learn?")
+        print(response)  # Python frameworks, not Rust
         
-        # Switch back to main branch
-        await chat.switch_branch("main")
-        response = await chat.say("What were we discussing?")
-        print(response)  # Back to Python discussion
-        
-        # Save conversation with all branches
+        # Save for later
         conversation_id = await chat.save()
-        
-    # Resume later with full history
+    
+    # Resume conversation later
     async with conversation(resume_from=conversation_id) as chat:
-        # List available branches
-        branches = await chat.list_branches()
-        print(f"Available branches: {branches}")
-        
-        response = await chat.say("Do you remember what I'm learning?")
-        print(response)  # Still remembers Python context
+        response = await chat.ask("What was I learning?")
+        print(response)  # "You were learning Python"
 
 asyncio.run(chat_example())
 ```
 
-Sync conversation API:
+#### Sync Conversation (Simpler for scripts)
+
 ```python
 from chuk_llm import conversation_sync
 
-# Simpler sync version for scripts
-with conversation_sync(provider="ollama", model="granite3.3") as chat:
-    chat.say("I need help with a recipe")
-    chat.say("I have tomatoes, pasta, and garlic")
-    response = chat.say("What can I make?")
+# Synchronous API - great for simple scripts
+with conversation_sync(provider="openai", model="gpt-4o-mini") as chat:
+    # Basic conversation
+    chat.ask("I'm planning a dinner party")
+    response = chat.ask("What's a good appetizer?")
     print(response)
+    
+    # Note: Real-time streaming requires async conversation
+    # In sync mode, use ask() for complete responses
+    full_response = chat.ask("Give me the recipe")
+    print(full_response)
+    
+    # Branching in sync mode
+    with chat.branch() as branch:
+        branch.ask("What if I have vegetarian guests?")
+        veg_option = branch.ask("Suggest vegetarian appetizers")
+        print(veg_option)
+    
+    # Main conversation unaffected by branch
+    response = chat.ask("What wine pairs well with the appetizer?")
+    print(response)  # Pairs with original appetizer, not vegetarian
 ```
 
 ### Dynamic Model Discovery
@@ -620,6 +636,76 @@ print(f"🔤 Total tokens: {stats['total_tokens']}")
 history = await get_session_history()
 for msg in history:
     print(f"{msg['role']}: {msg['content'][:50]}...")
+```
+
+## 📚 Conversation API Reference
+
+The conversation API provides stateful chat with memory, branching, and streaming:
+
+### Async API (Full Features)
+
+```python
+from chuk_llm import conversation
+import asyncio
+
+async with conversation(provider="openai", model="gpt-4o-mini") as chat:
+    # ask() - Send a message and get a response
+    response = await chat.ask("Hello!")
+    
+    # stream() - Stream the response in real-time (async only)
+    async for chunk in chat.stream("Tell me a story"):
+        print(chunk, end="", flush=True)
+    
+    # branch() - Create isolated exploration paths
+    async with chat.branch() as branch:
+        await branch.ask("What if...")  # Doesn't affect main conversation
+    
+    # save() - Save conversation state
+    conversation_id = await chat.save()
+    
+    # Other methods
+    history = chat.get_history()
+    stats = chat.get_stats()
+    chat.clear()  # Clear history (keeps system prompt)
+    chat.pop_last()  # Remove last exchange
+```
+
+### Sync API (Simpler Interface)
+
+```python
+from chuk_llm import conversation_sync
+
+with conversation_sync(provider="openai", model="gpt-4o-mini") as chat:
+    # ask() - Send message and get response
+    response = chat.ask("Hello!")
+    
+    # branch() - Works in sync mode too
+    with chat.branch() as branch:
+        branch.ask("Alternative path...")
+    
+    # save() and other methods work the same
+    conversation_id = chat.save()
+    
+    # All methods available: ask(), branch(), save(), get_history(), etc.
+    # Note: Real-time streaming requires async API
+```
+
+### Advanced Features
+
+```python
+# Resume a saved conversation (async or sync)
+async with conversation(resume_from=conversation_id) as chat:
+    await chat.ask("Continue where we left off")
+
+# Multi-modal support (images)
+response = await chat.ask("What's in this image?", image="path/to/image.jpg")
+
+# Automatic session tracking (when chuk-ai-session-manager is installed)
+stats = await chat.get_session_stats()  # Includes tokens, costs, duration
+
+# Extract insights
+summary = await chat.summarize(max_length=500)
+key_points = await chat.extract_key_points()
 ```
 
 ## 🏷️ Model Aliases - Simplify Your Life
@@ -1078,7 +1164,7 @@ async def chatbot():
             if user_input.lower() == 'quit':
                 break
             
-            response = await chat.say(user_input)
+            response = await chat.ask(user_input)
             print(f"Bot: {response}\n")
 
 asyncio.run(chatbot())

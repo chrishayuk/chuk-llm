@@ -223,11 +223,11 @@ async def demo_async_conversations():
     print("\n🔹 Basic async conversation:")
     try:
         async with conversation(provider="anthropic") as chat:
-            response1 = await chat.say("Hi! I'm interested in space exploration.")
+            response1 = await chat.ask("Hi! I'm interested in space exploration.")
             print("   👤 User: Hi! I'm interested in space exploration.")
             print(f"   🤖 Assistant: {response1[:100]}...")
 
-            response2 = await chat.say("What should I study?")
+            response2 = await chat.ask("What should I study?")
             print("   👤 User: What should I study?")
             print(f"   🤖 Assistant: {response2[:100]}...")
     except Exception as e:
@@ -240,8 +240,8 @@ async def demo_async_conversations():
         """Have a conversation about a specific topic."""
         try:
             async with conversation(provider=provider) as chat:
-                await chat.say(f"I want to learn about {topic}")
-                response = await chat.say("Give me one key thing to know")
+                await chat.ask(f"I want to learn about {topic}")
+                response = await chat.ask("Give me one key thing to know")
                 return f"{topic}: {response[:60]}..."
         except Exception as e:
             return f"{topic}: Error - {str(e)[:40]}..."
@@ -274,14 +274,14 @@ async def demo_streaming_conversation():
     try:
         async with conversation(provider="anthropic") as chat:
             # Set up context
-            await chat.say("I'm learning about async programming in Python.")
+            await chat.ask("I'm learning about async programming in Python.")
 
             print("\n👤 User: Can you explain async/await in a simple way?")
             print("🤖 Assistant: ", end="", flush=True)
 
             # Stream the response
             try:
-                async for chunk in chat.stream_say(
+                async for chunk in chat.stream(
                     "Can you explain async/await in a simple way? Keep it concise."
                 ):
                     print(chunk, end="", flush=True)

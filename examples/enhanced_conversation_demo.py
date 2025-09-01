@@ -18,23 +18,23 @@ async def demo_1_branching():
         # Main conversation thread
         print("\nMain thread:")
         print("User: Tell me about Python")
-        response = await chat.say("Tell me about Python")
+        response = await chat.ask("Tell me about Python")
         print(f"AI: {response[:200]}...")
 
         # Create a branch to explore a tangent
         async with chat.branch() as side_chat:
             print("\n[Branch] User: What about Ruby instead?")
-            response = await side_chat.say("What about Ruby instead?")
+            response = await side_chat.ask("What about Ruby instead?")
             print(f"[Branch] AI: {response[:200]}...")
 
             print("\n[Branch] User: Which is better for web development?")
-            response = await side_chat.say("Which is better for web development?")
+            response = await side_chat.ask("Which is better for web development?")
             print(f"[Branch] AI: {response[:200]}...")
 
         # Back to main thread - it doesn't know about Ruby
         print("\nMain thread (continuing):")
         print("User: What were we discussing?")
-        response = await chat.say("What were we discussing?")
+        response = await chat.ask("What were we discussing?")
         print(f"AI: {response}")
 
 
@@ -48,10 +48,10 @@ async def demo_2_persistence():
     async with conversation(provider="openai") as chat:
         print("\nStarting conversation...")
         print("User: I'm planning a trip to Japan")
-        await chat.say("I'm planning a trip to Japan")
+        await chat.ask("I'm planning a trip to Japan")
 
         print("User: I'm interested in temples and technology")
-        await chat.say("I'm interested in temples and technology")
+        await chat.ask("I'm interested in temples and technology")
 
         # Save the conversation
         conversation_id = await chat.save()
@@ -61,7 +61,7 @@ async def demo_2_persistence():
     print("\n--- Resuming conversation later ---")
     async with conversation(resume_from=conversation_id) as chat:
         print("User: Based on my interests, what cities should I visit?")
-        response = await chat.say("Based on my interests, what cities should I visit?")
+        response = await chat.ask("Based on my interests, what cities should I visit?")
         print(f"AI: {response[:300]}...")
 
 
@@ -77,21 +77,21 @@ async def demo_3_multimodal():
         print("Note: Image file not found, using text-only example")
         async with conversation(provider="openai", model="gpt-4o") as chat:
             print("User: Describe what you would see in a network diagram")
-            response = await chat.say(
+            response = await chat.ask(
                 "Describe what you would see in a network diagram"
             )
             print(f"AI: {response[:300]}...")
     else:
         async with conversation(provider="openai", model="gpt-4o") as chat:
             print(f"User: What do you see in this image? [Image: {image_path}]")
-            response = await chat.say(
+            response = await chat.ask(
                 "What do you see in this image?", image=image_path
             )
             print(f"AI: {response[:300]}...")
 
             # Continue with context
             print("\nUser: Can you explain the connections?")
-            response = await chat.say("Can you explain the connections?")
+            response = await chat.ask("Can you explain the connections?")
             print(f"AI: {response[:300]}...")
 
 
@@ -101,10 +101,10 @@ async def demo_4_utilities():
 
     async with conversation(provider="openai") as chat:
         # Have a conversation
-        await chat.say("Let's discuss the history of computing")
-        await chat.say("Tell me about Charles Babbage")
-        await chat.say("What was the Analytical Engine?")
-        await chat.say("How did it influence modern computers?")
+        await chat.ask("Let's discuss the history of computing")
+        await chat.ask("Tell me about Charles Babbage")
+        await chat.ask("What was the Analytical Engine?")
+        await chat.ask("How did it influence modern computers?")
 
         # Get conversation summary
         print("\nGenerating summary...")
@@ -175,7 +175,7 @@ async def demo_6_custom_system_prompt():
     async with conversation(provider="openai", system_prompt=custom_prompt) as chat:
         print("Using custom system prompt for Python tutor")
         print("\nUser: What is a list comprehension?")
-        response = await chat.say("What is a list comprehension?")
+        response = await chat.ask("What is a list comprehension?")
         print(f"AI: {response[:400]}...")
 
 

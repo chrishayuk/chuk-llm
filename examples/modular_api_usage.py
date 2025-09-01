@@ -63,10 +63,10 @@ async def conversation_examples():
     # Basic conversation
     print("\n1. Basic conversation:")
     async with conversation() as chat:
-        response1 = await chat.say("Hi, I'm working on a Python project")
+        response1 = await chat.ask("Hi, I'm working on a Python project")
         print(f"Assistant: {response1[:100]}...")
 
-        response2 = await chat.say("Can you help me optimize it?")
+        response2 = await chat.ask("Can you help me optimize it?")
         print(f"Assistant: {response2[:100]}...")
 
         # Check conversation stats
@@ -78,7 +78,7 @@ async def conversation_examples():
     # Conversation with specific provider
     print("\n2. Conversation with Claude:")
     async with conversation(provider="anthropic", model="claude-3-sonnet") as chat:
-        response = await chat.say("What makes you different from other AI assistants?")
+        response = await chat.ask("What makes you different from other AI assistants?")
         print(f"Claude: {response[:150]}...")
 
 
@@ -107,8 +107,8 @@ def sync_examples():
     # 4. Sync conversation
     print("\n4. Sync conversation:")
     with conversation_sync() as chat:
-        chat.say("Hi!")
-        response2 = chat.say("Tell me a joke")
+        chat.ask("Hi!")
+        response2 = chat.ask("Tell me a joke")
         print(f"Joke: {response2[:100]}...")
 
 

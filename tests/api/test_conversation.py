@@ -153,8 +153,8 @@ class TestConversationContext:
             assert ctx.has_session is False
 
     @pytest.mark.asyncio
-    async def test_say_basic_conversation(self, mock_client):
-        """Test basic conversation with say method."""
+    async def test_ask_basic_conversation(self, mock_client):
+        """Test basic conversation with ask method."""
         # Mock client response
         mock_client.create_completion.return_value = {
             "response": "Hello! How can I help you today?",
@@ -164,7 +164,7 @@ class TestConversationContext:
         with patch("chuk_llm.api.conversation.get_client", return_value=mock_client):
             ctx = ConversationContext(provider="openai", model="gpt-4")
 
-            response = await ctx.say("Hello")
+            response = await ctx.ask("Hello")
 
             assert response == "Hello! How can I help you today?"
             assert len(ctx.messages) == 3  # system, user, assistant
@@ -174,8 +174,8 @@ class TestConversationContext:
             assert ctx.messages[2]["content"] == "Hello! How can I help you today?"
 
     @pytest.mark.asyncio
-    async def test_say_with_session_tracking(self, mock_client, mock_session_manager):
-        """Test say method with session tracking."""
+    async def test_ask_with_session_tracking(self, mock_client, mock_session_manager):
+        """Test ask method with session tracking."""
         mock_client.create_completion.return_value = {
             "response": "Great question!",
             "error": None,
@@ -185,7 +185,7 @@ class TestConversationContext:
             ctx = ConversationContext(provider="openai", model="gpt-4")
             ctx.session_manager = mock_session_manager
 
-            await ctx.say("What's the weather like?")
+            await ctx.ask("What's the weather like?")
 
             # Verify session tracking calls
             mock_session_manager.user_says.assert_called_once_with(
@@ -196,8 +196,8 @@ class TestConversationContext:
             )
 
     @pytest.mark.asyncio
-    async def test_say_with_error_response(self, mock_client):
-        """Test say method handling error responses."""
+    async def test_ask_with_error_response(self, mock_client):
+        """Test ask method handling error responses."""
         mock_client.create_completion.return_value = {
             "error": True,
             "error_message": "Rate limit exceeded",
@@ -206,27 +206,27 @@ class TestConversationContext:
         with patch("chuk_llm.api.conversation.get_client", return_value=mock_client):
             ctx = ConversationContext(provider="openai")
 
-            response = await ctx.say("Test message")
+            response = await ctx.ask("Test message")
 
             assert "Error: Rate limit exceeded" in response
             assert ctx.messages[-1]["role"] == "assistant"
             assert "Error: Rate limit exceeded" in ctx.messages[-1]["content"]
 
     @pytest.mark.asyncio
-    async def test_say_with_exception(self, mock_client):
-        """Test say method handling exceptions."""
+    async def test_ask_with_exception(self, mock_client):
+        """Test ask method handling exceptions."""
         mock_client.create_completion.side_effect = RuntimeError("Network error")
 
         with patch("chuk_llm.api.conversation.get_client", return_value=mock_client):
             ctx = ConversationContext(provider="openai")
 
-            response = await ctx.say("Test message")
+            response = await ctx.ask("Test message")
 
             assert "Conversation error: Network error" in response
 
     @pytest.mark.asyncio
-    async def test_say_with_image_multimodal(self):
-        """Test say method with image input (multi-modal)."""
+    async def test_ask_with_image_multimodal(self):
+        """Test ask method with image input (multi-modal)."""
         mock_client = AsyncMock()
         mock_client.create_completion.return_value = {
             "response": "I can see the image you shared.",
@@ -254,7 +254,7 @@ class TestConversationContext:
                 ):
                     ctx = ConversationContext(provider="openai", model="gpt-4-vision")
 
-                    response = await ctx.say(
+                    response = await ctx.ask(
                         "What's in this image?", image=b"fake_image_data"
                     )
 
@@ -266,7 +266,7 @@ class TestConversationContext:
                 ctx = ConversationContext(provider="openai", model="gpt-4-vision")
 
                 # Should handle missing vision preparation gracefully
-                response = await ctx.say(
+                response = await ctx.ask(
                     "What's in this image?", image=b"fake_image_data"
                 )
 
@@ -275,7 +275,7 @@ class TestConversationContext:
                 assert len(response) > 0
 
     @pytest.mark.asyncio
-    async def test_stream_say_basic(self, mock_client):
+    async def test_stream_basic(self, mock_client):
         """Test streaming conversation."""
 
         # Mock streaming response
@@ -294,14 +294,14 @@ class TestConversationContext:
             ctx = ConversationContext(provider="openai")
 
             full_response = ""
-            async for chunk in ctx.stream_say("Hello"):
+            async for chunk in ctx.stream("Hello"):
                 full_response += chunk
 
             assert full_response == "Hello there!"
             assert ctx.messages[-1]["content"] == "Hello there!"
 
     @pytest.mark.asyncio
-    async def test_stream_say_with_error(self, mock_client):
+    async def test_stream_with_error(self, mock_client):
         """Test streaming with error."""
 
         async def mock_error_stream():
@@ -313,14 +313,14 @@ class TestConversationContext:
             ctx = ConversationContext(provider="openai")
 
             chunks = []
-            async for chunk in ctx.stream_say("Test"):
+            async for chunk in ctx.stream("Test"):
                 chunks.append(chunk)
 
             assert len(chunks) == 1
             assert "[Error: API Error]" in chunks[0]
 
     @pytest.mark.asyncio
-    async def test_stream_say_with_exception(self, mock_client):
+    async def test_stream_with_exception(self, mock_client):
         """Test streaming with exception."""
         mock_client.create_completion.side_effect = RuntimeError("Connection failed")
 
@@ -328,7 +328,7 @@ class TestConversationContext:
             ctx = ConversationContext(provider="openai")
 
             chunks = []
-            async for chunk in ctx.stream_say("Test"):
+            async for chunk in ctx.stream("Test"):
                 chunks.append(chunk)
 
             assert len(chunks) == 1
@@ -770,7 +770,7 @@ class TestErrorHandlingAndEdgeCases:
             ctx.session_manager = mock_session_manager
 
             # Should still work despite session errors
-            response = await ctx.say("Test message")
+            response = await ctx.ask("Test message")
 
             assert response == "Response despite session errors"
             assert len(ctx.messages) >= 2  # At least system + user + assistant
@@ -826,7 +826,7 @@ class TestErrorHandlingAndEdgeCases:
         with patch("chuk_llm.api.conversation.get_client", return_value=mock_client):
             ctx = ConversationContext(provider="openai")
 
-            response = await ctx.say("Test")
+            response = await ctx.ask("Test")
 
             assert response == "Direct string response"
             assert ctx.messages[-1]["content"] == "Direct string response"
@@ -910,14 +910,14 @@ class TestErrorHandlingAndEdgeCases:
                     ctx = ConversationContext(provider="openai")
 
                     # Should handle vision preparation failure gracefully
-                    response = await ctx.say("Describe image", image=b"fake_data")
+                    response = await ctx.ask("Describe image", image=b"fake_data")
 
                     # Should still process as text-only
                     assert response == "Text response"
             except AttributeError:
                 # If _prepare_vision_message doesn't exist, that's fine
                 ctx = ConversationContext(provider="openai")
-                response = await ctx.say("Describe image", image=b"fake_data")
+                response = await ctx.ask("Describe image", image=b"fake_data")
                 assert isinstance(response, str)
 
     def test_conversation_id_uniqueness(self):

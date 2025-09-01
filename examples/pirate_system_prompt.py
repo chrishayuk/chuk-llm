@@ -73,7 +73,7 @@ async def pirate_conversation():
         
         for question in questions:
             print(f"You: {question}")
-            response = await chat.say(question)
+            response = await chat.ask(question)
             print(f"Captain Blackbeard: {response}\n")
 
 # Method 4: Multiple personalities with different system prompts

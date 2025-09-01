@@ -140,6 +140,10 @@ from .api.conversation import (  # noqa: E402
     ConversationContext,
     conversation,
 )
+from .api.conversation_sync import (  # noqa: E402
+    ConversationContextSync,
+    conversation_sync,
+)
 
 # Show functions
 from .api.show_info import (  # noqa: E402
@@ -239,6 +243,8 @@ __all__ = (
         # Conversation
         "conversation",
         "ConversationContext",
+        "conversation_sync",
+        "ConversationContextSync",
         # Utilities
         "get_metrics",
         "health_check",

@@ -213,7 +213,7 @@ async def pirate_pair_programming():
         
         for task in programming_tasks:
             print(f"You: {task}")
-            response = await chat.say(task)
+            response = await chat.ask(task)
             print(f"First Mate Code: {response}\n")
             await asyncio.sleep(0.5)  # Brief pause for readability
 

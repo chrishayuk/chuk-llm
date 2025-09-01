@@ -1,29 +1,33 @@
 #!/usr/bin/env python3
 import asyncio
+from dotenv import load_dotenv
 
 from chuk_llm import conversation
 
+# Load environment variables
+load_dotenv()
+
 
 async def main():
-    async with conversation(provider="openai") as chat:
+    async with conversation(provider="openai", model="gpt-4o-mini") as chat:
         # First exchange
         print("\nUser: My name is Alice and I'm learning Python")
-        response = await chat.say("My name is Alice and I'm learning Python")
+        response = await chat.ask("My name is Alice and I'm learning Python")
         print(f"AI: {response}")
 
         # Test memory - name
         print("\nUser: What's my name?")
-        response = await chat.say("What's my name?")
+        response = await chat.ask("What's my name?")
         print(f"AI: {response}")
 
         # Test memory - topic
         print("\nUser: What am I learning?")
-        response = await chat.say("What am I learning?")
+        response = await chat.ask("What am I learning?")
         print(f"AI: {response}")
 
         # Build on context
         print("\nUser: Can you suggest a beginner project?")
-        response = await chat.say("Can you suggest a beginner project?")
+        response = await chat.ask("Can you suggest a beginner project?")
         print(f"AI: {response}")
 
 
