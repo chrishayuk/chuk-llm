@@ -416,12 +416,12 @@ async def ask(
         # Return full response dict when tools are provided
         if tools and isinstance(response, dict):
             # Ensure response has expected structure
-            if 'response' not in response:
-                response['response'] = response_text
-            if 'tool_calls' not in response:
-                response['tool_calls'] = []
+            if "response" not in response:
+                response["response"] = response_text
+            if "tool_calls" not in response:
+                response["tool_calls"] = []
             return response
-        
+
         return response_text
 
     except Exception as e:
@@ -751,8 +751,6 @@ async def stream(
                 yield {"response": error_msg, "tool_calls": [], "error": True}
             else:
                 yield error_msg
-
-
 
 
 def _extract_streaming_content(chunk: Any) -> str:

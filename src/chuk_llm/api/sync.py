@@ -6,11 +6,13 @@ Clean synchronous wrappers using event loop manager
 Simple sync wrappers for the async API.
 """
 
+from typing import Any
+
 from .core import ask, stream
 from .event_loop_manager import run_sync
 
 
-def ask_sync(prompt: str, **kwargs) -> str:
+def ask_sync(prompt: str, **kwargs) -> str | dict[str, Any]:
     """
     Synchronous version of ask().
 
@@ -19,7 +21,7 @@ def ask_sync(prompt: str, **kwargs) -> str:
         **kwargs: All the same arguments as ask()
 
     Returns:
-        The LLM's response as a string
+        The LLM's response as a string, or dict if tools are provided
     """
     return run_sync(ask(prompt, **kwargs))
 
@@ -97,7 +99,7 @@ def stream_sync_iter(prompt: str, **kwargs):
         raise exception from None
 
 
-def compare_providers(question: str, providers: list[str] = None) -> dict[str, str]:
+def compare_providers(question: str, providers: list[str] = None) -> dict[str, Any]:
     """
     Ask the same question to multiple providers.
 
@@ -106,7 +108,7 @@ def compare_providers(question: str, providers: list[str] = None) -> dict[str, s
         providers: List of provider names (uses available providers if not specified)
 
     Returns:
-        Dictionary mapping provider names to responses
+        Dictionary mapping provider names to responses (string or dict if tools provided)
     """
     if providers is None:
         from chuk_llm.configuration import get_config
@@ -125,7 +127,7 @@ def compare_providers(question: str, providers: list[str] = None) -> dict[str, s
     return results
 
 
-def quick_question(question: str, provider: str = None) -> str:
+def quick_question(question: str, provider: str = None) -> str | dict[str, Any]:
     """
     Quick one-off question using default or specified provider.
 
@@ -134,7 +136,7 @@ def quick_question(question: str, provider: str = None) -> str:
         provider: Provider to use (uses global default if not specified)
 
     Returns:
-        The response
+        The response (string or dict if tools provided)
     """
     if not provider:
         from chuk_llm.configuration import get_config

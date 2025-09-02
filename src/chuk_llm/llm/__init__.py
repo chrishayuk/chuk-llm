@@ -169,7 +169,6 @@ try:
     # New enhanced API functions
     from ..api.core import (
         ask_json,
-        ask_with_tools,
         multi_provider_ask,
         quick_ask,
         validate_request,
@@ -213,8 +212,6 @@ except ImportError as e:
         raise ImportError("API module not available")
 
     # Enhanced API fallbacks
-    async def ask_with_tools(*args, **kwargs):  # type: ignore[misc]
-        raise ImportError("API module not available")
 
     async def ask_json(*args, **kwargs):  # type: ignore[misc]
         raise ImportError("API module not available")
@@ -441,7 +438,6 @@ if _api_available:
             "compare_providers",
             "quick_question",
             # Enhanced API functions
-            "ask_with_tools",
             "ask_json",
             "quick_ask",
             "multi_provider_ask",

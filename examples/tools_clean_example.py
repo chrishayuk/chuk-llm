@@ -173,6 +173,9 @@ async def run_all_async():
     
     print("\n📌 Note: Tool execution now works with multi-step conversation pattern!")
     print("Tools are executed and results are sent back to the model.")
+    
+    # Small delay to allow cleanup
+    await asyncio.sleep(0.1)
 
 
 def run_all_sync():
@@ -196,8 +199,27 @@ def main():
         # Run sync version only (called from subprocess)
         demo_sync_tools()
     else:
-        # Run async version
-        asyncio.run(run_all_async())
+        # Run async version with proper cleanup
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(run_all_async())
+        finally:
+            # Suppress stderr during cleanup
+            old_stderr = sys.stderr
+            sys.stderr = open(os.devnull, 'w')
+            try:
+                loop.run_until_complete(asyncio.sleep(0))
+                pending = asyncio.all_tasks(loop)
+                for task in pending:
+                    task.cancel()
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            except:
+                pass
+            finally:
+                loop.close()
+                sys.stderr.close()
+                sys.stderr = old_stderr
         
         # Then run sync in a subprocess to avoid event loop issues
         print("\n" + "="*50)

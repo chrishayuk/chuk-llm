@@ -144,16 +144,6 @@ from .api.conversation_sync import (  # noqa: E402
     conversation_sync,
 )
 
-# Tools API
-from .api.tools import (  # noqa: E402
-    Tool,
-    ToolKit,
-    Tools,
-    tool,
-    create_tool,
-    tools_from_functions,
-)
-
 # Show functions
 from .api.show_info import (  # noqa: E402
     show_capabilities,
@@ -161,6 +151,16 @@ from .api.show_info import (  # noqa: E402
     show_functions,
     show_model_aliases,
     show_providers,
+)
+
+# Tools API
+from .api.tools import (  # noqa: E402
+    Tool,
+    ToolKit,
+    Tools,
+    create_tool,
+    tool,
+    tools_from_functions,
 )
 
 # Utilities

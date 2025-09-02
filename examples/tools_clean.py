@@ -17,9 +17,9 @@ from chuk_llm.api.tools import (
     Tools,
     ToolKit,
     create_tool,
-    tools_from_functions,
-    ask_with_tools_simple
+    tools_from_functions
 )
+from chuk_llm import ask
 
 
 # ============================================================================
@@ -60,7 +60,7 @@ def calculate(expression: str) -> float:
     """Evaluate a mathematical expression"""
     # In production, use a safe expression evaluator
     try:
-        return eval(expression)
+        return eval(expression, {"__builtins__": {}}, {})
     except:
         return 0.0
 
@@ -113,10 +113,10 @@ async def demo_class_based():
     tools = WeatherTools()
     
     # The AI can now use the tools
-    response = await tools.ask("What's the weather in Paris?")
+    response = await tools.ask("What's the weather in Paris?", model="gpt-4o-mini")
     print(f"Response: {response}")
     
-    response = await tools.ask("Give me a 5-day forecast for London")
+    response = await tools.ask("Give me a 5-day forecast for London", model="gpt-4o-mini")
     print(f"Forecast: {response}")
 
 
@@ -126,15 +126,16 @@ async def demo_simple_functions():
     print("-" * 40)
     
     # Super simple - just pass functions
-    response = await ask_with_tools_simple(
+    toolkit = tools_from_functions(calculate, get_time)
+    response = await toolkit.ask(
         "What's 25 * 4 + 10?",
-        tools=[calculate, get_time]
+        model="gpt-4o-mini"
     )
     print(f"Calculation: {response}")
     
-    response = await ask_with_tools_simple(
+    response = await toolkit.ask(
         "What time is it in EST?",
-        tools=[calculate, get_time]
+        model="gpt-4o-mini"
     )
     print(f"Time: {response}")
 
@@ -145,9 +146,9 @@ async def demo_toolkit():
     print("-" * 40)
     
     # Create a toolkit from functions
-    toolkit = tools_from_functions(calculate, get_time, get_weather)
+    toolkit = tools_from_functions(calculate, get_time)
     
-    response = await toolkit.ask("Calculate 15% of 200")
+    response = await toolkit.ask("Calculate 15% of 200", model="gpt-4o-mini")
     print(f"Result: {response}")
 
 
@@ -157,7 +158,7 @@ def demo_sync():
     print("-" * 40)
     
     tools = WeatherTools()
-    response = tools.ask_sync("What's the weather in New York?")
+    response = tools.ask_sync("What's the weather in New York?", model="gpt-4o-mini")
     print(f"Sync response: {response}")
 
 
@@ -177,7 +178,7 @@ async def demo_mixed_tools():
     toolkit.add(create_search_tool())
     
     # Use the combined toolkit
-    response = await toolkit.ask("Search for 'Python tutorials'")
+    response = await toolkit.ask("Search for 'Python tutorials'", model="gpt-4o-mini")
     print(f"Search: {response}")
 
 
@@ -185,8 +186,8 @@ async def demo_mixed_tools():
 # Main
 # ============================================================================
 
-async def main():
-    """Run all demos"""
+async def run_async_demos():
+    """Run all async demos"""
     print("=" * 50)
     print("CLEAN TOOL CALLING API EXAMPLES")
     print("=" * 50)
@@ -198,13 +199,49 @@ async def main():
         await demo_toolkit()
         await demo_mixed_tools()
         
-        # Run sync demo
-        demo_sync()
+        # Small delay to allow cleanup
+        await asyncio.sleep(0.1)
         
     except Exception as e:
         print(f"\n⚠️  Note: These examples require an OpenAI-compatible provider")
         print(f"   Error: {e}")
         print(f"   Set OPENAI_API_KEY to run the examples")
+
+
+def main():
+    """Main entry point"""
+    import sys
+    
+    # Run async demos with proper cleanup
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(run_async_demos())
+    finally:
+        # Suppress stderr during cleanup
+        old_stderr = sys.stderr
+        sys.stderr = open(os.devnull, 'w')
+        try:
+            loop.run_until_complete(asyncio.sleep(0))
+            pending = asyncio.all_tasks(loop)
+            for task in pending:
+                task.cancel()
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        except:
+            pass
+        finally:
+            loop.close()
+            sys.stderr.close()
+            sys.stderr = old_stderr
+    
+    # Run sync demo separately
+    try:
+        demo_sync()
+    except Exception as e:
+        if "Cannot call sync functions from async context" in str(e):
+            print("\n⚠️  Sync demo skipped due to event loop conflict")
+        else:
+            print(f"\n⚠️  Sync demo error: {e}")
     
     print("\n" + "=" * 50)
     print("✅ Tool calling is now clean and simple!")
@@ -212,4 +249,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

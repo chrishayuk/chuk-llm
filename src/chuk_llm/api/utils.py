@@ -137,8 +137,14 @@ async def test_connection(
 
         # Handle long responses (truncate preview)
         response_preview = response
-        if len(response) > 100:
+        if isinstance(response, str) and len(response) > 100:
             response_preview = response[:100] + "..."
+        elif isinstance(response, dict):
+            response_preview = (
+                str(response)[:100] + "..."
+                if len(str(response)) > 100
+                else str(response)
+            )
 
         return {
             "success": True,
