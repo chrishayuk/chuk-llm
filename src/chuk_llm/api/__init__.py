@@ -26,7 +26,6 @@ from .config import (
 from .core import (
     ask,
     ask_json,
-    ask_with_tools,
     disable_sessions,
     enable_sessions,
     get_current_session_id,
@@ -68,7 +67,6 @@ __all__ = [
     # Core async API
     "ask",
     "stream",
-    "ask_with_tools",
     "ask_json",
     "quick_ask",
     "multi_provider_ask",

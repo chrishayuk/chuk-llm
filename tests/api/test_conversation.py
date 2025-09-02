@@ -38,6 +38,8 @@ class TestConversationContext:
     def mock_client(self):
         """Create a mock client for testing."""
         client = AsyncMock()
+        # For non-streaming, create_completion should be AsyncMock
+        # For streaming tests, we'll override this with Mock
         client.create_completion = AsyncMock()
         return client
 
@@ -278,17 +280,31 @@ class TestConversationContext:
     async def test_stream_basic(self, mock_client):
         """Test streaming conversation."""
 
-        # Mock streaming response
-        async def mock_stream():
-            chunks = [
-                {"response": "Hello", "error": None},
-                {"response": " there", "error": None},
-                {"response": "!", "error": None},
-            ]
-            for chunk in chunks:
-                yield chunk
-
-        mock_client.create_completion.return_value = mock_stream()
+        # Create a proper async generator class
+        class AsyncGeneratorMock:
+            def __init__(self, chunks):
+                self.chunks = chunks
+                self.index = 0
+            
+            def __aiter__(self):
+                return self
+            
+            async def __anext__(self):
+                if self.index >= len(self.chunks):
+                    raise StopAsyncIteration
+                chunk = self.chunks[self.index]
+                self.index += 1
+                return chunk
+        
+        chunks = [
+            {"response": "Hello", "error": None},
+            {"response": " there", "error": None},
+            {"response": "!", "error": None},
+        ]
+        
+        # Override with Mock for streaming (returns async generator directly)
+        mock_client.create_completion = Mock()
+        mock_client.create_completion.return_value = AsyncGeneratorMock(chunks)
 
         with patch("chuk_llm.api.conversation.get_client", return_value=mock_client):
             ctx = ConversationContext(provider="openai")
@@ -304,10 +320,23 @@ class TestConversationContext:
     async def test_stream_with_error(self, mock_client):
         """Test streaming with error."""
 
-        async def mock_error_stream():
-            yield {"error": True, "error_message": "API Error"}
-
-        mock_client.create_completion.return_value = mock_error_stream()
+        # Create async generator for error case
+        class AsyncErrorGeneratorMock:
+            def __init__(self):
+                self.sent = False
+            
+            def __aiter__(self):
+                return self
+            
+            async def __anext__(self):
+                if self.sent:
+                    raise StopAsyncIteration
+                self.sent = True
+                return {"error": True, "error_message": "API Error"}
+        
+        # Override with Mock for streaming
+        mock_client.create_completion = Mock()
+        mock_client.create_completion.return_value = AsyncErrorGeneratorMock()
 
         with patch("chuk_llm.api.conversation.get_client", return_value=mock_client):
             ctx = ConversationContext(provider="openai")
@@ -322,6 +351,8 @@ class TestConversationContext:
     @pytest.mark.asyncio
     async def test_stream_with_exception(self, mock_client):
         """Test streaming with exception."""
+        # Override with Mock for streaming and set side_effect
+        mock_client.create_completion = Mock()
         mock_client.create_completion.side_effect = RuntimeError("Connection failed")
 
         with patch("chuk_llm.api.conversation.get_client", return_value=mock_client):

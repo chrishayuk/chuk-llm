@@ -12,6 +12,8 @@ This file demonstrates all conversation features in both async and sync modes:
 """
 
 import asyncio
+import sys
+import subprocess
 from dotenv import load_dotenv
 from chuk_llm import conversation, conversation_sync
 
@@ -218,27 +220,35 @@ def run_sync_examples():
     print("\n📌 Note: For real-time streaming, use async API")
 
 
-async def main():
+def main():
     """Run all examples"""
-    print("🎯 ChukLLM Conversation API - Complete Examples")
-    print("This demonstrates all conversation features\n")
+    import sys
+    import subprocess
     
-    # Run async examples
-    await run_async_examples()
-    
-    # Run sync examples
-    run_sync_examples()
-    
-    print("\n✅ All examples completed!")
-    print("See the code for implementation details")
+    if len(sys.argv) > 1 and sys.argv[1] == "--sync-only":
+        # Run sync examples only (called from subprocess)
+        run_sync_examples()
+    else:
+        # Print header
+        print("🎯 ChukLLM Conversation API - Complete Examples")
+        print("This demonstrates all conversation features\n")
+        
+        # Run async examples first
+        asyncio.run(run_async_examples())
+        
+        # Then run sync examples in subprocess to avoid event loop conflicts
+        result = subprocess.run(
+            [sys.executable, __file__, "--sync-only"],
+            capture_output=True,
+            text=True
+        )
+        
+        # Print the sync output
+        print(result.stdout.strip())
+        
+        print("\n✅ All examples completed!")
+        print("See the code for implementation details")
 
 
 if __name__ == "__main__":
-    # For async examples only:
-    # asyncio.run(run_async_examples())
-    
-    # For sync examples only:
-    # run_sync_examples()
-    
-    # Run everything:
-    asyncio.run(main())
+    main()

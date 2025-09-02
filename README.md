@@ -11,6 +11,7 @@ print(quick_question("What is 2+2?"))  # "2 + 2 equals 4."
 
 - **🚀 Instant Setup**: Works out of the box with any LLM provider
 - **🔍 Auto-Discovery**: Detects new models automatically (especially Ollama)
+- **🛠️ Clean Tools API**: Function calling without the complexity - tools are just parameters
 - **⚡ 5-7x Faster**: Groq achieves 526 tokens/sec vs OpenAI's 68 tokens/sec
 - **📊 Built-in Analytics**: Automatic cost and usage tracking
 - **🎯 Developer-First**: Clean API, great CLI, sensible defaults
@@ -59,6 +60,24 @@ async def main():
         print(chunk, end="", flush=True)
 
 asyncio.run(main())
+```
+
+### Function Calling (Tools)
+
+```python
+from chuk_llm import ask
+from chuk_llm.api.tools import tools_from_functions
+
+def get_weather(location: str) -> dict:
+    return {"temp": 22, "location": location, "condition": "sunny"}
+
+# Tools are just a parameter!
+toolkit = tools_from_functions(get_weather)
+response = await ask(
+    "What's the weather in Paris?",
+    tools=toolkit.to_openai_format()
+)
+print(response)  # Returns dict with tool_calls when tools provided
 ```
 
 ### CLI Usage
@@ -189,27 +208,76 @@ response = ask_sync("Hello!")
 
 ## Advanced Features
 
-<details>
-<summary><b>🛠️ Function Calling</b></summary>
+### 🛠️ Function Calling / Tool Use
+
+ChukLLM provides a clean, unified API for function calling. Tools are just another parameter - no special functions needed!
+
+> 🚀 **New in v0.9+**: Simplified API! Use `ask(prompt, tools=tools_list)` instead of `ask_with_tools()`. The response format automatically adapts: dict when tools are provided, string otherwise.
 
 ```python
-tools = [{
-    "type": "function",
-    "function": {
-        "name": "get_weather",
-        "description": "Get weather information",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "location": {"type": "string"}
-            }
-        }
-    }
-}]
+from chuk_llm import ask, ask_sync
+from chuk_llm.api.tools import tool, Tools, tools_from_functions
 
-response = ask_sync("What's the weather in Paris?", tools=tools)
+# Method 1: Direct API usage
+def get_weather(location: str, unit: str = "celsius") -> dict:
+    """Get weather information for a location"""
+    return {"temp": 22, "location": location, "unit": unit, "condition": "sunny"}
+
+def calculate(expression: str) -> float:
+    """Evaluate a mathematical expression"""
+    return eval(expression)
+
+# Create toolkit
+toolkit = tools_from_functions(get_weather, calculate)
+
+# With tools parameter - returns dict with tool_calls
+response = await ask(
+    "What's the weather in Paris and what's 15 * 4?",
+    tools=toolkit.to_openai_format()
+)
+print(response)  # {"response": "...", "tool_calls": [...]}
+
+# Without tools - returns just string
+response = await ask("Hello there!")
+print(response)  # "Hello! How can I help you today?"
+
+# Method 2: Class-based tools (auto-execution)
+class MyTools(Tools):
+    @tool(description="Get weather for a city")
+    def get_weather(self, location: str) -> dict:
+        return {"temp": 22, "location": location}
+    
+    @tool  # Description auto-extracted from docstring
+    def calculate(self, expr: str) -> float:
+        "Evaluate a math expression"
+        return eval(expr)
+
+# Auto-executes tools and returns final response
+tools = MyTools()
+response = await tools.ask("What's the weather in Paris and what's 2+2?")
+print(response)  # "The weather in Paris is 22°C and sunny. 2+2 equals 4."
+
+# Method 3: Sync versions work identically
+response = ask_sync("Calculate 15 * 4", tools=toolkit.to_openai_format())
+print(response)  # {"response": "60", "tool_calls": [...]}
 ```
-</details>
+
+#### Streaming with Tools
+
+```python
+from chuk_llm import stream
+
+# Streaming with tools
+async for chunk in stream(
+    "What's the weather in Tokyo?", 
+    tools=toolkit.to_openai_format(),
+    return_tool_calls=True  # Include tool calls in stream
+):
+    if isinstance(chunk, dict):
+        print(f"Tool call: {chunk['tool_calls']}")
+    else:
+        print(chunk, end="", flush=True)
+```
 
 <details>
 <summary><b>🌳 Conversation Branching</b></summary>
@@ -280,6 +348,10 @@ chuk-llm functions              # List all generated functions
 chuk-llm ask "Question" --provider azure_openai --model gpt-4o-mini --json
 chuk-llm ask "Question" --stream --verbose
 
+# Function calling / Tool use from CLI
+chuk-llm ask "Calculate 15 * 4" --tools calculator_tools.py
+chuk-llm stream "What's the weather?" --tools weather_tools.py --return-tool-calls
+
 # Zero-install with uvx
 uvx chuk-llm ask_claude "Hello world"
 ```
@@ -319,6 +391,7 @@ uv run benchmarks/llm_benchmark.py
 |---------|----------|-----------|---------|------------|
 | Auto-discovery | ✅ | ❌ | ❌ | ❌ |
 | Native streaming | ✅ | ⚠️ | ✅ | ✅ |
+| Function calling | ✅ Clean API | ✅ Complex | ⚠️ Basic | ✅ |
 | Session tracking | ✅ Built-in | ⚠️ Manual | ❌ | ❌ |
 | CLI included | ✅ | ❌ | ⚠️ Basic | ❌ |
 | Provider functions | ✅ Auto-generated | ❌ | ❌ | ❌ |

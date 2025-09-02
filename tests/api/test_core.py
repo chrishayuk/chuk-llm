@@ -17,7 +17,7 @@ Run with:
     pytest tests/api/test_core.py::TestAskFunction::test_basic_ask -v
 """
 
-from unittest.mock import AsyncMock, Mock, call, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
 import pytest
 
@@ -29,7 +29,6 @@ from chuk_llm.api.core import (
     _get_session_manager,
     ask,
     ask_json,
-    ask_with_tools,
     disable_sessions,
     enable_sessions,
     get_current_session_id,
@@ -185,7 +184,10 @@ class TestAskFunction:
             custom_param="test",
         )
 
-        assert response == "Full parameter response"
+        # With tools provided, response should be a dict
+        assert isinstance(response, dict)
+        assert response["response"] == "Full parameter response"
+        assert "tool_calls" in response
 
         # Verify call arguments contain all parameters
         call_args = mock_client.create_completion.call_args[1]
@@ -217,7 +219,7 @@ class TestAskFunction:
             )
 
     @pytest.mark.asyncio
-    async def test_ask_with_tools_and_tool_calls(
+    async def test_ask_with_tools_parameter(
         self, setup_mocks, mock_session_manager
     ):
         """Test ask with tools that get called."""
@@ -242,7 +244,10 @@ class TestAskFunction:
         ):
             response = await ask("Search for something", tools=tools)
 
-            assert response == "I used a tool to help you"
+            # With tools provided, response should be a dict
+            assert isinstance(response, dict)
+            assert response["response"] == "I used a tool to help you"
+            assert "tool_calls" in response
 
             # Verify tool usage was tracked
             mock_session_manager.tool_used.assert_called_once_with(
@@ -764,32 +769,40 @@ class TestUtilityFunctions:
     @pytest.fixture
     def mock_config(self):
         """Mock configuration."""
-        return {"provider": "openai", "model": "gpt-4"}
+        return {
+            "provider": "openai", 
+            "model": "gpt-4",
+            "api_key": "sk-test123",
+            "api_base": "https://api.openai.com/v1"
+        }
 
     @pytest.mark.asyncio
-    async def test_ask_with_tools(self, mock_config):
-        """Test ask_with_tools function."""
+    async def test_ask_with_tools_parameter(self, mock_config):
+        """Test ask function with tools parameter."""
         tools = [{"type": "function", "function": {"name": "test_tool"}}]
 
         with (
-            patch("chuk_llm.api.core.ask") as mock_ask,
+            patch("chuk_llm.api.core.get_client") as mock_get_client,
             patch("chuk_llm.api.core.get_current_config", return_value=mock_config),
             patch(
                 "chuk_llm.api.core.get_current_session_id",
                 return_value="session-123",
             ),
         ):
-            mock_ask.return_value = "Tool response"
+            mock_client = MagicMock()
+            mock_client.create_completion = AsyncMock(return_value={"response": "Tool response"})
+            mock_get_client.return_value = mock_client
 
-            result = await ask_with_tools("Use a tool", tools, temperature=0.8)
+            result = await ask("Use a tool", tools=tools, temperature=0.8)
 
+            # When tools are provided, ask returns a dict
+            assert isinstance(result, dict)
             assert result["response"] == "Tool response"
-            assert result["tools_used"] == tools
-            assert result["provider"] == "openai"
-            assert result["model"] == "gpt-4"
-            assert result["session_id"] == "session-123"
-
-            mock_ask.assert_called_once_with("Use a tool", tools=tools, temperature=0.8)
+            assert "tool_calls" in result
+            mock_client.create_completion.assert_called_once()
+            call_args = mock_client.create_completion.call_args[1]
+            assert call_args["tools"] == tools
+            assert call_args["temperature"] == 0.8
 
     @pytest.mark.asyncio
     async def test_ask_json(self):

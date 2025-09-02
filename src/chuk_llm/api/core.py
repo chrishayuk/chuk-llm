@@ -179,7 +179,7 @@ async def ask(
     base_url: str | None = None,
     api_key: str | None = None,
     **kwargs: Any,
-) -> str:
+) -> str | dict[str, Any]:
     """
     Ask a question and get a response with unified configuration and automatic session tracking.
 
@@ -190,14 +190,17 @@ async def ask(
         system_prompt: System prompt override
         temperature: Temperature override
         max_tokens: Max tokens override
-        tools: Function tools for the LLM
+        tools: Function tools for the LLM (OpenAI format)
         json_mode: Enable JSON mode response
         context: Additional context for the question (stateless)
         previous_messages: Previous messages for context (stateless)
+        base_url: Override the API base URL
+        api_key: Override the API key
         **kwargs: Additional arguments
 
     Returns:
-        The LLM's response as a string
+        If tools provided: dict with 'response' and 'tool_calls' keys
+        Otherwise: The LLM's response as a string
     """
     # Get session manager
     session_manager = _get_session_manager()
@@ -410,6 +413,15 @@ async def ask(
             except Exception as e:
                 logger.debug(f"Session tool tracking error: {e}")
 
+        # Return full response dict when tools are provided
+        if tools and isinstance(response, dict):
+            # Ensure response has expected structure
+            if 'response' not in response:
+                response['response'] = response_text
+            if 'tool_calls' not in response:
+                response['tool_calls'] = []
+            return response
+        
         return response_text
 
     except Exception as e:
@@ -741,24 +753,6 @@ async def stream(
                 yield error_msg
 
 
-async def stream_with_tools(
-    prompt: str, **kwargs: Any
-) -> AsyncIterator[dict[str, Any]]:
-    """
-    Convenience function for streaming with tool calls always returned.
-
-    This is a wrapper around stream() that ensures tool calls are included
-    in the output, making it easier to work with function calling.
-
-    Args:
-        prompt: The question/prompt to send
-        **kwargs: Same arguments as stream()
-
-    Yields:
-        Dict with 'response' (str) and 'tool_calls' (list) keys
-    """
-    async for chunk in stream(prompt, return_tool_calls=True, **kwargs):
-        yield chunk
 
 
 def _extract_streaming_content(chunk: Any) -> str:
@@ -1023,21 +1017,6 @@ def enable_sessions() -> None:
 
 
 # Enhanced convenience functions
-async def ask_with_tools(
-    prompt: str, tools: list[dict[str, Any]], **kwargs: Any
-) -> dict[str, Any]:
-    """Ask with function calling tools and return structured response"""
-    response = await ask(prompt, tools=tools, **kwargs)
-
-    return {
-        "response": response,
-        "tools_used": tools,
-        "provider": kwargs.get("provider") or get_current_config()["provider"],
-        "model": kwargs.get("model") or get_current_config()["model"],
-        "session_id": get_current_session_id(),
-    }
-
-
 async def ask_json(prompt: str, **kwargs: Any) -> str:
     """Ask for a JSON response"""
     return await ask(prompt, json_mode=True, **kwargs)

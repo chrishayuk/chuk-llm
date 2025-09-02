@@ -205,24 +205,42 @@ Display current configuration.
 
 ## Advanced Features
 
-### Function Calling
+### Function Calling (Clean API)
 
 ```python
-tools = [{
-    "type": "function",
-    "function": {
-        "name": "get_weather",
-        "description": "Get weather",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "location": {"type": "string"}
-            }
-        }
-    }
-}]
+from chuk_llm import tool, Tools
 
-response = await ask_with_tools("What's the weather?", tools=tools)
+# Class-based approach
+class MyTools(Tools):
+    @tool(description="Get weather information")
+    def get_weather(self, location: str) -> dict:
+        return {"temp": 22, "location": location}
+    
+    @tool
+    def calculate(self, expression: str) -> float:
+        "Evaluate mathematical expressions"
+        return eval(expression)
+
+tools = MyTools()
+response = await tools.ask("What's the weather in Paris?")
+
+# Simple function approach
+from chuk_llm import ask_with_tools_simple
+
+def get_weather(location: str) -> dict:
+    return {"temp": 22}
+
+response = await ask_with_tools_simple(
+    "What's the weather in Paris?",
+    tools=[get_weather]
+)
+
+# ToolKit approach
+from chuk_llm import ToolKit
+
+toolkit = ToolKit()
+toolkit.add_function(get_weather)
+response = await toolkit.ask("What's the weather?")
 ```
 
 ### JSON Mode

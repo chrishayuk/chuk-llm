@@ -102,7 +102,6 @@ from .api import (  # noqa: E402
     ask_json,  # noqa: F401
     # Sync wrappers
     ask_sync,  # noqa: F401
-    ask_with_tools,  # noqa: F401
     auto_configure,  # noqa: F401
     compare_providers,  # noqa: F401
     # Configuration
@@ -143,6 +142,16 @@ from .api.conversation import (  # noqa: E402
 from .api.conversation_sync import (  # noqa: E402
     ConversationContextSync,
     conversation_sync,
+)
+
+# Tools API
+from .api.tools import (  # noqa: E402
+    Tool,
+    ToolKit,
+    Tools,
+    tool,
+    create_tool,
+    tools_from_functions,
 )
 
 # Show functions
@@ -245,6 +254,13 @@ __all__ = (
         "ConversationContext",
         "conversation_sync",
         "ConversationContextSync",
+        # Tools API
+        "Tool",
+        "ToolKit",
+        "Tools",
+        "tool",
+        "create_tool",
+        "tools_from_functions",
         # Utilities
         "get_metrics",
         "health_check",

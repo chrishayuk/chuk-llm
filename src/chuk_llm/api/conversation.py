@@ -207,7 +207,7 @@ class ConversationContext:
         full_response = ""
 
         try:
-            response_stream = await self.client.create_completion(**completion_args)
+            response_stream = self.client.create_completion(**completion_args)
 
             async for chunk in response_stream:
                 if isinstance(chunk, dict):
