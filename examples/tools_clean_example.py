@@ -10,7 +10,10 @@ follow-up conversation to send results back.
 """
 
 import asyncio
+import os
 import sys
+sys.path.insert(0, os.path.dirname(__file__))
+from async_helper import run_async_clean
 from dotenv import load_dotenv
 
 from chuk_llm import Tools, tool, ask, ask_sync, tools_from_functions
@@ -192,34 +195,14 @@ def run_all_sync():
 
 def main():
     """Main entry point - choose async or sync"""
-    import sys
     import subprocess
     
     if len(sys.argv) > 1 and sys.argv[1] == "--sync-only":
         # Run sync version only (called from subprocess)
         demo_sync_tools()
     else:
-        # Run async version with proper cleanup
-        try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(run_all_async())
-        finally:
-            # Suppress stderr during cleanup
-            old_stderr = sys.stderr
-            sys.stderr = open(os.devnull, 'w')
-            try:
-                loop.run_until_complete(asyncio.sleep(0))
-                pending = asyncio.all_tasks(loop)
-                for task in pending:
-                    task.cancel()
-                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-            except:
-                pass
-            finally:
-                loop.close()
-                sys.stderr.close()
-                sys.stderr = old_stderr
+        # Run async version with clean helper
+        run_async_clean(run_all_async())
         
         # Then run sync in a subprocess to avoid event loop issues
         print("\n" + "="*50)

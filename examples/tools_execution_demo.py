@@ -3,6 +3,9 @@
 
 import asyncio
 import os
+import sys
+sys.path.insert(0, os.path.dirname(__file__))
+from async_helper import run_async_clean
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -193,8 +196,6 @@ async def run_async_demos():
 
 def main():
     """Main entry point"""
-    import sys
-    
     print("\n" + "="*60)
     print("🎯 ChukLLM Tool Execution Demo")
     print("="*60)
@@ -206,27 +207,8 @@ def main():
         print("Set it with: export OPENAI_API_KEY='your-key-here'")
         return
     
-    # Run async demos with proper cleanup
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(run_async_demos())
-    finally:
-        # Suppress stderr during cleanup
-        old_stderr = sys.stderr
-        sys.stderr = open(os.devnull, 'w')
-        try:
-            loop.run_until_complete(asyncio.sleep(0))
-            pending = asyncio.all_tasks(loop)
-            for task in pending:
-                task.cancel()
-            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-        except:
-            pass
-        finally:
-            loop.close()
-            sys.stderr.close()
-            sys.stderr = old_stderr
+    # Run async demos with clean helper
+    run_async_clean(run_async_demos())
     
     # Run sync demos
     demo_sync_tools()
