@@ -1,4 +1,4 @@
-.PHONY: clean clean-pyc clean-build clean-test clean-all test run build publish help install dev-install pre-commit pre-commit-install pre-commit-run
+.PHONY: clean clean-pyc clean-build clean-test clean-all test test-cov coverage run build publish help install dev-install pre-commit pre-commit-install pre-commit-run lint format typecheck check check-ci security info publish-test
 
 # Default target
 help:
@@ -12,15 +12,19 @@ help:
 	@echo "  dev-install      - Install package in development mode"
 	@echo "  test             - Run tests"
 	@echo "  test-cov         - Run tests with coverage report"
+	@echo "  coverage         - Alias for test-cov"
 	@echo "  lint             - Check code quality with ruff"
 	@echo "  format           - Auto-format code with ruff"
 	@echo "  typecheck        - Run type checking with mypy"
-	@echo "  check            - Run all checks (lint, typecheck, test)"
+	@echo "  security         - Run security checks with bandit"
+	@echo "  check            - Run all checks (lint, typecheck, test-cov, security)"
+	@echo "  check-ci         - Run CI-friendly checks with quieter output"
 	@echo "  pre-commit       - Run pre-commit hooks on all files"
 	@echo "  pre-commit-install - Install pre-commit hooks"
-	@echo "  run              - Run the server"
+	@echo "  run              - Run the CLI"
 	@echo "  build            - Build the project"
 	@echo "  publish          - Build and publish to PyPI"
+	@echo "  publish-test     - Build and publish to test PyPI"
 	@echo "  info             - Show project information"
 
 # Basic clean - Python bytecode and common artifacts
@@ -91,18 +95,22 @@ test:
 test-cov:
 	@echo "Running tests with coverage..."
 	@if command -v uv >/dev/null 2>&1; then \
-		uv run pytest --cov=src --cov-report=html --cov-report=term; \
+		uv run pytest --cov=src --cov-report=html --cov-report=term --cov-report=xml; \
 	else \
-		pytest --cov=src --cov-report=html --cov-report=term; \
+		pytest --cov=src --cov-report=html --cov-report=term --cov-report=xml; \
 	fi
+	@echo "Coverage report generated in htmlcov/index.html"
 
-# Run the server launcher
+# Alias for test-cov
+coverage: test-cov
+
+# Run the CLI (chuk-llm)
 run:
-	@echo "Running server..."
+	@echo "Running CLI..."
 	@if command -v uv >/dev/null 2>&1; then \
-		PYTHONPATH=src uv run python -m chuk_protocol_server.server_launcher; \
+		uv run chuk-llm --help; \
 	else \
-		PYTHONPATH=src python3 -m chuk_protocol_server.server_launcher; \
+		chuk-llm --help; \
 	fi
 
 # Build the project using the pyproject.toml configuration
@@ -179,9 +187,38 @@ typecheck:
 		echo "MyPy not found. Install with: pip install mypy"; \
 	fi
 
+# Security checks with bandit
+security:
+	@echo "Running security checks..."
+	@if command -v uv >/dev/null 2>&1; then \
+		uv run bandit -r src -f text || true; \
+	elif command -v bandit >/dev/null 2>&1; then \
+		bandit -r src -f text || true; \
+	else \
+		echo "Bandit not found. Install with: pip install bandit"; \
+	fi
+
 # Run all checks
-check: lint typecheck test
+check: lint typecheck test-cov security
 	@echo "All checks completed."
+
+# CI-friendly checks with quieter output
+check-ci:
+	@echo "Running CI checks..."
+	@if command -v uv >/dev/null 2>&1; then \
+		uv run ruff check . --quiet && \
+		uv run ruff format --check . --quiet && \
+		uv run mypy src --no-error-summary 2>/dev/null && \
+		uv run pytest --cov=src --cov-report=xml --quiet && \
+		uv run bandit -r src -q || true; \
+	else \
+		ruff check . --quiet && \
+		ruff format --check . --quiet && \
+		mypy src --no-error-summary 2>/dev/null && \
+		pytest --cov=src --cov-report=xml --quiet && \
+		bandit -r src -q || true; \
+	fi
+	@echo "CI checks completed."
 
 # Pre-commit hooks
 pre-commit-install:

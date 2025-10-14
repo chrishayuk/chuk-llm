@@ -111,6 +111,30 @@ class OpenAILLMClient(
         """Public method to detect provider name"""
         return self.detected_provider
 
+    def _add_strict_parameter_to_tools(
+        self, tools: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """
+        Add strict parameter to all function tools for OpenAI-compatible APIs.
+
+        Some OpenAI-compatible APIs require tools.function.strict to be present
+        as a boolean value for all function definitions.
+        """
+        modified_tools = []
+        for tool in tools:
+            tool_copy = tool.copy()
+            if tool_copy.get("type") == "function" and "function" in tool_copy:
+                # Make a copy of the function dict to avoid modifying the original
+                func_copy = tool_copy["function"].copy()
+                if "strict" not in func_copy:
+                    func_copy["strict"] = False
+                    log.debug(
+                        f"[{self.detected_provider}] Added strict=False to tool: {func_copy.get('name', 'unknown')}"
+                    )
+                tool_copy["function"] = func_copy
+            modified_tools.append(tool_copy)
+        return modified_tools
+
     # ================================================================
     # SMART DEFAULTS FOR NEW OPENAI MODELS
     # ================================================================
@@ -256,16 +280,19 @@ class OpenAILLMClient(
 
     def _is_reasoning_model(self, model_name: str) -> bool:
         """Check if model is a reasoning model that needs special parameter handling"""
-        return any(
-            pattern in model_name.lower()
-            for pattern in [
-                "o1",
-                "o3",
-                "o4",
-                "o5",  # O-series reasoning models
-                "gpt-5",  # GPT-5 family also uses reasoning architecture
-            ]
-        )
+        model_lower = model_name.lower()
+
+        # Check for O-series reasoning models (o1, o3, o4, o5)
+        if any(pattern in model_lower for pattern in ["o1-", "o3-", "o4-", "o5-"]):
+            return True
+
+        # Check for official OpenAI GPT-5 models (not compatible models that just have gpt-5 in name)
+        # Only match models that START with gpt-5 (like gpt-5, gpt-5-mini, gpt-5-nano)
+        # NOT models that contain gpt-5 elsewhere (like global/gpt-5-chat)
+        if model_lower.startswith("gpt-5"):
+            return True
+
+        return False
 
     def _get_reasoning_model_generation(self, model_name: str) -> str:
         """Get reasoning model generation (o1, o3, o4, o5, gpt5)"""
@@ -946,6 +973,10 @@ class OpenAILLMClient(
             log.debug(
                 f"Tool sanitization: {len(name_mapping)} tools processed for {self.detected_provider} compatibility"
             )
+
+            # Add strict parameter for OpenAI-compatible APIs that may require it
+            if self.detected_provider == "openai_compatible":
+                validated_tools = self._add_strict_parameter_to_tools(validated_tools)
 
         # Prepare messages for conversation (sanitize tool names in history)
         if name_mapping:

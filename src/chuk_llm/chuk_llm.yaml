@@ -1981,18 +1981,48 @@ openai_compatible:
     - "*"               # Accept any model name
   
   default_model: gpt-3.5-turbo  # Safe default
-  
+
   # Full OpenAI feature compatibility assumed
+
+advantage:
+  # Advantage API Provider
+  # OpenAI-compatible API with enhanced function calling support
+  #
+  # Configure via environment variables:
+  #   ADVANTAGE_API_KEY=your-api-key (required)
+  #   ADVANTAGE_API_BASE=your-api-endpoint (required)
+  #
+  # You can also set in extra section for custom env var:
+  #   extra:
+  #     api_base_env: YOUR_CUSTOM_ENV_VAR
+  #
+  client_class: chuk_llm.llm.providers.advantage_client.AdvantageClient
+  api_key_env: ADVANTAGE_API_KEY
+  api_key_fallback_env: OPENAI_COMPATIBLE_API_KEY
+
+  # API base URL must be set via environment variable ADVANTAGE_API_BASE
+  # or can be set in extra section:
+  extra:
+    api_base_env: ADVANTAGE_API_BASE
+
+  models:
+    - global/gpt-5-chat
+    - global/gpt-4o
+    - global/gpt-4-turbo
+    - "*"  # Accept any model name
+
+  default_model: global/gpt-5-chat
+
+  # Feature support
   features:
     - text
     - streaming
     - system_messages
-    - tools
+    - tools  # Supported with workaround
     - json_mode
     - vision
-    - parallel_calls
-  
-  # Reasonable defaults - adjust via dynamic registration if needed
+
+  # Model limits
   max_context_length: 128000
   max_output_tokens: 4096
   

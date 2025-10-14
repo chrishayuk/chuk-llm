@@ -5,26 +5,24 @@ Advantage Provider Example Usage Script
 =======================================
 
 Demonstrates all the features of the Advantage provider in the chuk-llm library.
-Advantage is an OpenAI-compatible provider that uses OpenAI-compatible environment variables.
+Advantage is an OpenAI-compatible provider with enhanced function calling support.
 
-This script focuses on testing the global/chat-gpt-5 model specifically, as requested.
+This script focuses on testing the global/gpt-5-chat model specifically, as requested.
 
 Requirements:
 - uv sync  # or pip install chuk-llm
-- Set OPENAI_COMPATIBLE_API_KEY environment variable (for Advantage API key)
-- Set OPENAI_COMPATIBLE_API_BASE environment variable (for Advantage endpoint)
+- Set ADVANTAGE_API_KEY environment variable (for Advantage API key)
+- Set ADVANTAGE_API_BASE environment variable (for Advantage endpoint)
 
 Usage:
     uv run python advantage_usage_examples.py
-    uv run python advantage_usage_examples.py --model global/chat-gpt-5
+    uv run python advantage_usage_examples.py --model global/gpt-5-chat
     uv run python advantage_usage_examples.py --skip-vision
 
-Note: The Advantage API has specific requirements that differ from 
-the standard OpenAI API format:
-- Requires modelId, assistantId, or collectionId in the request body
-- Requires tools.function.strict boolean for function calling
-- The current OpenAI-compatible client doesn't support these Advantage-specific parameters
-- A custom Advantage client would be needed for full compatibility
+Note: The Advantage provider uses a custom client (AdvantageClient) that:
+- Automatically injects system prompts to guide function calling
+- Parses function calls from content and converts to tool_calls format
+- Handles the strict parameter requirement for tools
 """
 
 import argparse
@@ -41,14 +39,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Ensure we have the required environment
-if not os.getenv("OPENAI_COMPATIBLE_API_KEY"):
-    print("❌ Please set OPENAI_COMPATIBLE_API_KEY environment variable (for Advantage API key)")
-    print("   export OPENAI_COMPATIBLE_API_KEY='your_advantage_api_key_here'")
+# Support both ADVANTAGE_* and OPENAI_COMPATIBLE_* environment variables
+if not (os.getenv("ADVANTAGE_API_KEY") or os.getenv("OPENAI_COMPATIBLE_API_KEY")):
+    print("❌ Please set ADVANTAGE_API_KEY environment variable (for Advantage API key)")
+    print("   export ADVANTAGE_API_KEY='your_advantage_api_key_here'")
+    print("   (or OPENAI_COMPATIBLE_API_KEY for backward compatibility)")
     sys.exit(1)
 
-if not os.getenv("OPENAI_COMPATIBLE_API_BASE"):
-    print("❌ Please set OPENAI_COMPATIBLE_API_BASE environment variable (for Advantage endpoint)")
-    print("   export OPENAI_COMPATIBLE_API_BASE='https://your-advantage-endpoint.com/v1'")
+if not (os.getenv("ADVANTAGE_API_BASE") or os.getenv("OPENAI_COMPATIBLE_API_BASE")):
+    print("❌ Please set ADVANTAGE_API_BASE environment variable (for Advantage endpoint)")
+    print("   export ADVANTAGE_API_BASE='https://your-advantage-endpoint.com/v1'")
+    print("   (or OPENAI_COMPATIBLE_API_BASE for backward compatibility)")
     sys.exit(1)
 
 try:
@@ -87,12 +88,12 @@ def create_test_image(color: str = "red", size: int = 15) -> str:
 # =============================================================================
 
 
-async def basic_text_example(model: str = "global/chat-gpt-5"):
+async def basic_text_example(model: str = "global/gpt-5-chat"):
     """Basic text completion example"""
     print(f"\n🤖 Basic Text Completion with {model}")
     print("=" * 60)
 
-    client = get_client("openai_compatible", model=model)
+    client = get_client("advantage", model=model)
 
     messages = [
         {"role": "system", "content": "You are a helpful AI assistant."},
@@ -119,18 +120,18 @@ async def basic_text_example(model: str = "global/chat-gpt-5"):
 # =============================================================================
 
 
-async def streaming_example(model: str = "global/chat-gpt-5"):
+async def streaming_example(model: str = "global/gpt-5-chat"):
     """Real-time streaming example"""
     print(f"\n⚡ Streaming Example with {model}")
     print("=" * 60)
 
     # Check streaming support
     config = get_config()
-    if not config.supports_feature("openai_compatible", Feature.STREAMING, model):
+    if not config.supports_feature("advantage", Feature.STREAMING, model):
         print(f"⚠️  Model {model} doesn't support streaming")
         return None
 
-    client = get_client("openai_compatible", model=model)
+    client = get_client("advantage", model=model)
 
     messages = [
         {
@@ -162,18 +163,13 @@ async def streaming_example(model: str = "global/chat-gpt-5"):
 # =============================================================================
 
 
-async def function_calling_example(model: str = "global/chat-gpt-5"):
+async def function_calling_example(model: str = "global/gpt-5-chat"):
     """Function calling with tools"""
     print(f"\n🔧 Function Calling with {model}")
     print("=" * 60)
 
-    # Check if model supports tools
-    config = get_config()
-    if not config.supports_feature("openai_compatible", Feature.TOOLS, model):
-        print(f"⚠️  Skipping function calling: Model {model} doesn't support tools")
-        return None
-
-    client = get_client("openai_compatible", model=model)
+    # The advantage provider supports function calling with automatic workarounds
+    client = get_client("advantage", model=model)
 
     # Define tools
     tools = [
@@ -226,14 +222,16 @@ async def function_calling_example(model: str = "global/chat-gpt-5"):
     ]
 
     print("🔄 Making function calling request...")
-    # Add strict parameter required by Advantage API
-    advantage_tools = []
-    for tool in tools:
-        advantage_tool = tool.copy()
-        advantage_tool["function"]["strict"] = False  # Add required strict parameter
-        advantage_tools.append(advantage_tool)
-    
-    response = await client.create_completion(messages, tools=advantage_tools)
+    # The AdvantageClient automatically handles:
+    # - Adding the strict parameter to tools
+    # - Injecting system prompt to guide function calling
+    # - Parsing function calls from content field
+    # - Converting to standard tool_calls format
+
+    response = await client.create_completion(
+        messages,
+        tools=tools
+    )
 
     if response.get("tool_calls"):
         print(f"✅ Tool calls requested: {len(response['tool_calls'])}")
@@ -287,45 +285,62 @@ async def function_calling_example(model: str = "global/chat-gpt-5"):
 # =============================================================================
 
 
-async def vision_example(model: str = "global/chat-gpt-5"):
+async def vision_example(model: str = "global/gpt-5-chat"):
     """Vision capabilities with vision-enabled models"""
     print(f"\n👁️  Vision Example with {model}")
     print("=" * 60)
 
     # Check if model supports vision
     config = get_config()
-    if not config.supports_feature("openai_compatible", Feature.VISION, model):
+    if not config.supports_feature("advantage", Feature.VISION, model):
         print(f"⚠️  Skipping vision: Model {model} doesn't support vision")
-        print("💡 Try a vision-capable model like: global/chat-gpt-5, global/chat-gpt-4o, global/chat-gpt-4-turbo")
+        print("💡 Try a vision-capable model like: global/gpt-5-chat, global/chat-gpt-4o, global/chat-gpt-4-turbo")
         return None
 
-    client = get_client("openai_compatible", model=model)
+    client = get_client("advantage", model=model)
 
-    # Create a proper test image
+    # Create a proper test image (larger size for better visibility)
     print("🖼️  Creating test image...")
-    test_image = create_test_image("blue", 20)
+    test_image = create_test_image("blue", 100)
+
+    # Verify image was created
+    if not test_image or len(test_image) < 100:
+        print("⚠️  Warning: Test image may be invalid or too small")
 
     messages = [
         {
             "role": "user",
             "content": [
                 {
-                    "type": "text",
-                    "text": "What color is this square? Answer with just the color name.",
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/png;base64,{test_image}",
+                        "detail": "auto"
+                    },
                 },
                 {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{test_image}"},
+                    "type": "text",
+                    "text": "Describe what you see in this image. What color is the square?",
                 },
             ],
         }
     ]
 
     print("👀 Analyzing image...")
-    response = await client.create_completion(messages, max_tokens=50)
+    try:
+        response = await client.create_completion(messages, max_tokens=100)
+        print("✅ Vision response:")
+        print(f"   {response['response']}")
 
-    print("✅ Vision response:")
-    print(f"   {response['response']}")
+        # Check if vision actually worked
+        if "can't" in response['response'].lower() or "cannot" in response['response'].lower() or "don't see" in response['response'].lower():
+            print("\n⚠️  Note: The model indicates it cannot process the image.")
+        elif "blue" in response['response'].lower():
+            print("\n✅ Vision is working! The model correctly identified the blue square.")
+    except Exception as e:
+        print(f"❌ Vision request failed: {e}")
+        print("ℹ️  Vision support may require specific configuration with this provider.")
+        return None
 
     return response
 
@@ -335,18 +350,18 @@ async def vision_example(model: str = "global/chat-gpt-5"):
 # =============================================================================
 
 
-async def json_mode_example(model: str = "global/chat-gpt-5"):
+async def json_mode_example(model: str = "global/gpt-5-chat"):
     """JSON mode example with structured output"""
     print(f"\n📋 JSON Mode Example with {model}")
     print("=" * 60)
 
     # Check JSON mode support
     config = get_config()
-    if not config.supports_feature("openai_compatible", Feature.JSON_MODE, model):
+    if not config.supports_feature("advantage", Feature.JSON_MODE, model):
         print(f"⚠️  Model {model} doesn't support JSON mode")
         return None
 
-    client = get_client("openai_compatible", model=model)
+    client = get_client("advantage", model=model)
 
     messages = [
         {
@@ -371,12 +386,22 @@ async def json_mode_example(model: str = "global/chat-gpt-5"):
 
         # Try to parse as JSON to verify
         import json
+        import re
 
         try:
-            parsed = json.loads(response["response"])
+            response_text = response["response"]
+
+            # Strip markdown code fences if present
+            json_match = re.search(r'```json\s*\n(.*?)\n```', response_text, re.DOTALL)
+            if json_match:
+                response_text = json_match.group(1).strip()
+            elif response_text.startswith('```') and response_text.endswith('```'):
+                response_text = response_text.strip('`').strip()
+
+            parsed = json.loads(response_text)
             print(f"✅ Valid JSON structure with keys: {list(parsed.keys())}")
         except json.JSONDecodeError:
-            print("⚠️  Response is not valid JSON")
+            print("⚠️  Response is not valid JSON (but may be wrapped in markdown)")
 
     except Exception as e:
         print(f"❌ JSON mode failed: {e}")
@@ -393,8 +418,8 @@ async def json_mode_example(model: str = "global/chat-gpt-5"):
 
 
 async def model_comparison_example():
-    """Test single model (global/chat-gpt-5) with different prompts"""
-    print("\n📊 Single Model Test (global/chat-gpt-5)")
+    """Test single model (global/gpt-5-chat) with different prompts"""
+    print("\n📊 Single Model Test (global/gpt-5-chat)")
     print("=" * 60)
 
     # Test different types of prompts with the single model
@@ -405,13 +430,13 @@ async def model_comparison_example():
         ("Math Problem", "What is 15 * 23?"),
     ]
 
-    model = "global/chat-gpt-5"
+    model = "global/gpt-5-chat"
     results = {}
 
     for prompt_name, prompt_text in test_prompts:
         try:
             print(f"🔄 Testing {prompt_name}...")
-            client = get_client("openai_compatible", model=model)
+            client = get_client("advantage", model=model)
             messages = [{"role": "user", "content": prompt_text}]
 
             start_time = time.time()
@@ -450,7 +475,7 @@ async def model_comparison_example():
 # =============================================================================
 
 
-async def feature_detection_example(model: str = "global/chat-gpt-5"):
+async def feature_detection_example(model: str = "global/gpt-5-chat"):
     """Detect and display model features"""
     print(f"\n🔬 Feature Detection for {model}")
     print("=" * 60)
@@ -462,8 +487,20 @@ async def feature_detection_example(model: str = "global/chat-gpt-5"):
         print("📋 Model Information:")
         print(f"   Provider: {model_info['provider']}")
         print(f"   Model: {model_info['model']}")
-        print(f"   Max Context: {model_info['max_context_length']:,} tokens")
-        print(f"   Max Output: {model_info['max_output_tokens']:,} tokens")
+
+        # Handle potentially None values
+        max_context = model_info.get('max_context_length')
+        max_output = model_info.get('max_output_tokens')
+
+        if max_context is not None:
+            print(f"   Max Context: {max_context:,} tokens")
+        else:
+            print(f"   Max Context: Not specified")
+
+        if max_output is not None:
+            print(f"   Max Output: {max_output:,} tokens")
+        else:
+            print(f"   Max Output: Not specified")
 
         print("\n🎯 Supported Features:")
         for feature, supported in model_info["supports"].items():
@@ -479,7 +516,7 @@ async def feature_detection_example(model: str = "global/chat-gpt-5"):
 
     # Test actual client info
     try:
-        client = get_client("openai_compatible", model=model)
+        client = get_client("advantage", model=model)
         client_info = client.get_model_info()
 
         print("\n🔧 Client Features:")
@@ -506,12 +543,12 @@ async def feature_detection_example(model: str = "global/chat-gpt-5"):
 # =============================================================================
 
 
-async def simple_chat_example(model: str = "global/chat-gpt-5"):
+async def simple_chat_example(model: str = "global/gpt-5-chat"):
     """Simple chat interface simulation"""
     print(f"\n💬 Simple Chat Interface with {model}")
     print("=" * 60)
 
-    client = get_client("openai_compatible", model=model)
+    client = get_client("advantage", model=model)
 
     # Simulate a simple conversation
     conversation = [
@@ -548,12 +585,12 @@ async def simple_chat_example(model: str = "global/chat-gpt-5"):
 # =============================================================================
 
 
-async def parameters_example(model: str = "global/chat-gpt-5"):
+async def parameters_example(model: str = "global/gpt-5-chat"):
     """Test different parameters and settings"""
     print(f"\n🎛️  Parameters Test with {model}")
     print("=" * 60)
 
-    client = get_client("openai_compatible", model=model)
+    client = get_client("advantage", model=model)
 
     # Test different temperatures
     temperatures = [0.1, 0.7, 1.2]
@@ -590,15 +627,15 @@ async def parameters_example(model: str = "global/chat-gpt-5"):
 # =============================================================================
 
 
-async def comprehensive_test(model: str = "global/chat-gpt-5"):
+async def comprehensive_test(model: str = "global/gpt-5-chat"):
     """Test multiple features in one comprehensive example"""
     print(f"\n🚀 Comprehensive Feature Test with {model}")
     print("=" * 60)
 
     # Check what features this model supports
     config = get_config()
-    supports_tools = config.supports_feature("openai_compatible", Feature.TOOLS, model)
-    supports_vision = config.supports_feature("openai_compatible", Feature.VISION, model)
+    supports_tools = config.supports_feature("advantage", Feature.TOOLS, model)
+    supports_vision = config.supports_feature("advantage", Feature.VISION, model)
 
     print(f"Model capabilities: Tools={supports_tools}, Vision={supports_vision}")
 
@@ -606,7 +643,7 @@ async def comprehensive_test(model: str = "global/chat-gpt-5"):
         print("⚠️  Model doesn't support tools or vision - using text-only test")
         return await simple_chat_example(model)
 
-    client = get_client("openai_compatible", model=model)
+    client = get_client("advantage", model=model)
 
     # Define tools if supported
     tools = None
@@ -616,19 +653,32 @@ async def comprehensive_test(model: str = "global/chat-gpt-5"):
                 "type": "function",
                 "function": {
                     "name": "analyze_content",
-                    "description": "Analyze and categorize content",
+                    "description": "Analyze and categorize text or image content",
                     "strict": False,  # Add required strict parameter for Advantage API
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "content_type": {"type": "string"},
+                            "content_type": {
+                                "type": "string",
+                                "description": "Type of content being analyzed (e.g., 'text', 'image', 'multimodal')"
+                            },
+                            "text": {
+                                "type": "string",
+                                "description": "Text content to analyze (if applicable)"
+                            },
+                            "image_description": {
+                                "type": "string",
+                                "description": "Description of image content (if applicable)"
+                            },
                             "main_topics": {
                                 "type": "array",
                                 "items": {"type": "string"},
+                                "description": "Main topics or themes found in the content"
                             },
                             "complexity": {
                                 "type": "string",
                                 "enum": ["simple", "medium", "complex"],
+                                "description": "Complexity level of the content"
                             },
                         },
                         "required": ["content_type", "main_topics"],
@@ -651,12 +701,12 @@ async def comprehensive_test(model: str = "global/chat-gpt-5"):
                 "role": "user",
                 "content": [
                     {
-                        "type": "text",
-                        "text": "Please analyze this image and the following text using the analyze_content function: 'This is a test of multimodal AI capabilities.'",
-                    },
-                    {
                         "type": "image_url",
                         "image_url": {"url": f"data:image/png;base64,{test_image}"},
+                    },
+                    {
+                        "type": "text",
+                        "text": "Please analyze this image and the following text using the analyze_content function: 'This is a test of multimodal AI capabilities.'",
                     },
                 ],
             },
@@ -699,7 +749,7 @@ async def main():
     """Run all examples"""
     parser = argparse.ArgumentParser(description="Advantage Provider Example Script")
     parser.add_argument(
-        "--model", default="global/chat-gpt-5", help="Model to use (default: global/chat-gpt-5)"
+        "--model", default="global/gpt-5-chat", help="Model to use (default: global/gpt-5-chat)"
     )
     parser.add_argument(
         "--skip-vision", action="store_true", help="Skip vision examples"
@@ -714,18 +764,18 @@ async def main():
     print("🚀 Advantage Provider Examples")
     print("=" * 60)
     print(f"Using model: {args.model}")
-    print(f"API Key: {'✅ Set' if os.getenv('OPENAI_COMPATIBLE_API_KEY') else '❌ Missing'}")
-    print(f"API Base: {os.getenv('OPENAI_COMPATIBLE_API_BASE', '❌ Missing')}")
+    api_key = os.getenv('ADVANTAGE_API_KEY') or os.getenv('OPENAI_COMPATIBLE_API_KEY')
+    api_base = os.getenv('ADVANTAGE_API_BASE') or os.getenv('OPENAI_COMPATIBLE_API_BASE')
+    print(f"API Key: {'✅ Set' if api_key else '❌ Missing'}")
+    print(f"API Base: {api_base or '❌ Missing'}")
 
     # Show model capabilities
     try:
         config = get_config()
-        supports_tools = config.supports_feature("openai_compatible", Feature.TOOLS, args.model)
-        supports_vision = config.supports_feature("openai_compatible", Feature.VISION, args.model)
-        supports_streaming = config.supports_feature(
-            "openai_compatible", Feature.STREAMING, args.model
-        )
-        supports_json = config.supports_feature("openai_compatible", Feature.JSON_MODE, args.model)
+        supports_tools = config.supports_feature("advantage", Feature.TOOLS, args.model)
+        supports_vision = config.supports_feature("advantage", Feature.VISION, args.model)
+        supports_streaming = config.supports_feature("advantage", Feature.STREAMING, args.model)
+        supports_json = config.supports_feature("advantage", Feature.JSON_MODE, args.model)
 
         print("Model capabilities:")
         print(f"  Tools: {'✅' if supports_tools else '❌'}")
@@ -750,14 +800,14 @@ async def main():
             )
 
         if not args.skip_vision:
-            examples.append(("Vision", lambda: vision_example("global/chat-gpt-5")))
+            examples.append(("Vision", lambda: vision_example("global/gpt-5-chat")))
 
         examples.extend(
             [
                 ("Single Model Test", model_comparison_example),
                 ("Simple Chat", lambda: simple_chat_example(args.model)),
                 ("Parameters Test", lambda: parameters_example(args.model)),
-                ("Comprehensive Test", lambda: comprehensive_test("global/chat-gpt-5")),
+                ("Comprehensive Test", lambda: comprehensive_test("global/gpt-5-chat")),
             ]
         )
 
@@ -801,14 +851,14 @@ async def main():
 
         # Show configuration recommendations
         print("\n💡 Configuration Tips:")
-        print("   • Set OPENAI_COMPATIBLE_API_KEY to your Advantage API key")
-        print("   • Set OPENAI_COMPATIBLE_API_BASE to your Advantage endpoint URL")
-        print("   • This script demonstrates the limitation of using OpenAI-compatible clients with Advantage")
-        print("   • Advantage API requirements not supported by standard OpenAI client:")
-        print("     - Requires modelId/assistantId/collectionId in request body")
-        print("     - Requires tools.function.strict boolean for function calling")
-        print("   • A dedicated Advantage client implementation would be needed for full compatibility")
-        print("   • Current errors: DS5407 (missing modelId) - cannot be resolved with openai_compatible provider")
+        print("   • Set ADVANTAGE_API_KEY to your Advantage API key")
+        print("   • Set ADVANTAGE_API_BASE to your Advantage endpoint URL")
+        print("   • Or use OPENAI_COMPATIBLE_API_KEY and OPENAI_COMPATIBLE_API_BASE for backward compatibility")
+        print("   • The Advantage provider includes automatic workarounds for:")
+        print("     - System prompt injection for function calling")
+        print("     - Parsing function calls from content field")
+        print("     - Adding required strict parameter to tools")
+        print("     - Converting to standard tool_calls format")
 
 
 if __name__ == "__main__":
