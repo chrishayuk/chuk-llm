@@ -100,10 +100,11 @@ class AdvantageClient(OpenAILLMClient):
         we can then parse.
         """
         return (
-            "When calling a function, respond with ONLY a JSON object in this format: "
+            "When you need to call a function, respond with ONLY a JSON object in this exact format: "
             '{"name": "function_name", "arguments": {"param1": "value1", "param2": "value2"}}. '
             "Do not include markdown code blocks, explanations, or any other text. "
-            "Just return the raw JSON object."
+            "Just return the raw JSON object. "
+            "If the user's request requires a function call, you MUST use this format."
         )
 
     def _inject_function_calling_prompt(
@@ -332,12 +333,51 @@ class AdvantageClient(OpenAILLMClient):
         # For streaming, parent returns AsyncIterator, for non-streaming returns coroutine
         result = super().create_completion(messages, tools=tools, stream=stream, **kwargs)
 
-        # If streaming, return the iterator directly
+        # If streaming, wrap iterator to convert tool calls
         if stream:
-            return result
+            return self._stream_and_convert(result, tools)
 
         # For non-streaming, wrap in an async function to convert tool calls
         return self._complete_and_convert(result, tools)
+
+    async def _stream_and_convert(self, stream_iterator, tools: Optional[List[Dict[str, Any]]]):
+        """Wrap streaming iterator to convert tool calls at the end"""
+        import uuid
+        import json
+
+        accumulated_content = ""
+
+        async for chunk in stream_iterator:
+            # Accumulate content to detect function calls
+            if isinstance(chunk, dict):
+                response = chunk.get("response", "")
+                if response:
+                    accumulated_content += response
+
+            yield chunk
+
+        # After streaming completes, check if accumulated content is a function call
+        if tools and accumulated_content:
+            function_call = self._parse_function_call_from_content(accumulated_content)
+            if function_call:
+                log.info(
+                    f"[advantage] Detected function call in streamed content: "
+                    f"{function_call['name']}"
+                )
+                # Yield a final chunk with the tool_calls
+                tool_call = {
+                    "id": f"call_{uuid.uuid4().hex[:24]}",
+                    "type": "function",
+                    "function": {
+                        "name": function_call["name"],
+                        "arguments": json.dumps(function_call["arguments"])
+                    }
+                }
+
+                yield {
+                    "response": None,
+                    "tool_calls": [tool_call]
+                }
 
     async def _complete_and_convert(
         self,
@@ -393,7 +433,6 @@ class AdvantageClient(OpenAILLMClient):
             yield chunk
 
         # After streaming completes, check if accumulated content is a function call
-        # This is a limitation - we can't detect mid-stream
         if tools and accumulated_content:
             function_call = self._parse_function_call_from_content(accumulated_content)
             if function_call:
@@ -401,6 +440,21 @@ class AdvantageClient(OpenAILLMClient):
                     f"[advantage] Detected function call in streamed content: "
                     f"{function_call['name']}"
                 )
-                # Note: At this point streaming is done, so we can't modify
-                # the already-yielded chunks. The user will need to parse
-                # the accumulated content themselves, or use non-streaming mode.
+                # Yield a final chunk with the tool_calls in the expected format
+                import uuid
+                import json
+
+                tool_call = {
+                    "id": f"call_{uuid.uuid4().hex[:24]}",
+                    "type": "function",
+                    "function": {
+                        "name": function_call["name"],
+                        "arguments": json.dumps(function_call["arguments"])
+                    }
+                }
+
+                # Yield final chunk with tool_calls
+                yield {
+                    "response": None,  # Clear response when tool call is made
+                    "tool_calls": [tool_call]
+                }

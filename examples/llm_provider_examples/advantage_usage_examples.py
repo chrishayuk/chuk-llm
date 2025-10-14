@@ -171,7 +171,7 @@ async def function_calling_example(model: str = "global/gpt-5-chat"):
     # The advantage provider supports function calling with automatic workarounds
     client = get_client("advantage", model=model)
 
-    # Define tools
+    # Define tools - includes both separate and combined tools to handle model's preference
     tools = [
         {
             "type": "function",
@@ -212,12 +212,43 @@ async def function_calling_example(model: str = "global/gpt-5-chat"):
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "search_and_calculate",
+                "description": "Search the web and perform a calculation",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "The search query"},
+                        "calculation": {
+                            "type": "string",
+                            "description": "Mathematical expression to calculate",
+                        },
+                        "precision": {
+                            "type": "integer",
+                            "description": "Number of decimal places for calculation result",
+                        },
+                    },
+                    "required": ["query", "calculation"],
+                },
+            },
+        },
     ]
 
     messages = [
         {
+            "role": "system",
+            "content": (
+                "You are a function-calling assistant. "
+                "AVAILABLE FUNCTIONS: search_web, calculate_math, search_and_calculate. "
+                "You MUST use these EXACT function names only. "
+                "For tasks requiring both search and calculation, use search_and_calculate."
+            )
+        },
+        {
             "role": "user",
-            "content": "Search for 'latest AI research' and calculate 25.5 * 14.2 with 3 decimal places.",
+            "content": "Call search_and_calculate to search for 'latest AI research' and calculate 25.5 * 14.2 with 3 decimal places."
         }
     ]
 
@@ -255,6 +286,9 @@ async def function_calling_example(model: str = "global/gpt-5-chat"):
                 result = (
                     '{"result": 361.100, "expression": "25.5 * 14.2", "precision": 3}'
                 )
+            elif func_name == "search_and_calculate":
+                # Handle combined function - provide both search results and calculation
+                result = '{"search_results": ["Latest breakthrough in transformer models", "New multimodal AI research", "Advances in reasoning capabilities"], "calculation_result": 362.100, "expression": "25.5 * 14.2", "precision": 3}'
             else:
                 result = '{"status": "success"}'
 
@@ -281,7 +315,157 @@ async def function_calling_example(model: str = "global/gpt-5-chat"):
 
 
 # =============================================================================
-# Example 4: Vision Capabilities
+# Example 4: Streaming Function Calling
+# =============================================================================
+
+
+async def streaming_function_calling_example(model: str = "global/gpt-5-chat"):
+    """Streaming function calling with tools - demonstrates real-time tool call detection"""
+    print(f"\n⚡🔧 Streaming Function Calling with {model}")
+    print("=" * 60)
+
+    client = get_client("advantage", model=model)
+
+    # Define tools
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "description": "Get current weather information for a location",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string", "description": "City name"},
+                        "units": {
+                            "type": "string",
+                            "enum": ["celsius", "fahrenheit"],
+                            "description": "Temperature units",
+                        },
+                    },
+                    "required": ["location"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "calculate_tip",
+                "description": "Calculate tip amount for a bill",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "bill_amount": {
+                            "type": "number",
+                            "description": "Total bill amount",
+                        },
+                        "tip_percentage": {
+                            "type": "number",
+                            "description": "Tip percentage (e.g., 15, 18, 20)",
+                        },
+                    },
+                    "required": ["bill_amount", "tip_percentage"],
+                },
+            },
+        },
+    ]
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a function-calling assistant. "
+                "AVAILABLE FUNCTIONS: get_weather, calculate_tip. "
+                "You MUST use these EXACT function names only."
+            )
+        },
+        {
+            "role": "user",
+            "content": "Call get_weather for San Francisco and call calculate_tip for a $85.50 bill with 20% tip."
+        }
+    ]
+
+    print("🌊 Streaming function calling request...")
+    print("   ", end="", flush=True)
+
+    start_time = time.time()
+    full_response = ""
+    tool_calls = []
+
+    try:
+        async for chunk in client.create_completion(messages, tools=tools, stream=True):
+            # Handle text response chunks
+            if chunk.get("response"):
+                content = chunk["response"]
+                print(content, end="", flush=True)
+                full_response += content
+
+            # Handle tool call chunks
+            if chunk.get("tool_calls"):
+                if not tool_calls:
+                    print("\n\n🔧 Tool calls detected:")
+                tool_calls = chunk["tool_calls"]
+
+        duration = time.time() - start_time
+
+        if tool_calls:
+            print(f"\n✅ Tool calls generated ({len(tool_calls)} calls):")
+            for i, tool_call in enumerate(tool_calls, 1):
+                func_name = tool_call["function"]["name"]
+                func_args = tool_call["function"]["arguments"]
+                print(f"   {i}. {func_name}({func_args})")
+
+            # Simulate tool execution
+            messages.append(
+                {"role": "assistant", "content": full_response or "", "tool_calls": tool_calls}
+            )
+
+            # Add mock tool results
+            for tool_call in tool_calls:
+                func_name = tool_call["function"]["name"]
+
+                if func_name == "get_weather":
+                    result = '{"location": "San Francisco", "temperature": 68, "units": "fahrenheit", "conditions": "Partly cloudy", "humidity": 65}'
+                elif func_name == "calculate_tip":
+                    result = '{"bill_amount": 85.50, "tip_percentage": 20, "tip_amount": 17.10, "total": 102.60}'
+                else:
+                    result = '{"status": "success"}'
+
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call["id"],
+                        "name": func_name,
+                        "content": result,
+                    }
+                )
+
+            # Get final response with streaming
+            print("\n🌊 Streaming final response:")
+            print("   ", end="", flush=True)
+
+            final_response = ""
+            async for chunk in client.create_completion(messages, stream=True):
+                if chunk.get("response"):
+                    content = chunk["response"]
+                    print(content, end="", flush=True)
+                    final_response += content
+
+            print(f"\n✅ Streaming function calling completed ({duration:.2f}s)")
+            return {"tool_calls": tool_calls, "final_response": final_response}
+
+        else:
+            print(f"\n✅ Direct response (no tool calls) ({duration:.2f}s)")
+            return {"response": full_response}
+
+    except Exception as e:
+        print(f"\n❌ Streaming function calling failed: {e}")
+        print("ℹ️  Falling back to non-streaming function calling...")
+        return await function_calling_example(model)
+
+
+# =============================================================================
+# Example 5: Vision Capabilities
 # =============================================================================
 
 
@@ -346,7 +530,7 @@ async def vision_example(model: str = "global/gpt-5-chat"):
 
 
 # =============================================================================
-# Example 5: JSON Mode
+# Example 6: JSON Mode
 # =============================================================================
 
 
@@ -413,7 +597,7 @@ async def json_mode_example(model: str = "global/gpt-5-chat"):
 
 
 # =============================================================================
-# Example 6: Model Comparison
+# Example 7: Model Comparison
 # =============================================================================
 
 
@@ -471,7 +655,7 @@ async def model_comparison_example():
 
 
 # =============================================================================
-# Example 7: Feature Detection
+# Example 8: Feature Detection
 # =============================================================================
 
 
@@ -482,7 +666,7 @@ async def feature_detection_example(model: str = "global/gpt-5-chat"):
 
     # Get model info
     try:
-        model_info = get_provider_info("openai_compatible", model)
+        model_info = get_provider_info("advantage", model)
 
         print("📋 Model Information:")
         print(f"   Provider: {model_info['provider']}")
@@ -539,7 +723,7 @@ async def feature_detection_example(model: str = "global/gpt-5-chat"):
 
 
 # =============================================================================
-# Example 8: Simple Chat Interface
+# Example 9: Simple Chat Interface
 # =============================================================================
 
 
@@ -581,7 +765,7 @@ async def simple_chat_example(model: str = "global/gpt-5-chat"):
 
 
 # =============================================================================
-# Example 9: Temperature and Parameters Test
+# Example 10: Temperature and Parameters Test
 # =============================================================================
 
 
@@ -623,7 +807,7 @@ async def parameters_example(model: str = "global/gpt-5-chat"):
 
 
 # =============================================================================
-# Example 10: Comprehensive Feature Test
+# Example 11: Comprehensive Feature Test
 # =============================================================================
 
 
@@ -795,9 +979,10 @@ async def main():
 
     if not args.quick:
         if not args.skip_functions:
-            examples.append(
-                ("Function Calling", lambda: function_calling_example(args.model))
-            )
+            examples.extend([
+                ("Function Calling", lambda: function_calling_example(args.model)),
+                ("Streaming Function Calling", lambda: streaming_function_calling_example(args.model)),
+            ])
 
         if not args.skip_vision:
             examples.append(("Vision", lambda: vision_example("global/gpt-5-chat")))
