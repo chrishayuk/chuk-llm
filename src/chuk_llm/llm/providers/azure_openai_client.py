@@ -192,7 +192,7 @@ class AzureOpenAILLMClient(
                 "max_context_length": 272000
                 if "gpt-5" in deployment_lower or "gpt5" in deployment_lower
                 else 200000,
-                "max_output_tokens": 128000
+                "max_output_tokens": 16384
                 if "gpt-5" in deployment_lower or "gpt5" in deployment_lower
                 else 65536,
                 "requires_max_completion_tokens": True,
@@ -1023,6 +1023,14 @@ class AzureOpenAILLMClient(
                             f"Adjusting max_tokens from {adjusted['max_tokens']} to {model_caps.max_output_tokens} for azure_openai"
                         )
                         adjusted["max_tokens"] = model_caps.max_output_tokens
+
+                # Also adjust max_completion_tokens for GPT-5 and reasoning models
+                if "max_completion_tokens" in adjusted and model_caps.max_output_tokens:
+                    if adjusted["max_completion_tokens"] > model_caps.max_output_tokens:
+                        log.debug(
+                            f"Adjusting max_completion_tokens from {adjusted['max_completion_tokens']} to {model_caps.max_output_tokens} for azure_openai"
+                        )
+                        adjusted["max_completion_tokens"] = model_caps.max_output_tokens
 
         except Exception as e:
             log.debug(f"Could not adjust parameters using config: {e}")

@@ -212,6 +212,15 @@ class ConfigAwareProviderMixin:
                 )
                 adjusted["max_tokens"] = limit
 
+        # Validate max_completion_tokens against model limits (for GPT-5/reasoning models)
+        if "max_completion_tokens" in adjusted and adjusted["max_completion_tokens"] is not None:
+            limit = self.get_max_tokens_limit()
+            if limit and adjusted["max_completion_tokens"] > limit:
+                log.debug(
+                    f"Capping max_completion_tokens from {adjusted['max_completion_tokens']} to {limit} for {self.provider_name}"
+                )
+                adjusted["max_completion_tokens"] = limit
+
         # Add default max_tokens if not specified or is None
         # BUT: Skip this if max_completion_tokens is already set
         elif not has_max_completion_tokens and ("max_tokens" not in adjusted or adjusted.get("max_tokens") is None):

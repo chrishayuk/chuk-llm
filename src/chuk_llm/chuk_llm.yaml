@@ -2022,9 +2022,48 @@ advantage:
     - json_mode
     - vision
 
-  # Model limits
+  # Model limits (defaults for unknown models)
   max_context_length: 128000
-  max_output_tokens: 4096
+  max_output_tokens: 16384  # Updated for GPT-5 Azure deployment limits
+
+  # Model-specific capabilities
+  model_capabilities:
+    # GPT-5 models (matches gpt-5, gpt-5-mini, global/gpt-5-chat, etc.)
+    - pattern: ".*gpt-5.*"
+      features:
+        - text
+        - streaming
+        - system_messages
+        - tools
+        - json_mode
+        - vision
+        - reasoning
+      max_context_length: 128000
+      max_output_tokens: 16384  # Azure deployment limit for GPT-5
+
+    # GPT-4o models
+    - pattern: ".*gpt-4o.*"
+      features:
+        - text
+        - streaming
+        - system_messages
+        - tools
+        - json_mode
+        - vision
+      max_context_length: 128000
+      max_output_tokens: 4096
+
+    # GPT-4 Turbo models
+    - pattern: ".*gpt-4-turbo.*"
+      features:
+        - text
+        - streaming
+        - system_messages
+        - tools
+        - json_mode
+        - vision
+      max_context_length: 128000
+      max_output_tokens: 4096
   
   rate_limits:
     requests_per_minute: 1000  # Default, adjust based on your endpoint
@@ -2460,7 +2499,7 @@ azure_openai:
         deployment_rules:
           gpt5_deployments:
             base_context_length: 272000
-            base_max_output_tokens: 128000
+            base_max_output_tokens: 16384
             features:
               - text
               - streaming
@@ -2526,9 +2565,9 @@ azure_openai:
     - tools
     - vision
     - parallel_calls
-  
+
   max_context_length: 272000  # Updated for GPT-5
-  max_output_tokens: 128000   # Updated for GPT-5
+  max_output_tokens: 16384    # Updated for Azure GPT-5 (actual deployment limit)
   
   # Enhanced model aliases
   model_aliases:
@@ -2557,8 +2596,8 @@ azure_openai:
   
   # Enhanced model-specific capabilities
   model_capabilities:
-    # GPT-5 series
-    - pattern: "gpt-5.*"
+    # GPT-5 series (matches gpt-5, gpt-5-mini, gpt-5-chat, global/gpt-5-chat, etc.)
+    - pattern: ".*gpt-5.*"
       features:
         - text
         - streaming
@@ -2568,8 +2607,8 @@ azure_openai:
         - reasoning
         - json_mode
         - system_messages
-      max_context_length: 272000
-      max_output_tokens: 128000
+      max_context_length: 128000
+      max_output_tokens: 16384  # Azure deployment limit for GPT-5
     
     # O-series reasoning models
     - pattern: "o[1-4].*"
