@@ -155,7 +155,7 @@ __global_aliases__:
   azure_latest: azure_openai/gpt-5
 anthropic:
   api_key_env: ANTHROPIC_API_KEY
-  client_class: chuk_llm.llm.providers.anthropic_client.AnthropicLLMClient
+  client_class: chuk_llm.clients.anthropic.AnthropicClient
   default_model: claude-opus-4-1-20250805
   # Base URL defaults to Anthropic's API, override with ANTHROPIC_API_BASE
   extra:
@@ -325,7 +325,7 @@ anthropic:
 deepseek:
   api_base: https://api.deepseek.com  # Default fallback
   api_key_env: DEEPSEEK_API_KEY
-  client_class: chuk_llm.llm.providers.openai_client.OpenAILLMClient
+  client_class: chuk_llm.clients.openai_compatible.OpenAICompatibleClient
   default_model: deepseek-reasoner
   extra:
     # Environment variable for base URL
@@ -396,7 +396,7 @@ deepseek:
     default: 3000
 gemini:
   api_key_env: GEMINI_API_KEY
-  client_class: chuk_llm.llm.providers.gemini_client.GeminiLLMClient
+  client_class: chuk_llm.clients.gemini.GeminiClient
   default_model: gemini-2.5-flash
   # Base URL defaults to Google's API, override with GEMINI_API_BASE
   extra:
@@ -559,7 +559,7 @@ gemini:
 groq:
   api_base: https://api.groq.com/openai/v1  # Default fallback
   api_key_env: GROQ_API_KEY
-  client_class: chuk_llm.llm.providers.groq_client.GroqAILLMClient
+  client_class: chuk_llm.clients.groq.GroqClient
   default_model: llama-3.3-70b-versatile
   
   # Enhanced features based on actual capabilities
@@ -844,7 +844,7 @@ groq:
 
 mistral:
   api_key_env: MISTRAL_API_KEY
-  client_class: chuk_llm.llm.providers.mistral_client.MistralLLMClient
+  client_class: chuk_llm.clients.mistral.MistralClient
   default_model: mistral-medium-2505
   # Base URL defaults to Mistral's API, override with MISTRAL_API_BASE
   extra:
@@ -1028,7 +1028,7 @@ mistral:
     premium: 5000
 ollama:
   api_base: http://localhost:11434  # Default fallback
-  client_class: chuk_llm.llm.providers.ollama_client.OllamaLLMClient
+  client_class: chuk_llm.clients.ollama.OllamaClient
   default_model: granite3.3
   # Override with OLLAMA_API_BASE or OLLAMA_HOST environment variables
   extra:
@@ -1331,7 +1331,7 @@ ollama:
   rate_limits: {}
 openai:
   # Updated configuration for GPT-5 and enhanced model support
-  client_class: chuk_llm.llm.providers.openai_client.OpenAILLMClient
+  client_class: chuk_llm.clients.openai.OpenAIClient
   api_key_env: OPENAI_API_KEY
   default_model: gpt-5
   
@@ -1741,7 +1741,7 @@ openai:
 litellm:
   # LiteLLM Gateway - Universal LLM Gateway
   # https://github.com/BerriAI/litellm
-  # 
+  #
   # LiteLLM provides a unified interface to 100+ LLM providers
   # Set up your gateway and configure:
   #   LITELLM_API_BASE=http://localhost:4000  # Or your gateway URL
@@ -1749,7 +1749,7 @@ litellm:
   #
   # Models are prefixed by provider: openai/gpt-4, anthropic/claude-3, etc.
   #
-  client_class: chuk_llm.llm.providers.openai_client.OpenAILLMClient
+  client_class: chuk_llm.clients.openai_compatible.OpenAICompatibleClient
   api_key_env: LITELLM_API_KEY
   api_key_fallback_env: OPENAI_API_KEY
   api_base: http://localhost:4000  # Default fallback
@@ -1795,7 +1795,7 @@ openrouter:
   #
   # Models use provider prefixes: openai/gpt-4, anthropic/claude-3-opus, etc.
   #
-  client_class: chuk_llm.llm.providers.openai_client.OpenAILLMClient
+  client_class: chuk_llm.clients.openai_compatible.OpenAICompatibleClient
   api_base: https://openrouter.ai/api/v1  # Default fallback
   api_key_env: OPENROUTER_API_KEY
   
@@ -1851,7 +1851,7 @@ vllm:
   #
   # Then set: VLLM_API_BASE=http://localhost:8000/v1
   #
-  client_class: chuk_llm.llm.providers.openai_client.OpenAILLMClient
+  client_class: chuk_llm.clients.openai_compatible.OpenAICompatibleClient
   api_key_env: VLLM_API_KEY
   # Most vLLM deployments don't require API keys
   api_base: http://localhost:8000/v1  # Default fallback
@@ -1895,7 +1895,7 @@ togetherai:
   # Set: TOGETHER_API_KEY=...
   # Set: TOGETHERAI_API_BASE=https://api.together.xyz/v1 (optional override)
   #
-  client_class: chuk_llm.llm.providers.openai_client.OpenAILLMClient
+  client_class: chuk_llm.clients.openai_compatible.OpenAICompatibleClient
   api_base: https://api.together.xyz/v1  # Default fallback
   api_key_env: TOGETHER_API_KEY
   api_key_fallback_env: TOGETHERAI_API_KEY
@@ -1966,7 +1966,7 @@ openai_compatible:
   #   extra:
   #     api_base_env: YOUR_CUSTOM_BASE_ENV
   #
-  client_class: chuk_llm.llm.providers.openai_client.OpenAILLMClient
+  client_class: chuk_llm.clients.openai_compatible.OpenAICompatibleClient
   api_key_env: OPENAI_COMPATIBLE_API_KEY
   # Base URL will be read from environment: OPENAI_COMPATIBLE_API_BASE
   # Falls back to api_key_fallback_env if primary not set
@@ -1996,7 +1996,7 @@ advantage:
   #   extra:
   #     api_base_env: YOUR_CUSTOM_ENV_VAR
   #
-  client_class: chuk_llm.llm.providers.advantage_client.AdvantageClient
+  client_class: chuk_llm.clients.advantage.AdvantageClient
   api_key_env: ADVANTAGE_API_KEY
   api_key_fallback_env: OPENAI_COMPATIBLE_API_KEY
 
@@ -2100,7 +2100,7 @@ advantage:
 perplexity:
   api_base: https://api.perplexity.ai  # Default fallback
   api_key_env: PERPLEXITY_API_KEY
-  client_class: chuk_llm.llm.providers.openai_client.OpenAILLMClient
+  client_class: chuk_llm.clients.openai_compatible.OpenAICompatibleClient
   default_model: sonar-pro
   extra:
     # Environment variable for base URL
@@ -2246,7 +2246,7 @@ perplexity:
 watsonx:
   api_key_env: WATSONX_API_KEY
   api_key_fallback_env: IBM_CLOUD_API_KEY
-  client_class: chuk_llm.llm.providers.watsonx_client.WatsonXLLMClient
+  client_class: chuk_llm.clients.watsonx.WatsonxClient
   default_model: ibm/granite-3-3-8b-instruct
   # Base URL defaults to IBM Cloud, override with WATSONX_API_BASE
   extra:
@@ -2466,7 +2466,7 @@ watsonx:
     enterprise: 2000
   watsonx_ai_url: https://us-south.ml.cloud.ibm.com
 azure_openai:
-  client_class: chuk_llm.llm.providers.azure_openai_client.AzureOpenAILLMClient
+  client_class: chuk_llm.clients.azure_openai.AzureOpenAIClient
   api_key_env: AZURE_OPENAI_API_KEY
   api_key_fallback_env: AZURE_OPENAI_KEY
   default_model: gpt-5

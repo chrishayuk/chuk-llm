@@ -55,6 +55,8 @@ if not (os.getenv("ADVANTAGE_API_BASE") or os.getenv("OPENAI_COMPATIBLE_API_BASE
 try:
     from chuk_llm.configuration import Feature, get_config
     from chuk_llm.llm.client import get_client, get_provider_info
+    from chuk_llm.core.models import Message, Tool, ToolCall, ToolFunction, FunctionCall
+    from chuk_llm.core.enums import MessageRole, ToolType
 except ImportError as e:
     print(f"❌ Import error: {e}")
     print("   Please make sure you're running from the chuk-llm directory")
@@ -96,11 +98,11 @@ async def basic_text_example(model: str = "global/gpt-5-chat"):
     client = get_client("advantage", model=model)
 
     messages = [
-        {"role": "system", "content": "You are a helpful AI assistant."},
-        {
-            "role": "user",
-            "content": "Explain neural networks in simple terms (2-3 sentences).",
-        },
+        Message(role=MessageRole.SYSTEM, content="You are a helpful AI assistant."),
+        Message(
+            role=MessageRole.USER,
+            content="Explain neural networks in simple terms (2-3 sentences).",
+        ),
     ]
 
     start_time = time.time()
@@ -272,8 +274,20 @@ async def function_calling_example(model: str = "global/gpt-5-chat"):
             print(f"   {i}. {func_name}({func_args})")
 
         # Simulate tool execution
+        # Convert tool_calls to Pydantic ToolCall objects
+        tool_calls_list = [
+            ToolCall(
+                id=tc["id"],
+                type=ToolType.FUNCTION,
+                function=FunctionCall(
+                    name=tc["function"]["name"],
+                    arguments=tc["function"]["arguments"]
+                )
+            )
+            for tc in response["tool_calls"]
+        ]
         messages.append(
-            {"role": "assistant", "content": "", "tool_calls": response["tool_calls"]}
+            Message(role=MessageRole.ASSISTANT, content="", tool_calls=tool_calls_list)
         )
 
         # Add mock tool results
@@ -416,8 +430,20 @@ async def streaming_function_calling_example(model: str = "global/gpt-5-chat"):
                 print(f"   {i}. {func_name}({func_args})")
 
             # Simulate tool execution
+            # Convert tool_calls to Pydantic ToolCall objects
+            tool_calls_list = [
+                ToolCall(
+                    id=tc["id"],
+                    type=ToolType.FUNCTION,
+                    function=FunctionCall(
+                        name=tc["function"]["name"],
+                        arguments=tc["function"]["arguments"]
+                    )
+                )
+                for tc in tool_calls
+            ]
             messages.append(
-                {"role": "assistant", "content": full_response or "", "tool_calls": tool_calls}
+                Message(role=MessageRole.ASSISTANT, content=full_response or "", tool_calls=tool_calls_list)
             )
 
             # Add mock tool results
@@ -621,7 +647,7 @@ async def model_comparison_example():
         try:
             print(f"🔄 Testing {prompt_name}...")
             client = get_client("advantage", model=model)
-            messages = [{"role": "user", "content": prompt_text}]
+            messages = [Message(role=MessageRole.USER, content=prompt_text)]
 
             start_time = time.time()
             response = await client.create_completion(messages)
@@ -655,7 +681,79 @@ async def model_comparison_example():
 
 
 # =============================================================================
-# Example 8: Feature Detection
+# Example 8: Model Discovery
+# =============================================================================
+
+
+async def model_discovery_example():
+    """Discover available Advantage models using discovery system"""
+    print("\n🔍 Model Discovery")
+    print("=" * 60)
+
+    api_key = os.getenv("ADVANTAGE_API_KEY") or os.getenv("OPENAI_COMPATIBLE_API_KEY")
+    api_base = os.getenv("ADVANTAGE_API_BASE") or os.getenv("OPENAI_COMPATIBLE_API_BASE")
+
+    if not api_key or not api_base:
+        print("⚠️  ADVANTAGE_API_KEY or ADVANTAGE_API_BASE not set")
+        return None
+
+    try:
+        from chuk_llm.llm.discovery.general_discoverers import OpenAICompatibleDiscoverer
+
+        print(f"🔍 Discovering models from Advantage API...")
+        discoverer = OpenAICompatibleDiscoverer(
+            provider_name="advantage",
+            api_key=api_key,
+            api_base=api_base,
+        )
+
+        models_data = await discoverer.discover_models()
+        print(f"\n📊 Found {len(models_data)} models")
+
+        # Display models with capabilities
+        for i, model in enumerate(models_data[:15], 1):  # Show first 15
+            model_name = model.get("name")
+            provider_spec = model.get("provider_specific", {})
+
+            # Build capability string
+            caps = []
+            if provider_spec.get("reasoning_capable"):
+                caps.append("🧠 reasoning")
+            if provider_spec.get("supports_tools"):
+                caps.append("🔧 tools")
+            if provider_spec.get("supports_vision"):
+                caps.append("👁️ vision")
+
+            cap_str = f" [{', '.join(caps)}]" if caps else ""
+            print(f"   {i}. {model_name}{cap_str}")
+
+        if len(models_data) > 15:
+            print(f"   ... and {len(models_data) - 15} more models")
+
+        # Test a dynamically discovered model
+        if models_data:
+            test_model = models_data[0].get("name")
+            print(f"\n🧪 Testing dynamically discovered model: {test_model}")
+            try:
+                client = get_client("advantage", model=test_model)
+                messages = [Message(role=MessageRole.USER, content="Say hello in one word")]
+
+                response = await client.create_completion(messages, max_tokens=10)
+                print(f"   ✅ Model works: {response.get('response', '')}")
+            except Exception as e:
+                print(f"   ⚠️ Test failed: {str(e)[:100]}")
+
+        return models_data
+
+    except Exception as e:
+        print(f"❌ Discovery failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+# =============================================================================
+# Example 9: Feature Detection
 # =============================================================================
 
 
@@ -723,7 +821,7 @@ async def feature_detection_example(model: str = "global/gpt-5-chat"):
 
 
 # =============================================================================
-# Example 9: Simple Chat Interface
+# Example 10: Simple Chat Interface
 # =============================================================================
 
 
@@ -742,14 +840,14 @@ async def simple_chat_example(model: str = "global/gpt-5-chat"):
     ]
 
     messages = [
-        {"role": "system", "content": "You are a helpful and friendly AI assistant."}
+        Message(role=MessageRole.SYSTEM, content="You are a helpful and friendly AI assistant.")
     ]
 
     for user_input in conversation:
         print(f"👤 User: {user_input}")
 
         # Add user message
-        messages.append({"role": "user", "content": user_input})
+        messages.append(Message(role=MessageRole.USER, content=user_input))
 
         # Get response
         response = await client.create_completion(messages, max_tokens=200)
@@ -759,13 +857,13 @@ async def simple_chat_example(model: str = "global/gpt-5-chat"):
         print()
 
         # Add assistant response to conversation
-        messages.append({"role": "assistant", "content": assistant_response})
+        messages.append(Message(role=MessageRole.ASSISTANT, content=assistant_response))
 
     return messages
 
 
 # =============================================================================
-# Example 10: Temperature and Parameters Test
+# Example 11: Temperature and Parameters Test
 # =============================================================================
 
 
@@ -783,7 +881,7 @@ async def parameters_example(model: str = "global/gpt-5-chat"):
     for temp in temperatures:
         print(f"\n🌡️  Temperature {temp}:")
 
-        messages = [{"role": "user", "content": prompt}]
+        messages = [Message(role=MessageRole.USER, content=prompt)]
 
         try:
             response = await client.create_completion(
@@ -796,8 +894,8 @@ async def parameters_example(model: str = "global/gpt-5-chat"):
     # Test with system message
     print("\n🎭 With System Message:")
     messages = [
-        {"role": "system", "content": "You are a poetic AI that speaks in rhymes."},
-        {"role": "user", "content": "Tell me about the ocean."},
+        Message(role=MessageRole.SYSTEM, content="You are a poetic AI that speaks in rhymes."),
+        Message(role=MessageRole.USER, content="Tell me about the ocean."),
     ]
 
     response = await client.create_completion(messages, temperature=0.8, max_tokens=100)
@@ -807,7 +905,7 @@ async def parameters_example(model: str = "global/gpt-5-chat"):
 
 
 # =============================================================================
-# Example 11: Comprehensive Feature Test
+# Example 12: Comprehensive Feature Test
 # =============================================================================
 
 
@@ -972,6 +1070,7 @@ async def main():
 
     examples = [
         ("Feature Detection", lambda: feature_detection_example(args.model)),
+        ("Model Discovery", model_discovery_example),
         ("Basic Text", lambda: basic_text_example(args.model)),
         ("Streaming", lambda: streaming_example(args.model)),
         ("JSON Mode", lambda: json_mode_example(args.model)),

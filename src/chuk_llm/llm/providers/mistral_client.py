@@ -175,50 +175,63 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                     # Simple text message
                     mistral_messages.append({"role": "user", "content": content})
                 elif isinstance(content, list):
-                    # Multimodal message (text + images)
-                    # Check if vision is supported before processing
+                    # Multimodal message (text + images) - both dict and Pydantic
+                    from chuk_llm.core.enums import ContentType
+
+                    # Check if vision is supported before processing (both formats)
                     has_images = any(
-                        item.get("type") == "image_url" for item in content
+                        (isinstance(item, dict) and item.get("type") == "image_url") or
+                        (hasattr(item, "type") and item.type in [ContentType.IMAGE_URL, ContentType.IMAGE_DATA])
+                        for item in content
                     )
 
                     if has_images and not self.supports_feature("vision"):
                         log.warning(
                             f"Vision content detected but {self.model} doesn't support vision according to configuration"
                         )
-                        # Extract only text content
-                        text_content = " ".join(
-                            [
-                                item.get("text", "")
-                                for item in content
-                                if item.get("type") == "text"
-                            ]
-                        )
+                        # Extract only text content from both formats
+                        text_parts = []
+                        for item in content:
+                            if isinstance(item, dict) and item.get("type") == "text":
+                                text_parts.append(item.get("text", ""))
+                            elif hasattr(item, "type") and item.type == ContentType.TEXT:
+                                text_parts.append(item.text)
+
                         mistral_messages.append(
                             {
                                 "role": "user",
-                                "content": text_content
+                                "content": " ".join(text_parts)
                                 or "[Image content removed - not supported by model]",
                             }
                         )
                     else:
-                        # Process multimodal content normally
+                        # Process multimodal content normally (both dict and Pydantic)
                         mistral_content = []
                         for item in content:
-                            if item.get("type") == "text":
-                                mistral_content.append(
-                                    {"type": "text", "text": item.get("text", "")}
-                                )
-                            elif item.get("type") == "image_url":
-                                # Handle both URL and base64 formats
-                                image_url = item.get("image_url", {})
-                                if isinstance(image_url, dict):
-                                    url = image_url.get("url", "")
-                                else:
-                                    url = str(image_url)
-
-                                mistral_content.append(
-                                    {"type": "image_url", "image_url": url}
-                                )
+                            if isinstance(item, dict):
+                                # Dict-based content
+                                if item.get("type") == "text":
+                                    mistral_content.append(
+                                        {"type": "text", "text": item.get("text", "")}
+                                    )
+                                elif item.get("type") == "image_url":
+                                    image_url = item.get("image_url", {})
+                                    url = image_url.get("url", "") if isinstance(image_url, dict) else str(image_url)
+                                    mistral_content.append(
+                                        {"type": "image_url", "image_url": url}
+                                    )
+                            else:
+                                # Pydantic object-based content
+                                if hasattr(item, "type") and item.type == ContentType.TEXT:
+                                    mistral_content.append(
+                                        {"type": "text", "text": item.text}
+                                    )
+                                elif hasattr(item, "type") and item.type == ContentType.IMAGE_URL:
+                                    image_url_data = item.image_url
+                                    url = image_url_data.get("url") if isinstance(image_url_data, dict) else image_url_data
+                                    mistral_content.append(
+                                        {"type": "image_url", "image_url": url}
+                                    )
 
                         mistral_messages.append(
                             {"role": "user", "content": mistral_content}
@@ -328,11 +341,37 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                         f"Received tool calls from {self.model} but tools not supported according to configuration"
                     )
 
+            # Extract usage information if present
+            usage_info = None
+            if hasattr(response, "usage") and response.usage:
+                from chuk_llm.core.constants import ResponseKey
+
+                usage = response.usage
+                # Mistral may include reasoning_tokens for magistral models
+                reasoning_tokens = getattr(usage, ResponseKey.REASONING_TOKENS.value, None)
+
+                usage_info = {
+                    ResponseKey.PROMPT_TOKENS.value: getattr(
+                        usage, ResponseKey.PROMPT_TOKENS.value, 0
+                    ),
+                    ResponseKey.COMPLETION_TOKENS.value: getattr(
+                        usage, ResponseKey.COMPLETION_TOKENS.value, 0
+                    ),
+                    ResponseKey.TOTAL_TOKENS.value: getattr(
+                        usage, ResponseKey.TOTAL_TOKENS.value, 0
+                    ),
+                }
+                if reasoning_tokens is not None:
+                    usage_info[ResponseKey.REASONING_TOKENS.value] = reasoning_tokens
+
             # Create response
             result = {
                 "response": content if content else None,
                 "tool_calls": tool_calls,
             }
+
+            if usage_info:
+                result["usage"] = usage_info
 
             # Restore original tool names using universal restoration
             if name_mapping and tool_calls:
@@ -395,8 +434,8 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
 
     def create_completion(
         self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        messages: list,  # Pydantic Message objects (or dicts for backward compat)
+        tools: list | None = None,  # Pydantic Tool objects (or dicts for backward compat)
         *,
         stream: bool = False,
         **kwargs: Any,
@@ -408,17 +447,26 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
         successful pattern from Groq.
 
         Args:
-            messages: ChatML-style messages
-            tools: Tool definitions (any naming convention supported)
+            messages: List of Pydantic Message objects (or dicts for backward compatibility)
+            tools: List of Pydantic Tool objects (or dicts for backward compatibility)
             stream: Whether to stream response
             **kwargs: Additional parameters (temperature, max_tokens, etc.)
 
         Returns:
             AsyncIterator for streaming, awaitable for non-streaming
         """
+        # Handle backward compatibility
+        from chuk_llm.llm.core.base import _ensure_pydantic_messages, _ensure_pydantic_tools
+        messages = _ensure_pydantic_messages(messages)
+        tools = _ensure_pydantic_tools(tools)
+
+        # Convert Pydantic to dicts
+        dict_messages = [msg.to_dict() for msg in messages]
+        dict_tools = [tool.to_dict() for tool in tools] if tools else None
+
         # Validate request against configuration
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
-            self._validate_request_with_config(messages, tools, stream, **kwargs)
+            self._validate_request_with_config(dict_messages, dict_tools, stream, **kwargs)
         )
 
         # Apply universal tool name sanitization (stores mapping for restoration)

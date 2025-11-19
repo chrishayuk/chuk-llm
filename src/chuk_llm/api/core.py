@@ -13,8 +13,22 @@ import os
 from collections.abc import AsyncIterator
 from typing import Any, Optional
 
+from chuk_llm.api._modern_integration import (
+    _can_use_modern_client,
+    modern_client_complete,
+)
 from chuk_llm.api.config import get_current_config
 from chuk_llm.configuration import ConfigValidator, Feature, get_config
+from chuk_llm.core.enums import MessageRole, ContentType, ToolType
+from chuk_llm.core.models import (
+    Message,
+    Tool,
+    ToolFunction,
+    TextContent,
+    ImageUrlContent,
+    ToolCall,
+    FunctionCall,
+)
 from chuk_llm.llm.client import get_client
 
 # Try to import session manager
@@ -30,6 +44,81 @@ logger = logging.getLogger(__name__)
 
 # Global session manager instance
 _global_session_manager = None
+
+
+def _convert_dict_to_pydantic_messages(messages: list[dict[str, Any]]) -> list[Message]:
+    """Convert dict messages to Pydantic Message objects for backward compatibility."""
+    pydantic_messages = []
+
+    for msg_dict in messages:
+        # Parse role
+        role_str = msg_dict.get("role", "user")
+        role = MessageRole(role_str) if isinstance(role_str, str) else role_str
+
+        # Parse content
+        content = msg_dict.get("content")
+        if isinstance(content, list):
+            # Multi-modal content - convert each part
+            content_parts = []
+            for part in content:
+                if isinstance(part, dict):
+                    part_type = part.get("type")
+                    if part_type == "text":
+                        content_parts.append(TextContent(type=ContentType.TEXT, text=part.get("text", "")))
+                    elif part_type == "image_url":
+                        content_parts.append(ImageUrlContent(type=ContentType.IMAGE_URL, image_url=part.get("image_url", {})))
+                    else:
+                        # Unknown type, keep as-is (shouldn't happen with proper Pydantic validation)
+                        pass
+                else:
+                    # Already Pydantic object
+                    content_parts.append(part)
+            content = content_parts if content_parts else None
+
+        # Parse tool calls
+        tool_calls_list = None
+        if "tool_calls" in msg_dict and msg_dict["tool_calls"]:
+            tool_calls_list = [
+                ToolCall(
+                    id=tc.get("id", ""),
+                    type=ToolType(tc.get("type", "function")),
+                    function=FunctionCall(
+                        name=tc.get("function", {}).get("name", ""),
+                        arguments=tc.get("function", {}).get("arguments", "{}")
+                    )
+                )
+                for tc in msg_dict["tool_calls"]
+            ]
+
+        # Create Message
+        pydantic_messages.append(Message(
+            role=role,
+            content=content,
+            tool_calls=tool_calls_list,
+            tool_call_id=msg_dict.get("tool_call_id"),
+            name=msg_dict.get("name")
+        ))
+
+    return pydantic_messages
+
+
+def _convert_dict_to_pydantic_tools(tools: list[dict[str, Any]] | None) -> list[Tool] | None:
+    """Convert dict tools to Pydantic Tool objects for backward compatibility."""
+    if not tools:
+        return None
+
+    pydantic_tools = []
+    for tool_dict in tools:
+        pydantic_tools.append(Tool(
+            type=ToolType(tool_dict.get("type", "function")),
+            function=ToolFunction(
+                name=tool_dict.get("function", {}).get("name", ""),
+                description=tool_dict.get("function", {}).get("description", ""),
+                parameters=tool_dict.get("function", {}).get("parameters", {})
+            )
+        ))
+
+    return pydantic_tools
 
 
 def _resolve_model_alias(provider: str, model: str) -> str:
@@ -377,9 +466,44 @@ async def ask(
     # Add any additional kwargs
     completion_args.update(completion_kwargs)
 
-    # Make the request
+    # Make the request - Clean decision: modern OR legacy (no fallbacks)
     try:
-        response = await client.create_completion(**completion_args)
+        # Check if we can use modern Pydantic client
+        if _can_use_modern_client(effective_provider):
+            logger.debug(
+                f"Using modern Pydantic client for {effective_provider}/{effective_model}"
+            )
+            response = await modern_client_complete(
+                provider=effective_provider,
+                model=effective_model,
+                messages=completion_args["messages"],
+                tools=completion_args.get("tools"),
+                temperature=completion_args.get("temperature"),
+                max_tokens=completion_args.get("max_tokens"),
+                api_key=effective_config["api_key"],
+                api_base=effective_config.get("api_base"),
+                **{
+                    k: v
+                    for k, v in completion_args.items()
+                    if k not in ["messages", "tools", "temperature", "max_tokens"]
+                },
+            )
+        else:
+            # Use legacy client
+            logger.debug(
+                f"Using legacy client for {effective_provider}/{effective_model}"
+            )
+            # Convert dict messages/tools to Pydantic objects for type safety
+            pydantic_messages = _convert_dict_to_pydantic_messages(completion_args["messages"])
+            pydantic_tools = _convert_dict_to_pydantic_tools(completion_args.get("tools"))
+
+            # Update completion_args with Pydantic objects
+            completion_args_pydantic = completion_args.copy()
+            completion_args_pydantic["messages"] = pydantic_messages
+            if pydantic_tools is not None:
+                completion_args_pydantic["tools"] = pydantic_tools
+
+            response = await client.create_completion(**completion_args_pydantic)
 
         # Extract response
         if isinstance(response, dict):
@@ -661,8 +785,18 @@ async def stream(
             f"Starting streaming with {effective_provider}/{effective_model}, return_tool_calls={return_tool_calls}"
         )
 
+        # Convert dict messages/tools to Pydantic objects for type safety
+        pydantic_messages = _convert_dict_to_pydantic_messages(completion_args["messages"])
+        pydantic_tools = _convert_dict_to_pydantic_tools(completion_args.get("tools"))
+
+        # Update completion_args with Pydantic objects
+        completion_args_pydantic = completion_args.copy()
+        completion_args_pydantic["messages"] = pydantic_messages
+        if pydantic_tools is not None:
+            completion_args_pydantic["tools"] = pydantic_tools
+
         # Call client.create_completion with stream=True - this returns an async generator
-        response_stream = client.create_completion(**completion_args)
+        response_stream = client.create_completion(**completion_args_pydantic)
 
         chunk_count = 0
 

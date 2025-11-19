@@ -201,7 +201,10 @@ class ConfigAwareProviderMixin:
 
         # CRITICAL FIX: Don't set max_tokens if max_completion_tokens is already set
         # Some models (like GPT-5 on Azure) don't support both parameters simultaneously
-        has_max_completion_tokens = "max_completion_tokens" in adjusted and adjusted.get("max_completion_tokens") is not None
+        has_max_completion_tokens = (
+            "max_completion_tokens" in adjusted
+            and adjusted.get("max_completion_tokens") is not None
+        )
 
         # Validate max_tokens against model limits
         if "max_tokens" in adjusted and adjusted["max_tokens"] is not None:
@@ -213,7 +216,10 @@ class ConfigAwareProviderMixin:
                 adjusted["max_tokens"] = limit
 
         # Validate max_completion_tokens against model limits (for GPT-5/reasoning models)
-        if "max_completion_tokens" in adjusted and adjusted["max_completion_tokens"] is not None:
+        if (
+            "max_completion_tokens" in adjusted
+            and adjusted["max_completion_tokens"] is not None
+        ):
             limit = self.get_max_tokens_limit()
             if limit and adjusted["max_completion_tokens"] > limit:
                 log.debug(
@@ -223,7 +229,9 @@ class ConfigAwareProviderMixin:
 
         # Add default max_tokens if not specified or is None
         # BUT: Skip this if max_completion_tokens is already set
-        elif not has_max_completion_tokens and ("max_tokens" not in adjusted or adjusted.get("max_tokens") is None):
+        elif not has_max_completion_tokens and (
+            "max_tokens" not in adjusted or adjusted.get("max_tokens") is None
+        ):
             default_limit = self.get_max_tokens_limit()
             if default_limit:
                 adjusted["max_tokens"] = min(4096, default_limit)

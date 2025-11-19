@@ -191,10 +191,13 @@ class DiscovererFactory:
         try:
             # Import all discoverer modules to trigger registration
             from . import (
+                anthropic_discoverer,  # noqa: F401
                 azure_openai_discoverer,  # noqa: F401
                 general_discoverers,  # noqa: F401
+                mistral_discoverer,  # noqa: F401
                 ollama_discoverer,  # noqa: F401
                 openai_discoverer,  # noqa: F401
+                watsonx_discoverer,  # noqa: F401
             )
 
             cls._imported = True

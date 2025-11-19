@@ -43,45 +43,45 @@ try:
 
     from chuk_llm.configuration import Feature, get_config
     from chuk_llm.llm.client import get_client, get_provider_info
+    from chuk_llm.core.models import Message, Tool, ToolFunction, TextContent, ImageUrlContent, ToolCall, FunctionCall
+    from chuk_llm.core.enums import MessageRole, ContentType, ToolType
+    from chuk_llm.llm.discovery.general_discoverers import OpenAICompatibleDiscoverer
 except ImportError as e:
     print(f"❌ Import error: {e}")
     print("   Please make sure you're running from the chuk-llm directory")
     sys.exit(1)
 
 
-def get_available_groq_models():
-    """Get available Groq models from config and API"""
+async def get_available_groq_models():
+    """Get available Groq models using the discovery system"""
     config = get_config()
     configured_models = []
-    api_models = []
+    discovered_models = []
 
     # Get configured models
     if "groq" in config.providers:
         provider = config.providers["groq"]
         if hasattr(provider, "models"):
-            configured_models = provider.models
+            configured_models = list(provider.models)
 
-    # Try to get models from API
+    # Use discovery system to find models from API
     api_key = os.getenv("GROQ_API_KEY")
     if api_key:
         try:
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            }
-            response = httpx.get(
-                "https://api.groq.com/openai/v1/models", headers=headers, timeout=5.0
+            discoverer = OpenAICompatibleDiscoverer(
+                provider_name="groq",
+                api_key=api_key,
+                api_base="https://api.groq.com/openai/v1",
             )
-            if response.status_code == 200:
-                data = response.json()
-                api_models = [m.get("id") for m in data.get("data", []) if m.get("id")]
+            models_data = await discoverer.discover_models()
+            discovered_models = [m.get("name") for m in models_data if m.get("name")]
         except Exception:
             pass  # Silently ignore API errors
 
     return {
         "configured": configured_models,
-        "api": api_models,
-        "all": list(set(configured_models + api_models)),
+        "api": discovered_models,
+        "all": list(set(configured_models + discovered_models)),
     }
 
 
@@ -98,11 +98,11 @@ async def basic_text_example(model: str = "llama-3.3-70b-versatile"):
     client = get_client("groq", model=model)
 
     messages = [
-        {"role": "system", "content": "You are a helpful AI assistant."},
-        {
-            "role": "user",
-            "content": "Explain quantum computing in simple terms (2-3 sentences).",
-        },
+        Message(role=MessageRole.SYSTEM, content="You are a helpful AI assistant."),
+        Message(
+            role=MessageRole.USER,
+            content="Explain quantum computing in simple terms (2-3 sentences).",
+        ),
     ]
 
     start_time = time.time()
@@ -139,10 +139,10 @@ async def streaming_example(model: str = "llama-3.1-8b-instant"):
     client = get_client("groq", model=model)
 
     messages = [
-        {
-            "role": "user",
-            "content": "Write a short haiku about artificial intelligence.",
-        }
+        Message(
+            role=MessageRole.USER,
+            content="Write a short haiku about artificial intelligence.",
+        )
     ]
 
     print("🌊 Streaming response:")
@@ -193,7 +193,7 @@ async def speed_benchmark():
         try:
             print(f"\n🔄 Testing {model}...")
             client = get_client("groq", model=model)
-            messages = [{"role": "user", "content": prompt}]
+            messages = [Message(role=MessageRole.USER, content=prompt)]
 
             # Warm-up request
             await client.create_completion(messages, max_tokens=10)
@@ -313,10 +313,10 @@ async def function_calling_example(model: str = "llama-3.3-70b-versatile"):
     ]
 
     messages = [
-        {
-            "role": "user",
-            "content": "If I travel 1000 meters in 50 seconds, what's my speed in km/h? Also, what's the weather like in Tokyo?",
-        }
+        Message(
+            role=MessageRole.USER,
+            content="If I travel 1000 meters in 50 seconds, what's my speed in km/h? Also, what's the weather like in Tokyo?",
+        )
     ]
 
     print("🔄 Making function calling request...")
@@ -332,8 +332,19 @@ async def function_calling_example(model: str = "llama-3.3-70b-versatile"):
             print(f"   {i}. {func_name}({func_args})")
 
         # Simulate tool execution
+        tool_calls_list = [
+            ToolCall(
+                id=tc["id"],
+                type=ToolType.FUNCTION,
+                function=FunctionCall(
+                    name=tc["function"]["name"],
+                    arguments=tc["function"]["arguments"]
+                )
+            )
+            for tc in response["tool_calls"]
+        ]
         messages.append(
-            {"role": "assistant", "content": "", "tool_calls": response["tool_calls"]}
+            Message(role=MessageRole.ASSISTANT, content="", tool_calls=tool_calls_list)
         )
 
         # Add mock tool results
@@ -348,12 +359,12 @@ async def function_calling_example(model: str = "llama-3.3-70b-versatile"):
                 result = '{"status": "success"}'
 
             messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call["id"],
-                    "name": func_name,
-                    "content": result,
-                }
+                Message(
+                    role=MessageRole.TOOL,
+                    tool_call_id=tool_call["id"],
+                    name=func_name,
+                    content=result,
+                )
             )
 
         # Get final response
@@ -388,14 +399,14 @@ async def json_mode_example(model: str = "llama-3.3-70b-versatile"):
     client = get_client("groq", model=model)
 
     messages = [
-        {
-            "role": "system",
-            "content": "You are a helpful assistant designed to output JSON. Generate a JSON object with information about Groq's LPU technology.",
-        },
-        {
-            "role": "user",
-            "content": "Tell me about Groq's Language Processing Unit (LPU) in JSON format with fields: name, type, main_advantage, speed_comparison, use_cases (array), and innovation_score (1-10).",
-        },
+        Message(
+            role=MessageRole.SYSTEM,
+            content="You are a helpful assistant designed to output JSON. Generate a JSON object with information about Groq's LPU technology.",
+        ),
+        Message(
+            role=MessageRole.USER,
+            content="Tell me about Groq's Language Processing Unit (LPU) in JSON format with fields: name, type, main_advantage, speed_comparison, use_cases (array), and innovation_score (1-10).",
+        ),
     ]
 
     print("📝 Requesting JSON output...")
@@ -465,7 +476,7 @@ async def model_comparison_example():
         try:
             print(f"🔄 Testing {model}...")
             client = get_client("groq", model=model)
-            messages = [{"role": "user", "content": prompt}]
+            messages = [Message(role=MessageRole.USER, content=prompt)]
 
             start_time = time.time()
             response = await client.create_completion(messages)
@@ -573,14 +584,14 @@ async def context_window_test(model: str = "llama-3.3-70b-versatile"):
     long_text = "The quick brown fox jumps over the lazy dog. " * 500  # ~4500 words
 
     messages = [
-        {
-            "role": "system",
-            "content": f"You have been given a long text. Here it is:\n\n{long_text}\n\nPlease analyze this text.",
-        },
-        {
-            "role": "user",
-            "content": "How many times does the word 'fox' appear in the text you were given? Please also tell me the total word count.",
-        },
+        Message(
+            role=MessageRole.SYSTEM,
+            content=f"You have been given a long text. Here it is:\n\n{long_text}\n\nPlease analyze this text.",
+        ),
+        Message(
+            role=MessageRole.USER,
+            content="How many times does the word 'fox' appear in the text you were given? Please also tell me the total word count.",
+        ),
     ]
 
     print(f"📝 Testing with ~{len(long_text.split())} words of context...")
@@ -615,10 +626,10 @@ async def simple_chat_example(model: str = "llama-3.1-8b-instant"):
     ]
 
     messages = [
-        {
-            "role": "system",
-            "content": "You are a helpful and knowledgeable AI assistant.",
-        }
+        Message(
+            role=MessageRole.SYSTEM,
+            content="You are a helpful and knowledgeable AI assistant.",
+        )
     ]
 
     total_time = 0
@@ -627,7 +638,7 @@ async def simple_chat_example(model: str = "llama-3.1-8b-instant"):
         print(f"👤 User: {user_input}")
 
         # Add user message
-        messages.append({"role": "user", "content": user_input})
+        messages.append(Message(role=MessageRole.USER, content=user_input))
 
         # Get response
         start_time = time.time()
@@ -641,7 +652,7 @@ async def simple_chat_example(model: str = "llama-3.1-8b-instant"):
         print()
 
         # Add assistant response to conversation
-        messages.append({"role": "assistant", "content": assistant_response})
+        messages.append(Message(role=MessageRole.ASSISTANT, content=assistant_response))
 
     print(f"⚡ Total conversation time: {total_time:.2f}s")
     print(f"⚡ Average response time: {total_time / len(conversation):.2f}s")
@@ -668,7 +679,7 @@ async def parameters_example(model: str = "llama-3.3-70b-versatile"):
     for temp in temperatures:
         print(f"\n🌡️  Temperature {temp}:")
 
-        messages = [{"role": "user", "content": prompt}]
+        messages = [Message(role=MessageRole.USER, content=prompt)]
 
         try:
             start_time = time.time()
@@ -683,8 +694,8 @@ async def parameters_example(model: str = "llama-3.3-70b-versatile"):
     # Test with system message
     print("\n🎭 With System Message:")
     messages = [
-        {"role": "system", "content": "You are a poetic AI that speaks in rhymes."},
-        {"role": "user", "content": "Tell me about the speed of light."},
+        Message(role=MessageRole.SYSTEM, content="You are a poetic AI that speaks in rhymes."),
+        Message(role=MessageRole.USER, content="Tell me about the speed of light."),
     ]
 
     start_time = time.time()
@@ -724,7 +735,7 @@ async def parallel_processing_test():
     for prompt in prompts:
         client = get_client("groq", model=model)
         response = await client.create_completion(
-            [{"role": "user", "content": prompt}], max_tokens=50
+            [Message(role=MessageRole.USER, content=prompt)], max_tokens=50
         )
         sequential_responses.append(response["response"][:50])
 
@@ -738,7 +749,7 @@ async def parallel_processing_test():
     async def process_prompt(prompt):
         client = get_client("groq", model=model)
         response = await client.create_completion(
-            [{"role": "user", "content": prompt}], max_tokens=50
+            [Message(role=MessageRole.USER, content=prompt)], max_tokens=50
         )
         return response["response"][:50]
 
@@ -781,7 +792,7 @@ async def comprehensive_test(model: str = "llama-3.3-70b-versatile"):
 
     # Test 1: Speed test
     print("\n⚡ Speed Test:")
-    messages = [{"role": "user", "content": "Count from 1 to 10."}]
+    messages = [Message(role=MessageRole.USER, content="Count from 1 to 10.")]
     start_time = time.time()
     response = await client.create_completion(messages)
     duration = time.time() - start_time
@@ -809,10 +820,10 @@ async def comprehensive_test(model: str = "llama-3.3-70b-versatile"):
         ]
 
         messages = [
-            {
-                "role": "user",
-                "content": "My system is processing 1000 requests per second. Analyze this performance.",
-            }
+            Message(
+                role=MessageRole.USER,
+                content="My system is processing 1000 requests per second. Analyze this performance.",
+            )
         ]
         response = await client.create_completion(messages, tools=tools)
 
@@ -825,11 +836,11 @@ async def comprehensive_test(model: str = "llama-3.3-70b-versatile"):
     if supports_json:
         print("\n📋 JSON Mode Test:")
         messages = [
-            {"role": "system", "content": "Output JSON only."},
-            {
-                "role": "user",
-                "content": "Create a JSON object with fields: status, speed, provider.",
-            },
+            Message(role=MessageRole.SYSTEM, content="Output JSON only."),
+            Message(
+                role=MessageRole.USER,
+                content="Create a JSON object with fields: status, speed, provider.",
+            ),
         ]
 
         try:
@@ -843,6 +854,185 @@ async def comprehensive_test(model: str = "llama-3.3-70b-versatile"):
 
     print("\n✅ Comprehensive test completed!")
     return True
+
+
+# =============================================================================
+# Example 13: Model Discovery
+# =============================================================================
+
+
+async def model_discovery_example():
+    """Discover available Groq models using discovery system"""
+    print("\n🔍 Model Discovery")
+    print("=" * 60)
+
+    model_info = await get_available_groq_models()
+
+    print(f"📦 Configured models ({len(model_info['configured'])}):")
+    for model in model_info["configured"][:10]:  # Show first 10
+        # Identify model families
+        if "llama-3.3" in model:
+            print(f"   • {model} [🦙 Llama 3.3 - most capable]")
+        elif "llama-3.1" in model:
+            print(f"   • {model} [🦙 Llama 3.1 - reliable]")
+        elif "llama-3.2" in model:
+            print(f"   • {model} [🦙 Llama 3.2 - efficient]")
+        elif "mixtral" in model:
+            print(f"   • {model} [🎯 Mixtral MoE]")
+        elif "gemma" in model:
+            print(f"   • {model} [💎 Gemma]")
+        else:
+            print(f"   • {model}")
+
+    if len(model_info["api"]) > 0:
+        print(f"\n🌐 Discovered from API ({len(model_info['api'])}):")
+        # Show models that are not in config
+        new_models = [m for m in model_info["api"] if m not in model_info["configured"]]
+        if new_models:
+            print("   New models not in config:")
+            for model in new_models[:5]:  # Show first 5
+                print(f"   ✨ {model}")
+        else:
+            print("   All API models are already configured")
+
+    print(f"\n📊 Total available: {len(model_info['all'])} models")
+
+    # Highlight Groq's ultra-fast LPU technology
+    print("\n⚡ Groq LPU Technology:")
+    print("   • Ultra-fast inference speeds")
+    print("   • Low latency for real-time applications")
+    print("   • Consistent performance across models")
+
+    # Test a discovered model if available
+    if model_info["api"] and len(model_info["api"]) > 0:
+        # Try to find a fast model to test
+        test_model = None
+        for model in model_info["api"]:
+            if "instant" in model or "8b" in model:
+                test_model = model
+                break
+
+        if not test_model:
+            test_model = model_info["api"][0]
+
+        print(f"\n🧪 Testing discovered model: {test_model}")
+        try:
+            client = get_client("groq", model=test_model)
+            messages = [Message(role=MessageRole.USER, content="Say hello in 3 words")]
+            start_time = time.time()
+            response = await client.create_completion(messages, max_tokens=20)
+            duration = time.time() - start_time
+            print(f"   ✅ Model works ({duration:.3f}s): {response['response'][:50]}...")
+            print(f"   ⚡ Groq's LPU delivered response in {duration * 1000:.0f}ms")
+        except Exception as e:
+            print(f"   ⚠️ Model test failed: {e}")
+
+    return model_info
+
+
+# =============================================================================
+# Example 14: Dynamic Model Test
+# =============================================================================
+
+
+async def dynamic_model_test():
+    """Test a non-configured model to prove library flexibility"""
+    print("\n🔄 Dynamic Model Test")
+    print("=" * 60)
+    print("Testing a model NOT in chuk_llm.yaml config")
+
+    # Use llama-3.2-90b-vision-preview which might not be in config
+    dynamic_model = "llama-3.2-90b-vision-preview"
+
+    print(f"\n🧪 Testing dynamic model: {dynamic_model}")
+    print("   This model may not be in the config file")
+
+    try:
+        client = get_client("groq", model=dynamic_model)
+        messages = [
+            Message(
+                role=MessageRole.USER,
+                content="Say hello in exactly one creative word"
+            )
+        ]
+
+        start_time = time.time()
+        response = await client.create_completion(messages, max_tokens=10)
+        duration = time.time() - start_time
+
+        print(f"   ✅ Dynamic model works: {response['response']}")
+        print(f"   ⚡ Groq LPU speed: {duration * 1000:.0f}ms")
+
+        return response
+
+    except Exception as e:
+        print(f"   ⚠️ Test failed: {str(e)[:100]}")
+        return None
+
+
+# =============================================================================
+# Example 15: Reasoning with DeepSeek R1
+# =============================================================================
+
+
+async def reasoning_example():
+    """Demonstrate reasoning with DeepSeek R1 on Groq"""
+    print("\n🧠 Reasoning Example with DeepSeek R1")
+    print("=" * 60)
+    print("DeepSeek R1 models on Groq support extended reasoning")
+
+    # Use DeepSeek R1 model available on Groq
+    reasoning_model = "deepseek-r1-distill-llama-70b"
+
+    try:
+        client = get_client("groq", model=reasoning_model)
+
+        # Use a problem that benefits from reasoning
+        messages = [
+            Message(
+                role=MessageRole.USER,
+                content="I have a 3-gallon jug and a 5-gallon jug. How can I measure exactly 4 gallons? Think step by step."
+            )
+        ]
+
+        print(f"\n🔄 Requesting response from {reasoning_model}...")
+        start_time = time.time()
+        response = await client.create_completion(messages, max_tokens=2000)
+        duration = time.time() - start_time
+
+        # Check for reasoning content
+        if response.get("reasoning_content"):
+            reasoning = response["reasoning_content"]
+            print(f"\n🧠 Reasoning Process ({len(reasoning)} chars):")
+            print(f"   {reasoning[:400]}...")
+            if len(reasoning) > 400:
+                print(f"   ... (truncated, {len(reasoning) - 400} more chars)")
+
+        print(f"\n📝 Final Answer:")
+        print(f"   {response['response'][:500]}...")
+
+        # Token breakdown
+        if response.get("usage"):
+            usage = response["usage"]
+            print(f"\n📊 Token Usage:")
+            print(f"   Input: {usage.get('input_tokens', 0)} tokens")
+
+            if usage.get("reasoning_tokens"):
+                print(f"   🧠 Reasoning: {usage['reasoning_tokens']} tokens")
+                output_only = usage.get("output_tokens", 0) - usage["reasoning_tokens"]
+                print(f"   📝 Output: {output_only} tokens")
+            else:
+                print(f"   Output: {usage.get('output_tokens', 0)} tokens")
+
+            print(f"   Total: {usage.get('total_tokens', 0)} tokens")
+            print(f"   ⚡ Groq LPU duration: {duration:.2f}s")
+
+        return response
+
+    except Exception as e:
+        print(f"❌ Reasoning example failed: {str(e)[:200]}")
+        print("💡 Tip: Ensure you have access to DeepSeek R1 models on Groq")
+        return None
 
 
 # =============================================================================
@@ -873,7 +1063,7 @@ async def main():
     if args.list_models:
         print("📋 Available Groq Models")
         print("=" * 60)
-        model_info = get_available_groq_models()
+        model_info = await get_available_groq_models()
 
         print(f"\n📦 Configured Models ({len(model_info['configured'])}):")
         for model in model_info["configured"]:
@@ -935,6 +1125,7 @@ async def main():
 
     examples = [
         ("Feature Detection", lambda: feature_detection_example(args.model)),
+        ("Model Discovery", model_discovery_example),
         ("Basic Text", lambda: basic_text_example(args.model)),
         ("Streaming", lambda: streaming_example(args.model)),
     ]
@@ -954,6 +1145,8 @@ async def main():
                 ("Simple Chat", lambda: simple_chat_example(args.model)),
                 ("Parameters Test", lambda: parameters_example(args.model)),
                 ("Parallel Processing", parallel_processing_test),
+                ("Dynamic Model Test", dynamic_model_test),
+                ("Reasoning (DeepSeek R1)", reasoning_example),
                 ("Comprehensive Test", lambda: comprehensive_test(args.model)),
             ]
         )

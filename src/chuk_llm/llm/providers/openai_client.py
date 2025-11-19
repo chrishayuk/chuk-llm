@@ -950,8 +950,8 @@ class OpenAILLMClient(
 
     def create_completion(
         self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        messages: list,  # Pydantic Message objects or dicts (backward compat)
+        tools: list | None = None,  # Pydantic Tool objects or dicts (backward compat)
         *,
         stream: bool = False,
         **kwargs: Any,
@@ -959,10 +959,23 @@ class OpenAILLMClient(
         """
         ENHANCED: Now includes universal tool name compatibility with conversation flow handling,
         complete reasoning model support (including GPT-5) with FIXED streaming, and smart defaults for new models.
+
+        Args:
+            messages: List of Pydantic Message objects (or dicts for backward compatibility)
+            tools: List of Pydantic Tool objects (or dicts for backward compatibility)
         """
+        # Handle backward compatibility
+        from chuk_llm.llm.core.base import _ensure_pydantic_messages, _ensure_pydantic_tools
+        messages = _ensure_pydantic_messages(messages)
+        tools = _ensure_pydantic_tools(tools)
+
+        # Convert Pydantic to dicts using built-in .to_dict() method
+        dict_messages = [msg.to_dict() for msg in messages]
+        dict_tools = [tool.to_dict() for tool in tools] if tools else None
+
         # Validate request against configuration (with smart defaults)
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
-            self._validate_request_with_config(messages, tools, stream, **kwargs)
+            self._validate_request_with_config(dict_messages, dict_tools, stream, **kwargs)
         )
 
         # Apply universal tool name sanitization
@@ -975,7 +988,9 @@ class OpenAILLMClient(
             )
 
             # Add strict parameter for OpenAI-compatible APIs that may require it
-            if self.detected_provider == "openai_compatible":
+            if (
+                self.detected_provider == "openai_compatible" and validated_tools
+            ):  # Legacy code - TODO: migrate to Provider enum
                 validated_tools = self._add_strict_parameter_to_tools(validated_tools)
 
         # Prepare messages for conversation (sanitize tool names in history)

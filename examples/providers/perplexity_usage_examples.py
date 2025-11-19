@@ -43,6 +43,51 @@ except ImportError as e:
     print("   Make sure you installed chuk-llm and are running from the repo root")
     sys.exit(1)
 
+async def get_available_models():
+    """Get available Perplexity models using discovery system"""
+    from chuk_llm.configuration import get_config
+
+    config = get_config()
+    configured_models = []
+    discovered_models = []
+
+    # Get configured models
+    if "perplexity" in config.providers:
+        provider = config.providers["perplexity"]
+        if hasattr(provider, "models"):
+            configured_models = list(provider.models)
+
+    # Use discovery system to get models from Perplexity API
+    api_key = os.getenv("PERPLEXITY_API_KEY")
+    if api_key:
+        try:
+            from chuk_llm.llm.discovery.general_discoverers import (
+                OpenAICompatibleDiscoverer,
+            )
+
+            discoverer = OpenAICompatibleDiscoverer(
+                provider_name="perplexity",
+                api_key=api_key,
+                api_base="https://api.perplexity.ai",
+            )
+            models_data = await discoverer.discover_models()
+            discovered_models = [m.get("name") for m in models_data]
+        except Exception as e:
+            print(f"⚠️  Could not fetch models from API: {e}")
+
+    # Combine models (configured first, then discovered)
+    all_models = list(configured_models)
+    for model in discovered_models:
+        if model not in all_models:
+            all_models.append(model)
+
+    return {
+        "configured": configured_models,
+        "discovered": discovered_models,
+        "all": all_models,
+    }
+
+
 # =============================================================================
 # Example 1: Basic Text Completion
 # =============================================================================
@@ -392,7 +437,72 @@ async def model_comparison_example():
 
 
 # =============================================================================
-# Example 7: Feature Detection
+# Example 7: Model Discovery
+# =============================================================================
+
+
+async def model_discovery_example():
+    """Discover available Perplexity models using discovery system"""
+    print("\n🔍 Model Discovery")
+    print("=" * 60)
+
+    model_info = await get_available_models()
+
+    print(f"📦 Configured models ({len(model_info['configured'])}):")
+    for model in model_info["configured"]:
+        # Identify model capabilities
+        if "reasoning" in model.lower():
+            print(f"   • {model} [🧠 enhanced reasoning]")
+        elif "research" in model.lower():
+            print(f"   • {model} [🔬 deep research]")
+        elif "sonar" in model.lower():
+            print(f"   • {model} [🔍 web search]")
+        else:
+            print(f"   • {model}")
+
+    if len(model_info["discovered"]) > 0:
+        print(f"\n🌐 Discovered from API ({len(model_info['discovered'])}):")
+        # Show models that are not in config
+        new_models = [
+            m for m in model_info["discovered"] if m not in model_info["configured"]
+        ]
+        if new_models:
+            print("   New models not in config:")
+            for model in new_models[:5]:  # Show first 5
+                print(f"   ✨ {model}")
+        else:
+            print("   All API models are already configured")
+
+    print(f"\n📊 Total available: {len(model_info['all'])} models")
+
+    # Special notes about Perplexity models
+    print("\n🌟 Model Capabilities:")
+    print("   🔍 sonar-pro, sonar: Web search and current information")
+    print("   🧠 sonar-reasoning, sonar-reasoning-pro: Enhanced reasoning")
+    print("   🔬 sonar-deep-research: Deep research (5+ RPM)")
+    print("   💬 r1-1776: Offline chat without search")
+
+    # Test a model if available
+    if model_info["configured"]:
+        test_model = model_info["configured"][0]
+        print(f"\n🧪 Testing model: {test_model}")
+        try:
+            client = get_client("perplexity", model=test_model)
+            messages = [{"role": "user", "content": "Say hello in one word"}]
+            response = await client.create_completion(messages)
+            content = response.get("response", "")
+            if content:
+                print(f"   ✅ Model works: {content[:50]}...")
+            else:
+                print("   ⚠️ Empty response")
+        except Exception as e:
+            print(f"   ⚠️ Model test failed: {e}")
+
+    return model_info
+
+
+# =============================================================================
+# Example 8: Feature Detection
 # =============================================================================
 
 
@@ -446,7 +556,7 @@ async def feature_detection_example(model: str = "sonar-pro"):
 
 
 # =============================================================================
-# Example 8: Simple Chat Interface
+# Example 9: Simple Chat Interface
 # =============================================================================
 
 
@@ -491,7 +601,7 @@ async def simple_chat_example(model: str = "sonar-pro"):
 
 
 # =============================================================================
-# Example 9: Temperature Sweep
+# Example 10: Temperature Sweep
 # =============================================================================
 
 
@@ -511,6 +621,145 @@ async def parameters_example(model: str = "sonar-pro"):
         print(f"   {response['response']}")
 
     return True
+
+
+# =============================================================================
+# Example 11: Context Window Test
+# =============================================================================
+
+
+async def context_window_test(model: str = "sonar-pro"):
+    """Test Perplexity's large context window"""
+    print(f"\n📏 Context Window Test with {model}")
+    print("=" * 60)
+
+    client = get_client("perplexity", model=model)
+
+    # Create a long context (~4500 words)
+    long_text = "The quick brown fox jumps over the lazy dog. " * 500
+
+    messages = [
+        Message(
+            role=MessageRole.SYSTEM,
+            content=f"You have been given a long text. Here it is:\n\n{long_text}\n\nPlease analyze this text.",
+        ),
+        Message(
+            role=MessageRole.USER,
+            content="How many times does the word 'fox' appear in the text? Also tell me the total word count.",
+        ),
+    ]
+
+    print(f"📝 Testing with ~{len(long_text.split())} words of context...")
+
+    start_time = time.time()
+    response = await client.create_completion(messages, max_tokens=150)
+    duration = time.time() - start_time
+
+    print(f"✅ Response ({duration:.2f}s):")
+    print(f"   {response.get('response', '')}")
+
+    return response
+
+
+# =============================================================================
+# Example 12: Dynamic Model Test
+# =============================================================================
+
+
+async def dynamic_model_test():
+    """Test a non-configured model to prove library flexibility"""
+    print("\n🔄 Dynamic Model Test")
+    print("=" * 60)
+    print("Testing a model NOT in chuk_llm.yaml config")
+
+    # Use a model specific to this provider that might not be in config
+    dynamic_model = "llama-3.1-sonar-large-128k-online"
+
+    print(f"\n🧪 Testing dynamic model: {dynamic_model}")
+    print("   This model may not be in the config file")
+
+    try:
+        from chuk_llm.core.models import Message
+        from chuk_llm.core.enums import MessageRole
+
+        client = get_client("perplexity", model=dynamic_model)
+        messages = [
+            Message(
+                role=MessageRole.USER,
+                content="Say hello in exactly one creative word"
+            )
+        ]
+
+        response = await client.create_completion(messages, max_tokens=10)
+        print(f"   ✅ Dynamic model works: {response['response']}")
+
+        return response
+
+    except Exception as e:
+        print(f"   ⚠️ Test failed: {str(e)[:100]}")
+        return None
+
+
+# =============================================================================
+# Example 13: Parallel Processing Test
+# =============================================================================
+
+
+async def parallel_processing_test(model: str = "sonar-pro"):
+    """Test parallel request processing with Perplexity"""
+    print("\n🔀 Parallel Processing Test")
+    print("=" * 60)
+
+    prompts = [
+        "What is artificial intelligence?",
+        "Explain quantum computing.",
+        "What is machine learning?",
+        "Define neural networks.",
+        "What is deep learning?",
+    ]
+
+    print(f"📊 Testing {len(prompts)} parallel requests with {model}...")
+
+    # Sequential processing
+    print("\n📝 Sequential processing:")
+    sequential_start = time.time()
+
+    for prompt in prompts:
+        client = get_client("perplexity", model=model)
+        await client.create_completion(
+            [Message(role=MessageRole.USER, content=prompt)], max_tokens=50
+        )
+
+    sequential_time = time.time() - sequential_start
+    print(f"   ✅ Completed in {sequential_time:.2f}s")
+
+    # Parallel processing
+    print("\n⚡ Parallel processing:")
+    parallel_start = time.time()
+
+    async def process_prompt(prompt):
+        client = get_client("perplexity", model=model)
+        response = await client.create_completion(
+            [Message(role=MessageRole.USER, content=prompt)], max_tokens=50
+        )
+        return response.get("response", "")[:50]
+
+    await asyncio.gather(*[process_prompt(p) for p in prompts])
+    parallel_time = time.time() - parallel_start
+    print(f"   ✅ Completed in {parallel_time:.2f}s")
+
+    # Results
+    speedup = sequential_time / parallel_time if parallel_time > 0 else 0
+    print("\n📈 Results:")
+    print(f"   Sequential: {sequential_time:.2f}s")
+    print(f"   Parallel: {parallel_time:.2f}s")
+    print(f"   Speedup: {speedup:.1f}x")
+
+    return {
+        "sequential_time": sequential_time,
+        "parallel_time": parallel_time,
+        "speedup": speedup,
+    }
 
 
 # =============================================================================
@@ -564,6 +813,7 @@ async def main():
 
     examples = [
         ("Feature Detection", lambda: feature_detection_example(args.model)),
+        ("Model Discovery", model_discovery_example),
         ("Basic Text", lambda: basic_text_example(args.model)),
         ("Streaming", lambda: streaming_example(args.model)),
         ("Current Information", lambda: current_info_example(args.model)),
@@ -579,6 +829,9 @@ async def main():
         examples.extend(
             [
                 ("Model Comparison", model_comparison_example),
+                ("Context Window Test", lambda: context_window_test(args.model)),
+                ("Parallel Processing", lambda: parallel_processing_test(args.model)),
+                ("Dynamic Model Test", dynamic_model_test),
                 ("Simple Chat", lambda: simple_chat_example(args.model)),
                 ("Parameters Test", lambda: parameters_example(args.model)),
             ]

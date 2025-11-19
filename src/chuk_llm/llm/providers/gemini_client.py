@@ -911,6 +911,7 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
                     gemini_parts = []
                     for item in cont:
                         if isinstance(item, dict):
+                            # Dict-based content
                             if item.get("type") == "text":
                                 gemini_parts.append(item.get("text", ""))
                             elif item.get("type") == "image_url":
@@ -934,7 +935,33 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
                             else:
                                 gemini_parts.append(str(item))
                         else:
-                            gemini_parts.append(str(item))
+                            # Pydantic object-based content
+                            from chuk_llm.core.enums import ContentType
+
+                            if hasattr(item, "type") and hasattr(item, "text"):
+                                # TextContent
+                                if item.type == ContentType.TEXT:
+                                    gemini_parts.append(item.text)
+                            elif hasattr(item, "type") and hasattr(item, "image_url"):
+                                # ImageUrlContent - convert to dict for processing
+                                if item.type == ContentType.IMAGE_URL:
+                                    image_url_data = item.image_url
+                                    url = image_url_data.get("url") if isinstance(image_url_data, dict) else image_url_data
+
+                                    try:
+                                        gemini_image = await self._convert_universal_vision_to_gemini_async({
+                                            "type": "image_url",
+                                            "image_url": {"url": url} if isinstance(url, str) else url
+                                        })
+                                        if "inline_data" in gemini_image:
+                                            gemini_parts.append(gemini_image)
+                                        else:
+                                            gemini_parts.append(gemini_image.get("text", "[Image processing failed]"))
+                                    except Exception as e:
+                                        log.warning(f"Failed to convert Pydantic image: {e}")
+                                        gemini_parts.append("[Image conversion failed]")
+                            else:
+                                gemini_parts.append(str(item))
 
                     # Add the multimodal content as a structured message
                     if gemini_parts:
@@ -947,8 +974,8 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
 
     def create_completion(
         self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        messages: list,  # Pydantic Message objects
+        tools: list | None = None,  # Pydantic Tool objects
         *,
         stream: bool = False,
         max_tokens: int | None = None,
@@ -957,6 +984,10 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
     ) -> AsyncIterator[dict[str, Any]] | Any:
         """
         Configuration-aware completion generation with universal tool name compatibility.
+
+        Args:
+            messages: List of Pydantic Message objects
+            tools: List of Pydantic Tool objects
 
         Uses configuration to validate:
         - Tool support before processing tools
@@ -970,12 +1001,21 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
         - database.sql.execute -> database_sql_execute (sanitized and restored)
         """
 
+        # Handle backward compatibility
+        from chuk_llm.llm.core.base import _ensure_pydantic_messages, _ensure_pydantic_tools
+        messages = _ensure_pydantic_messages(messages)
+        tools = _ensure_pydantic_tools(tools)
+
+        # Convert Pydantic to dicts
+        dict_messages = [msg.to_dict() for msg in messages]
+        dict_tools = [tool.to_dict() for tool in tools] if tools else None
+
         # Validate capabilities using configuration
-        if tools and not self.supports_feature("tools"):
+        if dict_tools and not self.supports_feature("tools"):
             log.warning(
                 f"Tools provided but model {self.model} doesn't support tools according to configuration"
             )
-            tools = None
+            dict_tools = None
 
         if stream and not self.supports_feature("streaming"):
             log.warning(
@@ -985,14 +1025,14 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
 
         # Apply universal tool name sanitization (stores mapping for restoration)
         name_mapping = {}
-        if tools:
-            tools = self._sanitize_tool_names(tools)
+        if dict_tools:
+            dict_tools = self._sanitize_tool_names(dict_tools)
             name_mapping = self._current_name_mapping
             log.debug(
                 f"Tool sanitization: {len(name_mapping)} tools processed for Gemini compatibility"
             )
 
-        gemini_tools = _convert_tools_to_gemini_format(tools)
+        gemini_tools = _convert_tools_to_gemini_format(dict_tools)
 
         # Check for JSON mode (using configuration validation)
         json_instruction = self._check_json_mode(extra)
@@ -1007,7 +1047,7 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
             return self._stream_completion_async(
                 system,
                 json_instruction,
-                messages,
+                dict_messages,
                 gemini_tools,
                 filtered_params,
                 name_mapping,
@@ -1017,7 +1057,7 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
         return self._regular_completion_async(
             system,
             json_instruction,
-            messages,
+            dict_messages,
             gemini_tools,
             filtered_params,
             name_mapping,

@@ -46,14 +46,17 @@ try:
         get_provider_info,
         validate_provider_setup,
     )
+    from chuk_llm.core.models import Message, Tool, ToolFunction, TextContent, ImageUrlContent
+    from chuk_llm.core.enums import MessageRole, ContentType, ToolType
+    from chuk_llm.llm.discovery.anthropic_discoverer import AnthropicModelDiscoverer
 except ImportError as e:
     print(f"❌ Import error: {e}")
     print("   Please make sure you're running from the chuk-llm directory")
     sys.exit(1)
 
 
-def get_available_models():
-    """Get available Anthropic models from configuration and optionally from API"""
+async def get_available_models():
+    """Get available Anthropic models using the discovery system"""
     config = get_config()
     configured_models = []
     discovered_models = []
@@ -64,27 +67,18 @@ def get_available_models():
         if hasattr(provider, "models"):
             configured_models = list(provider.models)
 
-    # Note: Anthropic doesn't have a public models endpoint like OpenAI
-    # But we can check which models are available by attempting to use them
-    # For now, we'll use a predefined list of known models
-    known_models = [
-        "claude-opus-4-1-20250805",
-        "claude-opus-4-20250514",
-        "claude-sonnet-4-20250514",
-        "claude-3-7-sonnet-20250219",
-        "claude-3.5-sonnet-20241022",
-        "claude-3-opus-20240229",
-        "claude-3-sonnet-20240229",
-        "claude-3-haiku-20240307",
-        "claude-2.1",
-        "claude-2.0",
-        "claude-instant-1.2",
-    ]
-
-    # Models that might be available but not configured
-    for model in known_models:
-        if model not in configured_models:
-            discovered_models.append(model)
+    # Use discovery system to find models from Anthropic API
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if api_key:
+        try:
+            discoverer = AnthropicModelDiscoverer(
+                provider_name="anthropic",
+                api_key=api_key,
+            )
+            models_data = await discoverer.discover_models()
+            discovered_models = [m.get("name") for m in models_data if m.get("name")]
+        except Exception as e:
+            print(f"⚠️  Could not fetch models from Anthropic API: {e}")
 
     # Combine models (configured first, then discovered)
     all_models = list(configured_models)
@@ -134,10 +128,10 @@ async def basic_text_example(model: str = "claude-sonnet-4-20250514"):
     client = get_client("anthropic", model=model)
 
     messages = [
-        {
-            "role": "user",
-            "content": "Explain the concept of recursion in programming in simple terms (2-3 sentences).",
-        }
+        Message(
+            role=MessageRole.USER,
+            content="Explain the concept of recursion in programming in simple terms (2-3 sentences).",
+        )
     ]
 
     start_time = time.time()
@@ -169,7 +163,7 @@ async def streaming_example(model: str = "claude-sonnet-4-20250514"):
     client = get_client("anthropic", model=model)
 
     messages = [
-        {"role": "user", "content": "Write a short poem about the beauty of code."}
+        Message(role=MessageRole.USER, content="Write a short poem about the beauty of code.")
     ]
 
     print("🌊 Streaming response:")
@@ -210,12 +204,12 @@ async def function_calling_example(model: str = "claude-sonnet-4-20250514"):
 
     # Define tools
     tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "analyze_sentiment",
-                "description": "Analyze the sentiment of a given text",
-                "parameters": {
+        Tool(
+            type=ToolType.FUNCTION,
+            function=ToolFunction(
+                name="analyze_sentiment",
+                description="Analyze the sentiment of a given text",
+                parameters={
                     "type": "object",
                     "properties": {
                         "text": {
@@ -229,14 +223,14 @@ async def function_calling_example(model: str = "claude-sonnet-4-20250514"):
                     },
                     "required": ["text"],
                 },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "generate_summary",
-                "description": "Generate a summary of given text",
-                "parameters": {
+            ),
+        ),
+        Tool(
+            type=ToolType.FUNCTION,
+            function=ToolFunction(
+                name="generate_summary",
+                description="Generate a summary of given text",
+                parameters={
                     "type": "object",
                     "properties": {
                         "text": {
@@ -250,15 +244,15 @@ async def function_calling_example(model: str = "claude-sonnet-4-20250514"):
                     },
                     "required": ["text"],
                 },
-            },
-        },
+            ),
+        ),
     ]
 
     messages = [
-        {
-            "role": "user",
-            "content": "Please analyze the sentiment of this text: 'I absolutely love this new feature!' Then separately, please generate a summary of that same text in exactly 10 words using the generate_summary function.",
-        }
+        Message(
+            role=MessageRole.USER,
+            content="Please analyze the sentiment of this text: 'I absolutely love this new feature!' Then separately, please generate a summary of that same text in exactly 10 words using the generate_summary function.",
+        )
     ]
 
     print("🔄 Making function calling request...")
@@ -272,8 +266,23 @@ async def function_calling_example(model: str = "claude-sonnet-4-20250514"):
             print(f"   {i}. {func_name}({func_args})")
 
         # Simulate tool execution
+        # Convert tool calls from response dict to proper format for Message
+        from chuk_llm.core.models import ToolCall, FunctionCall
+
+        tool_calls_list = [
+            ToolCall(
+                id=tc["id"],
+                type=ToolType.FUNCTION,
+                function=FunctionCall(
+                    name=tc["function"]["name"],
+                    arguments=tc["function"]["arguments"]
+                )
+            )
+            for tc in response["tool_calls"]
+        ]
+
         messages.append(
-            {"role": "assistant", "content": "", "tool_calls": response["tool_calls"]}
+            Message(role=MessageRole.ASSISTANT, content="", tool_calls=tool_calls_list)
         )
 
         # Add mock tool results
@@ -288,12 +297,12 @@ async def function_calling_example(model: str = "claude-sonnet-4-20250514"):
                 result = '{"status": "success"}'
 
             messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call["id"],
-                    "name": func_name,
-                    "content": result,
-                }
+                Message(
+                    role=MessageRole.TOOL,
+                    tool_call_id=tool_call["id"],
+                    name=func_name,
+                    content=result,
+                )
             )
 
         # Get final response
@@ -348,19 +357,19 @@ async def universal_vision_example(model: str = "claude-sonnet-4-20250514"):
 
     # Test universal image_url format (this should work with all providers)
     messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": "What color is this square? Please describe it in one sentence.",
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{test_image_b64}"},
-                },
+        Message(
+            role=MessageRole.USER,
+            content=[
+                TextContent(
+                    type=ContentType.TEXT,
+                    text="What color is this square? Please describe it in one sentence.",
+                ),
+                ImageUrlContent(
+                    type=ContentType.IMAGE_URL,
+                    image_url={"url": f"data:image/png;base64,{test_image_b64}"},
+                ),
             ],
-        }
+        )
     ]
 
     print("👀 Analyzing image using universal format...")
@@ -412,7 +421,7 @@ async def system_parameter_example(model: str = "claude-sonnet-4-20250514"):
     for persona in personas:
         print(f"\n🎭 Testing {persona['name']} persona:")
 
-        messages = [{"role": "user", "content": persona["query"]}]
+        messages = [Message(role=MessageRole.USER, content=persona["query"])]
 
         # Use the system parameter properly
         response = await client.create_completion(
@@ -472,7 +481,7 @@ async def json_mode_example(model: str = "claude-sonnet-4-20250514"):
     for task in json_tasks:
         print(f"\n📋 {task['name']} JSON Generation:")
 
-        messages = [{"role": "user", "content": task["prompt"]}]
+        messages = [Message(role=MessageRole.USER, content=task["prompt"])]
 
         # Test using OpenAI-style response_format with explicit system instruction
         response = await client.create_completion(
@@ -546,7 +555,7 @@ async def model_comparison_example():
             features = [f.value for f in model_caps.features]
 
             client = get_client("anthropic", model=model)
-            messages = [{"role": "user", "content": prompt}]
+            messages = [Message(role=MessageRole.USER, content=prompt)]
 
             start_time = time.time()
             response = await client.create_completion(messages)
@@ -636,11 +645,11 @@ async def feature_detection_example(model: str = "claude-sonnet-4-20250514"):
 
 
 async def model_discovery_example():
-    """Discover available Anthropic models"""
+    """Discover available Anthropic models using discovery system"""
     print("\n🔍 Model Discovery")
     print("=" * 60)
 
-    model_info = get_available_models()
+    model_info = await get_available_models()
 
     print(f"📦 Configured models ({len(model_info['configured'])}):")
     for model in model_info["configured"][:10]:  # Show first 10
@@ -661,13 +670,17 @@ async def model_discovery_example():
             print(f"   • {model}")
 
     if len(model_info["discovered"]) > 0:
-        print(f"\n🌐 Known models not in config ({len(model_info['discovered'])}):")
+        print(f"\n🌐 Discovered from API ({len(model_info['discovered'])}):")
         # Show models that are not in config
-        for model in model_info["discovered"][:5]:  # Show first 5
-            if "opus" in model.lower() or "sonnet" in model.lower():
-                print(f"   ○ {model} [may require API access]")
-            else:
-                print(f"   ○ {model}")
+        new_models = [
+            m for m in model_info["discovered"] if m not in model_info["configured"]
+        ]
+        if new_models:
+            print("   New models not in config:")
+            for model in new_models[:5]:  # Show first 5
+                print(f"   ✨ {model}")
+        else:
+            print("   All API models are already configured")
 
     print(f"\n📊 Total known: {len(model_info['all'])} models")
 
@@ -690,7 +703,7 @@ async def model_discovery_example():
         print(f"\n🧪 Testing model: {test_model}")
         try:
             client = get_client("anthropic", model=test_model)
-            messages = [{"role": "user", "content": "Say hello in 3 words"}]
+            messages = [Message(role=MessageRole.USER, content="Say hello in 3 words")]
             response = await client.create_completion(messages, max_tokens=20)
             content = response.get("response", "")
             if content:
@@ -704,7 +717,103 @@ async def model_discovery_example():
 
 
 # =============================================================================
-# Example 10: Comprehensive Feature Test
+# Example 10: Context Window Test
+# =============================================================================
+
+
+async def context_window_test(model: str = "claude-3-5-sonnet-20241022"):
+    """Test Anthropic's large context window"""
+    print(f"\n📏 Context Window Test with {model}")
+    print("=" * 60)
+
+    client = get_client("anthropic", model=model)
+
+    # Create a long context (~4500 words)
+    long_text = "The quick brown fox jumps over the lazy dog. " * 500
+
+    messages = [
+        Message(
+            role=MessageRole.USER,
+            content=f"You have been given a long text. Here it is:\n\n{long_text}\n\nHow many times does the word 'fox' appear? Also tell me the total word count.",
+        ),
+    ]
+
+    print(f"📝 Testing with ~{len(long_text.split())} words of context...")
+
+    start_time = time.time()
+    response = await client.create_completion(messages, max_tokens=150)
+    duration = time.time() - start_time
+
+    print(f"✅ Response ({duration:.2f}s):")
+    print(f"   {response.get('response', '')}")
+
+    return response
+
+
+# =============================================================================
+# Example 11: Parallel Processing Test
+# =============================================================================
+
+
+async def parallel_processing_test(model: str = "claude-3-5-sonnet-20241022"):
+    """Test parallel request processing with Anthropic"""
+    print("\n🔀 Parallel Processing Test")
+    print("=" * 60)
+
+    prompts = [
+        "What is artificial intelligence?",
+        "Explain quantum computing.",
+        "What is machine learning?",
+        "Define neural networks.",
+        "What is deep learning?",
+    ]
+
+    print(f"📊 Testing {len(prompts)} parallel requests with {model}...")
+
+    # Sequential processing
+    print("\n📝 Sequential processing:")
+    sequential_start = time.time()
+
+    for prompt in prompts:
+        client = get_client("anthropic", model=model)
+        await client.create_completion(
+            [Message(role=MessageRole.USER, content=prompt)], max_tokens=50
+        )
+
+    sequential_time = time.time() - sequential_start
+    print(f"   ✅ Completed in {sequential_time:.2f}s")
+
+    # Parallel processing
+    print("\n⚡ Parallel processing:")
+    parallel_start = time.time()
+
+    async def process_prompt(prompt):
+        client = get_client("anthropic", model=model)
+        response = await client.create_completion(
+            [Message(role=MessageRole.USER, content=prompt)], max_tokens=50
+        )
+        return response.get("response", "")[:50]
+
+    await asyncio.gather(*[process_prompt(p) for p in prompts])
+    parallel_time = time.time() - parallel_start
+    print(f"   ✅ Completed in {parallel_time:.2f}s")
+
+    # Results
+    speedup = sequential_time / parallel_time if parallel_time > 0 else 0
+    print("\n📈 Results:")
+    print(f"   Sequential: {sequential_time:.2f}s")
+    print(f"   Parallel: {parallel_time:.2f}s")
+    print(f"   Speedup: {speedup:.1f}x")
+
+    return {
+        "sequential_time": sequential_time,
+        "parallel_time": parallel_time,
+        "speedup": speedup,
+    }
+
+
+# =============================================================================
+# Example 12: Comprehensive Feature Test
 # =============================================================================
 
 
@@ -729,12 +838,12 @@ async def comprehensive_feature_test(model: str = "claude-sonnet-4-20250514"):
 
     # Test: System message + Vision + Tools + JSON mode
     tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "image_analysis_result",
-                "description": "Store the structured result of image analysis",
-                "parameters": {
+        Tool(
+            type=ToolType.FUNCTION,
+            function=ToolFunction(
+                name="image_analysis_result",
+                description="Store the structured result of image analysis",
+                parameters={
                     "type": "object",
                     "properties": {
                         "image_type": {"type": "string"},
@@ -747,24 +856,24 @@ async def comprehensive_feature_test(model: str = "claude-sonnet-4-20250514"):
                     },
                     "required": ["image_type", "dominant_colors", "description"],
                 },
-            },
-        }
+            ),
+        )
     ]
 
     messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": "Please analyze this image and use the image_analysis_result function to store your findings in a structured format.",
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{test_image_b64}"},
-                },
+        Message(
+            role=MessageRole.USER,
+            content=[
+                TextContent(
+                    type=ContentType.TEXT,
+                    text="Please analyze this image and use the image_analysis_result function to store your findings in a structured format.",
+                ),
+                ImageUrlContent(
+                    type=ContentType.IMAGE_URL,
+                    image_url={"url": f"data:image/png;base64,{test_image_b64}"},
+                ),
             ],
-        }
+        )
     ]
 
     print("🔄 Testing: System + Vision + Tools...")
@@ -785,17 +894,31 @@ async def comprehensive_feature_test(model: str = "claude-sonnet-4-20250514"):
             )
 
         # Simulate tool execution
-        messages.append({"role": "assistant", "tool_calls": response["tool_calls"]})
+        from chuk_llm.core.models import ToolCall, FunctionCall
+
+        tool_calls_list = [
+            ToolCall(
+                id=tc["id"],
+                type=ToolType.FUNCTION,
+                function=FunctionCall(
+                    name=tc["function"]["name"],
+                    arguments=tc["function"]["arguments"]
+                )
+            )
+            for tc in response["tool_calls"]
+        ]
+
+        messages.append(Message(role=MessageRole.ASSISTANT, tool_calls=tool_calls_list))
 
         # Add tool result
         for tc in response["tool_calls"]:
             messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "name": tc["function"]["name"],
-                    "content": '{"status": "stored", "analysis_id": "test_123"}',
-                }
+                Message(
+                    role=MessageRole.TOOL,
+                    tool_call_id=tc["id"],
+                    name=tc["function"]["name"],
+                    content='{"status": "stored", "analysis_id": "test_123"}',
+                )
             )
 
         # Get final response
@@ -815,12 +938,12 @@ async def comprehensive_text_only_test(model: str):
 
     # Test: System message + Tools + JSON mode
     tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "text_analysis_result",
-                "description": "Store the structured result of text analysis",
-                "parameters": {
+        Tool(
+            type=ToolType.FUNCTION,
+            function=ToolFunction(
+                name="text_analysis_result",
+                description="Store the structured result of text analysis",
+                parameters={
                     "type": "object",
                     "properties": {
                         "sentiment": {"type": "string"},
@@ -830,15 +953,15 @@ async def comprehensive_text_only_test(model: str):
                     },
                     "required": ["sentiment", "key_topics", "summary"],
                 },
-            },
-        }
+            ),
+        )
     ]
 
     messages = [
-        {
-            "role": "user",
-            "content": "Please analyze this text and use the text_analysis_result function: 'I absolutely love working with Python and machine learning. The ecosystem is fantastic!'",
-        }
+        Message(
+            role=MessageRole.USER,
+            content="Please analyze this text and use the text_analysis_result function: 'I absolutely love working with Python and machine learning. The ecosystem is fantastic!'",
+        )
     ]
 
     print("🔄 Testing: System + Tools + JSON (text-only)...")
@@ -860,6 +983,102 @@ async def comprehensive_text_only_test(model: str):
         print(f"ℹ️  Direct response: {response['response'][:150]}...")
 
     return response
+
+
+# =============================================================================
+# Example 12: Dynamic Model Test
+# =============================================================================
+
+
+async def dynamic_model_test():
+    """Test a non-configured model to prove library flexibility"""
+    print("\n🔄 Dynamic Model Test")
+    print("=" * 60)
+    print("Testing a model NOT in chuk_llm.yaml config")
+
+    # Use Claude 3.7 Sonnet which might not be in config
+    dynamic_model = "claude-3-7-sonnet-20250219"
+
+    print(f"\n🧪 Testing dynamic model: {dynamic_model}")
+    print("   This model may not be in the config file")
+
+    try:
+        client = get_client("anthropic", model=dynamic_model)
+        messages = [
+            Message(
+                role=MessageRole.USER,
+                content="Say hello in exactly one creative word"
+            )
+        ]
+
+        response = await client.create_completion(messages, max_tokens=10)
+        print(f"   ✅ Dynamic model works: {response['response']}")
+        print(f"   Model ID: {response.get('model', 'N/A')}")
+
+        return response
+
+    except Exception as e:
+        print(f"   ⚠️ Test failed: {str(e)[:100]}")
+        return None
+
+
+# =============================================================================
+# Example 13: Reasoning/Extended Thinking
+# =============================================================================
+
+
+async def reasoning_example(model: str = "claude-sonnet-4-5-20250514"):
+    """Demonstrate Claude's extended thinking capabilities"""
+    print(f"\n🧠 Extended Thinking Example with {model}")
+    print("=" * 60)
+    print("Claude Sonnet 4.5 supports extended thinking for complex problems")
+
+    client = get_client("anthropic", model=model)
+
+    # Use a problem that benefits from reasoning
+    messages = [
+        Message(
+            role=MessageRole.USER,
+            content="I have a 3-gallon jug and a 5-gallon jug. How can I measure exactly 4 gallons of water? Think through this step by step."
+        )
+    ]
+
+    print("\n🔄 Requesting response with extended thinking...")
+    start_time = time.time()
+
+    try:
+        response = await client.create_completion(messages, max_tokens=2000)
+        duration = time.time() - start_time
+
+        # Check for thinking blocks in Claude's response
+        if response.get("thinking"):
+            thinking = response["thinking"]
+            print(f"\n🧠 Thinking Process ({len(thinking)} chars):")
+            print(f"   {thinking[:400]}...")
+            if len(thinking) > 400:
+                print(f"   ... (truncated, {len(thinking) - 400} more chars)")
+
+        print(f"\n📝 Final Answer:")
+        print(f"   {response['response'][:500]}...")
+
+        # Token breakdown
+        if response.get("usage"):
+            usage = response["usage"]
+            print(f"\n📊 Token Usage:")
+            print(f"   Input: {usage.get('input_tokens', 0)} tokens")
+            print(f"   Output: {usage.get('output_tokens', 0)} tokens")
+            print(f"   Total: {usage.get('total_tokens', 0)} tokens")
+            print(f"   Duration: {duration:.2f}s")
+
+        if not response.get("thinking"):
+            print("\nℹ️  Note: This response may not have separate thinking blocks.")
+            print("   Extended thinking is automatically used when needed.")
+
+        return response
+
+    except Exception as e:
+        print(f"❌ Reasoning example failed: {str(e)[:200]}")
+        return None
 
 
 # =============================================================================
@@ -958,6 +1177,10 @@ async def main():
         examples.extend(
             [
                 ("Model Comparison", model_comparison_example),
+                ("Context Window Test", lambda: context_window_test(args.model)),
+                ("Parallel Processing", lambda: parallel_processing_test(args.model)),
+                ("Dynamic Model Test", dynamic_model_test),
+                ("Extended Thinking (Reasoning)", lambda: reasoning_example(args.model)),
                 ("Comprehensive Test", lambda: comprehensive_feature_test(args.model)),
             ]
         )

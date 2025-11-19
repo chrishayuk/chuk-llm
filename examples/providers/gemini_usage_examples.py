@@ -46,6 +46,8 @@ try:
         get_provider_info,
         validate_provider_setup,
     )
+    from chuk_llm.core.models import Message, Tool, ToolFunction, TextContent, ImageUrlContent, ToolCall, FunctionCall
+    from chuk_llm.core.enums import MessageRole, ContentType, ToolType
 except ImportError as e:
     print(f"❌ Import error: {e}")
     print("   Please make sure you're running from the chuk-llm directory")
@@ -154,10 +156,10 @@ async def basic_text_example(model: str = "gemini-2.5-flash"):
     client = get_client("gemini", model=model)
 
     messages = [
-        {
-            "role": "user",
-            "content": "Explain large language models in simple terms (2-3 sentences).",
-        }
+        Message(
+            role=MessageRole.USER,
+            content="Explain large language models in simple terms (2-3 sentences).",
+        )
     ]
 
     start_time = time.time()
@@ -190,10 +192,10 @@ async def streaming_example(model: str = "gemini-2.5-flash"):
     client = get_client("gemini", model=model)
 
     messages = [
-        {
-            "role": "user",
-            "content": "Write a short poem about the future of technology.",
-        }
+        Message(
+            role=MessageRole.USER,
+            content="Write a short poem about the future of technology.",
+        )
     ]
 
     print("🌊 Streaming response:")
@@ -291,10 +293,10 @@ async def function_calling_example(model: str = "gemini-2.5-flash"):
     ]
 
     messages = [
-        {
-            "role": "user",
-            "content": "Get information about Tokyo, Japan and convert 100 kilometers to miles.",
-        }
+        Message(
+            role=MessageRole.USER,
+            content="Get information about Tokyo, Japan and convert 100 kilometers to miles.",
+        )
     ]
 
     print("🔄 Making function calling request...")
@@ -308,8 +310,20 @@ async def function_calling_example(model: str = "gemini-2.5-flash"):
             print(f"   {i}. {func_name}({func_args})")
 
         # Simulate tool execution
+        tool_calls_list = [
+            ToolCall(
+                id=tc["id"],
+                type=ToolType.FUNCTION,
+                function=FunctionCall(
+                    name=tc["function"]["name"],
+                    arguments=tc["function"]["arguments"]
+                )
+            )
+            for tc in response["tool_calls"]
+        ]
+
         messages.append(
-            {"role": "assistant", "content": "", "tool_calls": response["tool_calls"]}
+            Message(role=MessageRole.ASSISTANT, content="", tool_calls=tool_calls_list)
         )
 
         # Add mock tool results
@@ -324,12 +338,12 @@ async def function_calling_example(model: str = "gemini-2.5-flash"):
                 result = '{"status": "success"}'
 
             messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call["id"],
-                    "name": func_name,
-                    "content": result,
-                }
+                Message(
+                    role=MessageRole.TOOL,
+                    tool_call_id=tool_call["id"],
+                    name=func_name,
+                    content=result,
+                )
             )
 
         # Get final response
@@ -393,10 +407,10 @@ async def universal_vision_example(model: str = "gemini-2.5-flash"):
 
     # Test with a simple text query instead since vision isn't working properly
     messages = [
-        {
-            "role": "user",
-            "content": "If I show you a blue square image, what would you expect to see? Describe what a blue square would look like in one sentence.",
-        }
+        Message(
+            role=MessageRole.USER,
+            content="If I show you a blue square image, what would you expect to see? Describe what a blue square would look like in one sentence.",
+        )
     ]
 
     print("👀 Testing vision understanding conceptually...")
@@ -417,10 +431,10 @@ async def universal_vision_example(model: str = "gemini-2.5-flash"):
 
             # Try text-only version
             text_messages = [
-                {
-                    "role": "user",
-                    "content": "If I showed you a red square image, what color would it be?",
-                }
+                Message(
+                    role=MessageRole.USER,
+                    content="If I showed you a red square image, what color would it be?",
+                )
             ]
             fallback_response = await client.create_completion(text_messages)
             fallback_content = get_response_content(fallback_response)
@@ -485,7 +499,7 @@ async def system_parameter_example(model: str = "gemini-2.5-flash"):
         # Try both system parameter and system message approaches
         try:
             # Method 1: Try system parameter (should work with updated client)
-            messages = [{"role": "user", "content": persona["query"]}]
+            messages = [Message(role=MessageRole.USER, content=persona["query"])]
             # Note: Gemini has issues with max_tokens parameter
             response = await client.create_completion(
                 messages, system=persona["system"]
@@ -503,8 +517,8 @@ async def system_parameter_example(model: str = "gemini-2.5-flash"):
             # Method 2: Fallback to system message in conversation
             try:
                 messages = [
-                    {"role": "system", "content": persona["system"]},
-                    {"role": "user", "content": persona["query"]},
+                    Message(role=MessageRole.SYSTEM, content=persona["system"]),
+                    Message(role=MessageRole.USER, content=persona["query"]),
                 ]
                 response = await client.create_completion(messages)
                 content = get_response_content(response)
@@ -563,7 +577,7 @@ async def json_mode_example(model: str = "gemini-2.5-flash"):
     for task in json_tasks:
         print(f"\n📋 {task['name']} JSON Generation:")
 
-        messages = [{"role": "user", "content": task["prompt"]}]
+        messages = [Message(role=MessageRole.USER, content=task["prompt"])]
 
         try:
             response = await client.create_completion(
@@ -660,7 +674,7 @@ async def model_comparison_example():
             features = [f.value for f in model_caps.features] if model_caps else []
 
             client = get_client("gemini", model=model)
-            messages = [{"role": "user", "content": prompt}]
+            messages = [Message(role=MessageRole.USER, content=prompt)]
 
             start_time = time.time()
             response = await client.create_completion(messages)
@@ -812,7 +826,7 @@ async def model_discovery_example():
         print(f"\n🧪 Testing model: {test_model}")
         try:
             client = get_client("gemini", model=test_model)
-            messages = [{"role": "user", "content": "Say hello in 3 words"}]
+            messages = [Message(role=MessageRole.USER, content="Say hello in 3 words")]
             response = await client.create_completion(messages)
             content = get_response_content(response)
             print(f"   ✅ Model works: {content[:50]}...")
@@ -856,10 +870,10 @@ async def comprehensive_feature_test(model: str = "gemini-2.5-flash"):
     ]
 
     messages = [
-        {
-            "role": "user",
-            "content": "Please analyze this text using the text_analysis_result function: 'I absolutely love working with Google Gemini! The multimodal capabilities are fantastic and the reasoning is impressive!'",
-        }
+        Message(
+            role=MessageRole.USER,
+            content="Please analyze this text using the text_analysis_result function: 'I absolutely love working with Google Gemini! The multimodal capabilities are fantastic and the reasoning is impressive!'",
+        )
     ]
 
     print("🔄 Testing: Tools + Text...")
@@ -917,10 +931,10 @@ async def multimodal_example(model: str = "gemini-2.5-flash"):
     print("🎭 Testing conceptual multimodal understanding...")
 
     messages = [
-        {
-            "role": "user",
-            "content": "Imagine I'm showing you two images: one is a red square and one is a blue square. If I asked you to compare them, what would you say about their differences and similarities? Keep it brief.",
-        }
+        Message(
+            role=MessageRole.USER,
+            content="Imagine I'm showing you two images: one is a red square and one is a blue square. If I asked you to compare them, what would you say about their differences and similarities? Keep it brief.",
+        )
     ]
 
     print("👀 Testing multimodal reasoning conceptually...")
@@ -946,6 +960,140 @@ async def multimodal_example(model: str = "gemini-2.5-flash"):
     except Exception as e:
         print(f"❌ Multimodal test failed: {e}")
         return {"response": f"Error: {str(e)}", "error": True}
+
+
+# =============================================================================
+# Example 11: Context Window Test
+# =============================================================================
+
+
+async def context_window_test(model: str = "gemini-2.5-flash"):
+    """Test Gemini's large context window"""
+    print(f"\n📏 Context Window Test with {model}")
+    print("=" * 60)
+
+    client = get_client("gemini", model=model)
+
+    # Create a long context (~4500 words)
+    long_text = "The quick brown fox jumps over the lazy dog. " * 500
+
+    messages = [
+        Message(
+            role=MessageRole.USER,
+            content=f"You have been given a long text. Here it is:\n\n{long_text}\n\nHow many times does the word 'fox' appear? Also tell me the total word count.",
+        ),
+    ]
+
+    print(f"📝 Testing with ~{len(long_text.split())} words of context...")
+
+    start_time = time.time()
+    response = await client.create_completion(messages)  # max_tokens may cause issues
+    duration = time.time() - start_time
+
+    print(f"✅ Response ({duration:.2f}s):")
+    content = get_response_content(response)
+    print(f"   {content}")
+
+    return response
+
+
+# =============================================================================
+# Example 12: Dynamic Model Test
+# =============================================================================
+
+
+async def dynamic_model_test():
+    """Test a non-configured model to prove library flexibility"""
+    print("\n🔄 Dynamic Model Test")
+    print("=" * 60)
+    print("Testing a model NOT in chuk_llm.yaml config")
+
+    # Use a model specific to this provider that might not be in config
+    dynamic_model = "gemini-2.0-flash-exp"
+
+    print(f"\n🧪 Testing dynamic model: {dynamic_model}")
+    print("   This model may not be in the config file")
+
+    try:
+        client = get_client("gemini", model=dynamic_model)
+        messages = [
+            Message(
+                role=MessageRole.USER,
+                content="Say hello in exactly one creative word"
+            )
+        ]
+
+        response = await client.create_completion(messages, max_tokens=10)
+        print(f"   ✅ Dynamic model works: {response['response']}")
+
+        return response
+
+    except Exception as e:
+        print(f"   ⚠️ Test failed: {str(e)[:100]}")
+        return None
+
+
+# =============================================================================
+# Example 13: Parallel Processing Test
+# =============================================================================
+
+
+async def parallel_processing_test(model: str = "gemini-2.5-flash"):
+    """Test parallel request processing with Gemini"""
+    print("\n🔀 Parallel Processing Test")
+    print("=" * 60)
+
+    prompts = [
+        "What is artificial intelligence?",
+        "Explain quantum computing.",
+        "What is machine learning?",
+        "Define neural networks.",
+        "What is deep learning?",
+    ]
+
+    print(f"📊 Testing {len(prompts)} parallel requests with {model}...")
+
+    # Sequential processing
+    print("\n📝 Sequential processing:")
+    sequential_start = time.time()
+
+    for prompt in prompts:
+        client = get_client("gemini", model=model)
+        await client.create_completion(
+            [Message(role=MessageRole.USER, content=prompt)]
+        )
+
+    sequential_time = time.time() - sequential_start
+    print(f"   ✅ Completed in {sequential_time:.2f}s")
+
+    # Parallel processing
+    print("\n⚡ Parallel processing:")
+    parallel_start = time.time()
+
+    async def process_prompt(prompt):
+        client = get_client("gemini", model=model)
+        response = await client.create_completion(
+            [Message(role=MessageRole.USER, content=prompt)]
+        )
+        content = get_response_content(response)
+        return content[:50] if content else ""
+
+    await asyncio.gather(*[process_prompt(p) for p in prompts])
+    parallel_time = time.time() - parallel_start
+    print(f"   ✅ Completed in {parallel_time:.2f}s")
+
+    # Results
+    speedup = sequential_time / parallel_time if parallel_time > 0 else 0
+    print("\n📈 Results:")
+    print(f"   Sequential: {sequential_time:.2f}s")
+    print(f"   Parallel: {parallel_time:.2f}s")
+    print(f"   Speedup: {speedup:.1f}x")
+
+    return {
+        "sequential_time": sequential_time,
+        "parallel_time": parallel_time,
+        "speedup": speedup,
+    }
 
 
 # =============================================================================
@@ -1083,6 +1231,9 @@ async def main():
         examples.extend(
             [
                 ("Model Comparison", model_comparison_example),
+                ("Context Window Test", lambda: context_window_test(args.model)),
+                ("Parallel Processing", lambda: parallel_processing_test(args.model)),
+                ("Dynamic Model Test", dynamic_model_test),
                 ("Comprehensive Test", lambda: comprehensive_feature_test(args.model)),
             ]
         )

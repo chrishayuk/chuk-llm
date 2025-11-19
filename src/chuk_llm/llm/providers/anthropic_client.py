@@ -514,8 +514,8 @@ class AnthropicLLMClient(
 
     def create_completion(
         self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        messages: list,  # Pydantic Message objects (or dicts for backward compat)
+        tools: list | None = None,  # Pydantic Tool objects (or dicts for backward compat)
         *,
         stream: bool = False,
         max_tokens: int | None = None,
@@ -524,6 +524,10 @@ class AnthropicLLMClient(
     ) -> AsyncIterator[dict[str, Any]] | Any:
         """
         Configuration-aware completion generation with universal tool name compatibility.
+
+        Args:
+            messages: List of Pydantic Message objects (or dicts for backward compatibility)
+            tools: List of Pydantic Tool objects (or dicts for backward compatibility)
 
         Uses configuration to validate:
         - Tool support before processing tools
@@ -537,12 +541,21 @@ class AnthropicLLMClient(
         - database.sql.execute -> database_sql_execute
         """
 
+        # Handle backward compatibility
+        from chuk_llm.llm.core.base import _ensure_pydantic_messages, _ensure_pydantic_tools
+        messages = _ensure_pydantic_messages(messages)
+        tools = _ensure_pydantic_tools(tools)
+
+        # Convert Pydantic to dicts using built-in .to_dict() method
+        dict_messages = [msg.to_dict() for msg in messages]
+        dict_tools = [tool.to_dict() for tool in tools] if tools else None
+
         # Validate capabilities using configuration
-        if tools and not self.supports_feature("tools"):
+        if dict_tools and not self.supports_feature("tools"):
             log.warning(
                 f"Tools provided but model {self.model} doesn't support tools according to configuration"
             )
-            tools = None
+            dict_tools = None
 
         if stream and not self.supports_feature("streaming"):
             log.warning(
@@ -552,14 +565,14 @@ class AnthropicLLMClient(
 
         # Apply universal tool name sanitization (stores mapping for restoration)
         name_mapping = {}
-        if tools:
-            tools = self._sanitize_tool_names(tools)
+        if dict_tools:
+            dict_tools = self._sanitize_tool_names(dict_tools)
             name_mapping = self._current_name_mapping
             log.debug(
                 f"Tool sanitization: {len(name_mapping)} tools processed for Anthropic compatibility"
             )
 
-        anth_tools = self._convert_tools(tools)
+        anth_tools = self._convert_tools(dict_tools)
 
         # Check for JSON mode (using configuration validation)
         json_instruction = self._check_json_mode(extra)
@@ -574,7 +587,7 @@ class AnthropicLLMClient(
             return self._stream_completion_async(
                 system,
                 json_instruction,
-                messages,
+                dict_messages,
                 anth_tools,
                 filtered_params,
                 name_mapping,
@@ -584,7 +597,7 @@ class AnthropicLLMClient(
         return self._regular_completion_async(
             system,
             json_instruction,
-            messages,
+            dict_messages,
             anth_tools,
             filtered_params,
             name_mapping,

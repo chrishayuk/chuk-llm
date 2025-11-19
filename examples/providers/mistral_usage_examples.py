@@ -41,14 +41,17 @@ try:
 
     from chuk_llm.configuration import Feature, get_config
     from chuk_llm.llm.client import get_client, get_provider_info
+    from chuk_llm.core.models import Message, Tool, ToolFunction, TextContent, ImageUrlContent, ToolCall, FunctionCall
+    from chuk_llm.core.enums import MessageRole, ContentType, ToolType
+    from chuk_llm.llm.discovery.mistral_discoverer import MistralModelDiscoverer
 except ImportError as e:
     print(f"❌ Import error: {e}")
     print("   Please make sure you're running from the chuk-llm directory")
     sys.exit(1)
 
 
-def get_available_models():
-    """Get available models from configuration and optionally from API"""
+async def get_available_models():
+    """Get available models using the discovery system"""
     config = get_config()
     configured_models = []
     discovered_models = []
@@ -59,20 +62,16 @@ def get_available_models():
         if hasattr(provider, "models"):
             configured_models = list(provider.models)
 
-    # Try to get models from Mistral API
+    # Use discovery system to find models from Mistral API
     api_key = os.getenv("MISTRAL_API_KEY")
     if api_key:
         try:
-            response = httpx.get(
-                "https://api.mistral.ai/v1/models",
-                headers={"Authorization": f"Bearer {api_key}"},
-                timeout=5.0,
+            discoverer = MistralModelDiscoverer(
+                provider_name="mistral",
+                api_key=api_key,
             )
-            if response.status_code == 200:
-                api_models = response.json()
-                discovered_models = [
-                    m.get("id") for m in api_models.get("data", []) if m.get("id")
-                ]
+            models_data = await discoverer.discover_models()
+            discovered_models = [m.get("name") for m in models_data if m.get("name")]
         except Exception as e:
             print(f"⚠️  Could not fetch models from API: {e}")
 
@@ -124,11 +123,11 @@ async def basic_text_example(model: str = "mistral-medium-2505"):
     client = get_client("mistral", model=model)
 
     messages = [
-        {"role": "system", "content": "You are a helpful AI assistant."},
-        {
-            "role": "user",
-            "content": "Explain quantum computing in simple terms (2-3 sentences).",
-        },
+        Message(role=MessageRole.SYSTEM, content="You are a helpful AI assistant."),
+        Message(
+            role=MessageRole.USER,
+            content="Explain quantum computing in simple terms (2-3 sentences).",
+        ),
     ]
 
     start_time = time.time()
@@ -160,10 +159,10 @@ async def streaming_example(model: str = "mistral-medium-2505"):
     client = get_client("mistral", model=model)
 
     messages = [
-        {
-            "role": "user",
-            "content": "Write a short haiku about artificial intelligence.",
-        }
+        Message(
+            role=MessageRole.USER,
+            content="Write a short haiku about artificial intelligence.",
+        )
     ]
 
     print("🌊 Streaming response:")
@@ -207,12 +206,12 @@ async def function_calling_example(model: str = "mistral-medium-2505"):
 
     # Define tools
     tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "calculate_tip",
-                "description": "Calculate tip amount and total bill",
-                "parameters": {
+        Tool(
+            type=ToolType.FUNCTION,
+            function=ToolFunction(
+                name="calculate_tip",
+                description="Calculate tip amount and total bill",
+                parameters={
                     "type": "object",
                     "properties": {
                         "bill_amount": {
@@ -226,14 +225,14 @@ async def function_calling_example(model: str = "mistral-medium-2505"):
                     },
                     "required": ["bill_amount"],
                 },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "get_weather",
-                "description": "Get current weather for a location",
-                "parameters": {
+            ),
+        ),
+        Tool(
+            type=ToolType.FUNCTION,
+            function=ToolFunction(
+                name="get_weather",
+                description="Get current weather for a location",
+                parameters={
                     "type": "object",
                     "properties": {
                         "location": {"type": "string", "description": "City name"},
@@ -245,15 +244,15 @@ async def function_calling_example(model: str = "mistral-medium-2505"):
                     },
                     "required": ["location"],
                 },
-            },
-        },
+            ),
+        ),
     ]
 
     messages = [
-        {
-            "role": "user",
-            "content": "Calculate a 20% tip on a $85 bill and tell me the weather in Paris.",
-        }
+        Message(
+            role=MessageRole.USER,
+            content="Calculate a 20% tip on a $85 bill and tell me the weather in Paris.",
+        )
     ]
 
     print("🔄 Making function calling request...")
@@ -267,8 +266,23 @@ async def function_calling_example(model: str = "mistral-medium-2505"):
             print(f"   {i}. {func_name}({func_args})")
 
         # Simulate tool execution
+        # Convert tool calls from response dict to proper format for Message
+        from chuk_llm.core.models import ToolCall, FunctionCall
+
+        tool_calls_list = [
+            ToolCall(
+                id=tc["id"],
+                type=ToolType.FUNCTION,
+                function=FunctionCall(
+                    name=tc["function"]["name"],
+                    arguments=tc["function"]["arguments"]
+                )
+            )
+            for tc in response["tool_calls"]
+        ]
+
         messages.append(
-            {"role": "assistant", "content": "", "tool_calls": response["tool_calls"]}
+            Message(role=MessageRole.ASSISTANT, content="", tool_calls=tool_calls_list)
         )
 
         # Add mock tool results
@@ -285,12 +299,12 @@ async def function_calling_example(model: str = "mistral-medium-2505"):
                 result = '{"status": "success"}'
 
             messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call["id"],
-                    "name": func_name,
-                    "content": result,
-                }
+                Message(
+                    role=MessageRole.TOOL,
+                    tool_call_id=tool_call["id"],
+                    name=func_name,
+                    content=result,
+                )
             )
 
         # Get final response
@@ -332,19 +346,19 @@ async def vision_example(model: str = "mistral-medium-2505"):
     test_image = create_test_image("blue", 20)
 
     messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": "What color is this square? Answer with just the color name.",
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{test_image}"},
-                },
+        Message(
+            role=MessageRole.USER,
+            content=[
+                TextContent(
+                    type=ContentType.TEXT,
+                    text="What color is this square? Answer with just the color name.",
+                ),
+                ImageUrlContent(
+                    type=ContentType.IMAGE_URL,
+                    image_url={"url": f"data:image/png;base64,{test_image}"},
+                ),
             ],
-        }
+        )
     ]
 
     print("👀 Analyzing image...")
@@ -362,11 +376,11 @@ async def vision_example(model: str = "mistral-medium-2505"):
 
 
 async def model_discovery_example():
-    """Discover available models from Mistral API"""
+    """Discover available models using discovery system"""
     print("\n🔍 Model Discovery")
     print("=" * 60)
 
-    model_info = get_available_models()
+    model_info = await get_available_models()
 
     print(f"📦 Configured models ({len(model_info['configured'])}):")
     for model in model_info["configured"][:10]:  # Show first 10
@@ -401,7 +415,7 @@ async def model_discovery_example():
         print(f"\n🧪 Testing discovered model: {test_model}")
         try:
             client = get_client("mistral", model=test_model)
-            messages = [{"role": "user", "content": "Say hello"}]
+            messages = [Message(role=MessageRole.USER, content="Say hello")]
             response = await client.create_completion(messages, max_tokens=20)
             print(f"   ✅ Model works: {response['response'][:50]}...")
         except Exception as e:
@@ -432,10 +446,10 @@ async def reasoning_example(model: str = "magistral-medium-2506"):
     client = get_client("mistral", model=model)
 
     messages = [
-        {
-            "role": "user",
-            "content": "I have a 3-gallon jug and a 5-gallon jug. How can I measure exactly 4 gallons of water? Think step by step.",
-        }
+        Message(
+            role=MessageRole.USER,
+            content="I have a 3-gallon jug and a 5-gallon jug. How can I measure exactly 4 gallons of water? Think step by step.",
+        )
     ]
 
     print("🧠 Processing reasoning task...")
@@ -445,6 +459,19 @@ async def reasoning_example(model: str = "magistral-medium-2506"):
 
     print(f"✅ Reasoning response ({duration:.2f}s):")
     print(f"   {response['response']}")
+
+    # Display token usage with reasoning tokens if available
+    if response.get("usage"):
+        usage = response["usage"]
+        print(f"\n📊 Token Usage:")
+        print(f"   Prompt: {usage.get('prompt_tokens', 0)} tokens")
+        print(f"   Completion: {usage.get('completion_tokens', 0)} tokens")
+        if usage.get("reasoning_tokens"):
+            print(f"   🧠 Reasoning: {usage['reasoning_tokens']} tokens")
+            print(f"   📝 Output: {usage.get('completion_tokens', 0) - usage['reasoning_tokens']} tokens")
+        else:
+            print(f"   ℹ️  Note: Reasoning tokens included in completion count (Mistral API doesn't separate them)")
+        print(f"   Total: {usage.get('total_tokens', 0)} tokens")
 
     return response
 
@@ -475,7 +502,7 @@ async def model_comparison_example():
         try:
             print(f"🔄 Testing {model}...")
             client = get_client("mistral", model=model)
-            messages = [{"role": "user", "content": prompt}]
+            messages = [Message(role=MessageRole.USER, content=prompt)]
 
             start_time = time.time()
             response = await client.create_completion(messages)
@@ -599,14 +626,14 @@ async def simple_chat_example(model: str = "mistral-medium-2505"):
     ]
 
     messages = [
-        {"role": "system", "content": "You are a helpful and friendly AI assistant."}
+        Message(role=MessageRole.SYSTEM, content="You are a helpful and friendly AI assistant.")
     ]
 
     for user_input in conversation:
         print(f"👤 User: {user_input}")
 
         # Add user message
-        messages.append({"role": "user", "content": user_input})
+        messages.append(Message(role=MessageRole.USER, content=user_input))
 
         # Get response
         response = await client.create_completion(messages, max_tokens=150)
@@ -616,13 +643,149 @@ async def simple_chat_example(model: str = "mistral-medium-2505"):
         print()
 
         # Add assistant response to conversation
-        messages.append({"role": "assistant", "content": assistant_response})
+        messages.append(Message(role=MessageRole.ASSISTANT, content=assistant_response))
 
     return messages
 
 
 # =============================================================================
-# Example 9: Comprehensive Feature Test
+# Example 9: Context Window Test
+# =============================================================================
+
+
+async def context_window_test(model: str = "mistral-small-latest"):
+    """Test Mistral's large context window"""
+    print(f"\n📏 Context Window Test with {model}")
+    print("=" * 60)
+
+    client = get_client("mistral", model=model)
+
+    # Create a long context (~4500 words)
+    long_text = "The quick brown fox jumps over the lazy dog. " * 500
+
+    messages = [
+        Message(
+            role=MessageRole.SYSTEM,
+            content=f"You have been given a long text. Here it is:\n\n{long_text}\n\nPlease analyze this text.",
+        ),
+        Message(
+            role=MessageRole.USER,
+            content="How many times does the word 'fox' appear in the text? Also tell me the total word count.",
+        ),
+    ]
+
+    print(f"📝 Testing with ~{len(long_text.split())} words of context...")
+
+    start_time = time.time()
+    response = await client.create_completion(messages, max_tokens=150)
+    duration = time.time() - start_time
+
+    print(f"✅ Response ({duration:.2f}s):")
+    print(f"   {response.get('response', '')}")
+
+    return response
+
+
+# =============================================================================
+# Example 10: Parallel Processing Test
+# =============================================================================
+
+
+async def parallel_processing_test(model: str = "mistral-small-latest"):
+    """Test parallel request processing with Mistral"""
+    print("\n🔀 Parallel Processing Test")
+    print("=" * 60)
+
+    prompts = [
+        "What is artificial intelligence?",
+        "Explain quantum computing.",
+        "What is machine learning?",
+        "Define neural networks.",
+        "What is deep learning?",
+    ]
+
+    print(f"📊 Testing {len(prompts)} parallel requests with {model}...")
+
+    # Sequential processing
+    print("\n📝 Sequential processing:")
+    sequential_start = time.time()
+
+    for prompt in prompts:
+        client = get_client("mistral", model=model)
+        await client.create_completion(
+            [Message(role=MessageRole.USER, content=prompt)], max_tokens=50
+        )
+
+    sequential_time = time.time() - sequential_start
+    print(f"   ✅ Completed in {sequential_time:.2f}s")
+
+    # Parallel processing
+    print("\n⚡ Parallel processing:")
+    parallel_start = time.time()
+
+    async def process_prompt(prompt):
+        client = get_client("mistral", model=model)
+        response = await client.create_completion(
+            [Message(role=MessageRole.USER, content=prompt)], max_tokens=50
+        )
+        return response.get("response", "")[:50]
+
+    await asyncio.gather(*[process_prompt(p) for p in prompts])
+    parallel_time = time.time() - parallel_start
+    print(f"   ✅ Completed in {parallel_time:.2f}s")
+
+    # Results
+    speedup = sequential_time / parallel_time if parallel_time > 0 else 0
+    print("\n📈 Results:")
+    print(f"   Sequential: {sequential_time:.2f}s")
+    print(f"   Parallel: {parallel_time:.2f}s")
+    print(f"   Speedup: {speedup:.1f}x")
+
+    return {
+        "sequential_time": sequential_time,
+        "parallel_time": parallel_time,
+        "speedup": speedup,
+    }
+
+
+# =============================================================================
+# Example 11: Dynamic Model Test
+# =============================================================================
+
+
+async def dynamic_model_test():
+    """Test a non-configured model to prove library flexibility"""
+    print("\n🔄 Dynamic Model Test")
+    print("=" * 60)
+    print("Testing a model NOT in chuk_llm.yaml config")
+
+    # Use a model specific to this provider that might not be in config
+    dynamic_model = "mistral-small-2501"
+
+    print(f"\n🧪 Testing dynamic model: {dynamic_model}")
+    print("   This model may not be in the config file")
+
+    try:
+        client = get_client("mistral", model=dynamic_model)
+        messages = [
+            Message(
+                role=MessageRole.USER,
+                content="Say hello in exactly one creative word"
+            )
+        ]
+
+        response = await client.create_completion(messages, max_tokens=10)
+        print(f"   ✅ Dynamic model works: {response['response']}")
+
+        return response
+
+    except Exception as e:
+        print(f"   ⚠️ Test failed: {str(e)[:100]}")
+        return None
+
+
+# =============================================================================
+# Example 12: Comprehensive Feature Test
 # =============================================================================
 
 
@@ -648,12 +811,12 @@ async def comprehensive_test(model: str = "mistral-medium-2505"):
     tools = None
     if supports_tools:
         tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "analyze_content",
-                    "description": "Analyze and categorize content",
-                    "parameters": {
+            Tool(
+                type=ToolType.FUNCTION,
+                function=ToolFunction(
+                    name="analyze_content",
+                    description="Analyze and categorize content",
+                    parameters={
                         "type": "object",
                         "properties": {
                             "content_type": {"type": "string"},
@@ -668,8 +831,8 @@ async def comprehensive_test(model: str = "mistral-medium-2505"):
                         },
                         "required": ["content_type", "main_topics"],
                     },
-                },
-            }
+                ),
+            )
         ]
 
     # Create content based on capabilities
@@ -678,34 +841,34 @@ async def comprehensive_test(model: str = "mistral-medium-2505"):
         test_image = create_test_image("green", 25)
 
         messages = [
-            {
-                "role": "system",
-                "content": "You are an expert content analyst. Use the provided function when analyzing content.",
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": "Please analyze this image and the following text using the analyze_content function: 'This is a test of multimodal AI capabilities.'",
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{test_image}"},
-                    },
+            Message(
+                role=MessageRole.SYSTEM,
+                content="You are an expert content analyst. Use the provided function when analyzing content.",
+            ),
+            Message(
+                role=MessageRole.USER,
+                content=[
+                    TextContent(
+                        type=ContentType.TEXT,
+                        text="Please analyze this image and the following text using the analyze_content function: 'This is a test of multimodal AI capabilities.'",
+                    ),
+                    ImageUrlContent(
+                        type=ContentType.IMAGE_URL,
+                        image_url={"url": f"data:image/png;base64,{test_image}"},
+                    ),
                 ],
-            },
+            ),
         ]
     else:
         messages = [
-            {
-                "role": "system",
-                "content": "You are an expert content analyst. Use the provided function when analyzing content.",
-            },
-            {
-                "role": "user",
-                "content": "Please analyze this text using the analyze_content function: 'Artificial intelligence is transforming how we interact with technology through natural language processing and machine learning algorithms.'",
-            },
+            Message(
+                role=MessageRole.SYSTEM,
+                content="You are an expert content analyst. Use the provided function when analyzing content.",
+            ),
+            Message(
+                role=MessageRole.USER,
+                content="Please analyze this text using the analyze_content function: 'Artificial intelligence is transforming how we interact with technology through natural language processing and machine learning algorithms.'",
+            ),
         ]
 
     print("🔄 Testing comprehensive capabilities...")
@@ -798,7 +961,10 @@ async def main():
         examples.extend(
             [
                 ("Model Comparison", model_comparison_example),
+                ("Context Window Test", lambda: context_window_test(args.model)),
+                ("Parallel Processing", lambda: parallel_processing_test(args.model)),
                 ("Simple Chat", lambda: simple_chat_example(args.model)),
+                ("Dynamic Model Test", dynamic_model_test),
                 ("Comprehensive Test", lambda: comprehensive_test(args.model)),
             ]
         )

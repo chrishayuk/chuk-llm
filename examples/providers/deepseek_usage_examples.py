@@ -48,8 +48,8 @@ except ImportError as e:
     sys.exit(1)
 
 
-def get_available_models():
-    """Get available DeepSeek models from configuration and optionally from API"""
+async def get_available_models():
+    """Get available DeepSeek models using discovery system"""
     config = get_config()
     configured_models = []
     discovered_models = []
@@ -60,20 +60,21 @@ def get_available_models():
         if hasattr(provider, "models"):
             configured_models = list(provider.models)
 
-    # Try to get models from DeepSeek API (uses OpenAI-compatible endpoint)
+    # Use discovery system to get models from DeepSeek API
     api_key = os.getenv("DEEPSEEK_API_KEY")
     if api_key:
         try:
-            response = httpx.get(
-                "https://api.deepseek.com/v1/models",
-                headers={"Authorization": f"Bearer {api_key}"},
-                timeout=5.0,
+            from chuk_llm.llm.discovery.general_discoverers import (
+                OpenAICompatibleDiscoverer,
             )
-            if response.status_code == 200:
-                api_models = response.json()
-                discovered_models = [
-                    m.get("id") for m in api_models.get("data", []) if m.get("id")
-                ]
+
+            discoverer = OpenAICompatibleDiscoverer(
+                provider_name="deepseek",
+                api_key=api_key,
+                api_base="https://api.deepseek.com/v1",
+            )
+            models_data = await discoverer.discover_models()
+            discovered_models = [m.get("name") for m in models_data]
         except Exception as e:
             print(f"⚠️  Could not fetch models from API: {e}")
 
@@ -487,11 +488,11 @@ async def model_comparison_example():
 
 
 async def model_discovery_example():
-    """Discover available DeepSeek models"""
+    """Discover available DeepSeek models using discovery system"""
     print("\n🔍 Model Discovery")
     print("=" * 60)
 
-    model_info = get_available_models()
+    model_info = await get_available_models()
 
     print(f"📦 Configured models ({len(model_info['configured'])}):")
     for model in model_info["configured"]:
@@ -703,6 +704,143 @@ async def parameters_example(model: str = "deepseek-chat"):
 
 
 # =============================================================================
+# Example 10: Context Window Test
+# =============================================================================
+
+
+async def context_window_test(model: str = "deepseek-chat"):
+    """Test DeepSeek's large context window"""
+    print(f"\n📏 Context Window Test with {model}")
+    print("=" * 60)
+
+    client = get_client("deepseek", model=model)
+
+    # Create a long context (~4500 words)
+    long_text = "The quick brown fox jumps over the lazy dog. " * 500
+
+    messages = [
+        Message(
+            role=MessageRole.SYSTEM,
+            content=f"You have been given a long text. Here it is:\n\n{long_text}\n\nPlease analyze this text.",
+        ),
+        Message(
+            role=MessageRole.USER,
+            content="How many times does the word 'fox' appear in the text? Also tell me the total word count.",
+        ),
+    ]
+
+    print(f"📝 Testing with ~{len(long_text.split())} words of context...")
+
+    start_time = time.time()
+    response = await client.create_completion(messages, max_tokens=150)
+    duration = time.time() - start_time
+
+    print(f"✅ Response ({duration:.2f}s):")
+    print(f"   {response.get('response', '')}")
+
+    return response
+
+
+# =============================================================================
+# Example 11: Parallel Processing Test
+# =============================================================================
+
+
+async def parallel_processing_test(model: str = "deepseek-chat"):
+    """Test parallel request processing with DeepSeek"""
+    print("\n🔀 Parallel Processing Test")
+    print("=" * 60)
+
+    prompts = [
+        "What is artificial intelligence?",
+        "Explain quantum computing.",
+        "What is machine learning?",
+        "Define neural networks.",
+        "What is deep learning?",
+    ]
+
+    print(f"📊 Testing {len(prompts)} parallel requests with {model}...")
+
+    # Sequential processing
+    print("\n📝 Sequential processing:")
+    sequential_start = time.time()
+
+    for prompt in prompts:
+        client = get_client("deepseek", model=model)
+        await client.create_completion(
+            [Message(role=MessageRole.USER, content=prompt)], max_tokens=50
+        )
+
+    sequential_time = time.time() - sequential_start
+    print(f"   ✅ Completed in {sequential_time:.2f}s")
+
+    # Parallel processing
+    print("\n⚡ Parallel processing:")
+    parallel_start = time.time()
+
+    async def process_prompt(prompt):
+        client = get_client("deepseek", model=model)
+        response = await client.create_completion(
+            [Message(role=MessageRole.USER, content=prompt)], max_tokens=50
+        )
+        return response.get("response", "")[:50]
+
+    await asyncio.gather(*[process_prompt(p) for p in prompts])
+    parallel_time = time.time() - parallel_start
+    print(f"   ✅ Completed in {parallel_time:.2f}s")
+
+    # Results
+    speedup = sequential_time / parallel_time if parallel_time > 0 else 0
+    print("\n📈 Results:")
+    print(f"   Sequential: {sequential_time:.2f}s")
+    print(f"   Parallel: {parallel_time:.2f}s")
+    print(f"   Speedup: {speedup:.1f}x")
+
+    return {
+        "sequential_time": sequential_time,
+        "parallel_time": parallel_time,
+        "speedup": speedup,
+    }
+
+
+# =============================================================================
+# Example 12: Dynamic Model Test
+# =============================================================================
+
+
+async def dynamic_model_test():
+    """Test a non-configured model to prove library flexibility"""
+    print("\n🔄 Dynamic Model Test")
+    print("=" * 60)
+    print("Testing a model NOT in chuk_llm.yaml config")
+
+    # Use deepseek-chat which might not be explicitly configured
+    dynamic_model = "deepseek-chat"
+
+    print(f"\n🧪 Testing dynamic model: {dynamic_model}")
+    print("   This model may not be in the config file")
+
+    try:
+        client = get_client("deepseek", model=dynamic_model)
+        messages = [
+            Message(
+                role=MessageRole.USER,
+                content="Say hello in exactly one creative word"
+            )
+        ]
+
+        response = await client.create_completion(messages, max_tokens=10)
+        print(f"   ✅ Dynamic model works: {response['response']}")
+        print(f"   Model: {response.get('model', 'N/A')}")
+
+        return response
+
+    except Exception as e:
+        print(f"   ⚠️ Test failed: {str(e)[:100]}")
+        return None
+
+
+# =============================================================================
 # Main Function
 # =============================================================================
 
@@ -774,6 +912,9 @@ async def main():
         examples.extend(
             [
                 ("Model Comparison", model_comparison_example),
+                ("Context Window Test", lambda: context_window_test(args.model)),
+                ("Parallel Processing", lambda: parallel_processing_test(args.model)),
+                ("Dynamic Model Test", dynamic_model_test),
                 ("Simple Chat", lambda: simple_chat_example(args.model)),
                 ("Parameters Test", lambda: parameters_example(args.model)),
             ]

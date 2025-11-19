@@ -9,7 +9,7 @@ import json
 import logging
 import re
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .openai_client import OpenAILLMClient
 
@@ -42,8 +42,11 @@ class AdvantageClient(OpenAILLMClient):
             )
 
         # Filter out config-only parameters that OpenAILLMClient doesn't accept
-        filtered_kwargs = {k: v for k, v in kwargs.items()
-                          if k not in ['api_base_env', 'api_key_fallback_env']}
+        filtered_kwargs = {
+            k: v
+            for k, v in kwargs.items()
+            if k not in ["api_base_env", "api_key_fallback_env"]
+        }
 
         # Call parent constructor
         super().__init__(model, api_key, api_base, **filtered_kwargs)
@@ -55,6 +58,7 @@ class AdvantageClient(OpenAILLMClient):
 
         # Reinitialize the config mixin with correct provider
         from chuk_llm.llm.providers._config_mixin import ConfigAwareProviderMixin
+
         ConfigAwareProviderMixin.__init__(self, "advantage", model)
 
         log.info(
@@ -67,8 +71,8 @@ class AdvantageClient(OpenAILLMClient):
     # ================================================================
 
     def _add_strict_parameter_to_tools(
-        self, tools: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, tools: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """
         Override to ensure strict parameter is added as a boolean.
 
@@ -108,10 +112,8 @@ class AdvantageClient(OpenAILLMClient):
         )
 
     def _inject_function_calling_prompt(
-        self,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]]
-    ) -> List[Dict[str, Any]]:
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None
+    ) -> list[dict[str, Any]]:
         """
         Inject system prompt to guide function calling.
 
@@ -140,21 +142,17 @@ class AdvantageClient(OpenAILLMClient):
         if new_messages and new_messages[0].get("role") == "system":
             existing_content = new_messages[0]["content"]
             new_messages[0]["content"] = f"{function_prompt}\n\n{existing_content}"
-            log.debug("[advantage] Prepended function calling prompt to existing system message")
+            log.debug(
+                "[advantage] Prepended function calling prompt to existing system message"
+            )
         else:
             # Add new system message at the start
-            new_messages.insert(0, {
-                "role": "system",
-                "content": function_prompt
-            })
+            new_messages.insert(0, {"role": "system", "content": function_prompt})
             log.debug("[advantage] Added function calling system prompt")
 
         return new_messages
 
-    def _parse_function_call_from_content(
-        self,
-        content: str
-    ) -> Optional[Dict[str, Any]]:
+    def _parse_function_call_from_content(self, content: str) -> dict[str, Any] | None:
         """
         Parse function call JSON from content field.
 
@@ -174,31 +172,47 @@ class AdvantageClient(OpenAILLMClient):
         try:
             parsed = json.loads(content.strip())
             if isinstance(parsed, dict) and "name" in parsed and "arguments" in parsed:
-                log.debug(f"[advantage] Parsed function call from content: {parsed['name']}")
+                log.debug(
+                    f"[advantage] Parsed function call from content: {parsed['name']}"
+                )
                 return parsed
         except json.JSONDecodeError:
             pass
 
         # Try to extract JSON from markdown code blocks
-        code_block_pattern = r'```(?:json)?\s*(\{[^`]+\})\s*```'
+        code_block_pattern = r"```(?:json)?\s*(\{[^`]+\})\s*```"
         match = re.search(code_block_pattern, content, re.DOTALL)
         if match:
             try:
                 parsed = json.loads(match.group(1))
-                if isinstance(parsed, dict) and "name" in parsed and "arguments" in parsed:
-                    log.debug(f"[advantage] Parsed function call from code block: {parsed['name']}")
+                if (
+                    isinstance(parsed, dict)
+                    and "name" in parsed
+                    and "arguments" in parsed
+                ):
+                    log.debug(
+                        f"[advantage] Parsed function call from code block: {parsed['name']}"
+                    )
                     return parsed
             except json.JSONDecodeError:
                 pass
 
         # Try to find JSON object pattern in content
-        json_pattern = r'\{[^}]*"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*\{[^}]*\}\s*\}'
+        json_pattern = (
+            r'\{[^}]*"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*\{[^}]*\}\s*\}'
+        )
         match = re.search(json_pattern, content, re.DOTALL)
         if match:
             try:
                 parsed = json.loads(match.group(0))
-                if isinstance(parsed, dict) and "name" in parsed and "arguments" in parsed:
-                    log.debug(f"[advantage] Parsed function call from pattern: {parsed['name']}")
+                if (
+                    isinstance(parsed, dict)
+                    and "name" in parsed
+                    and "arguments" in parsed
+                ):
+                    log.debug(
+                        f"[advantage] Parsed function call from pattern: {parsed['name']}"
+                    )
                     return parsed
             except json.JSONDecodeError:
                 pass
@@ -206,9 +220,8 @@ class AdvantageClient(OpenAILLMClient):
         return None
 
     def _convert_content_to_tool_calls(
-        self,
-        response: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, response: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Convert function calls in content field to standard tool_calls format.
 
@@ -242,8 +255,8 @@ class AdvantageClient(OpenAILLMClient):
                     "type": "function",
                     "function": {
                         "name": function_call["name"],
-                        "arguments": json.dumps(function_call["arguments"])
-                    }
+                        "arguments": json.dumps(function_call["arguments"]),
+                    },
                 }
 
                 response["tool_calls"] = [tool_call]
@@ -279,8 +292,8 @@ class AdvantageClient(OpenAILLMClient):
                     "type": "function",
                     "function": {
                         "name": function_call["name"],
-                        "arguments": json.dumps(function_call["arguments"])
-                    }
+                        "arguments": json.dumps(function_call["arguments"]),
+                    },
                 }
 
                 message["tool_calls"] = [tool_call]
@@ -300,11 +313,11 @@ class AdvantageClient(OpenAILLMClient):
 
     def create_completion(
         self,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         *,
         stream: bool = False,
-        **kwargs
+        **kwargs,
     ):
         """
         Create a completion with Advantage API.
@@ -331,7 +344,9 @@ class AdvantageClient(OpenAILLMClient):
 
         # Call parent implementation
         # For streaming, parent returns AsyncIterator, for non-streaming returns coroutine
-        result = super().create_completion(messages, tools=tools, stream=stream, **kwargs)
+        result = super().create_completion(
+            messages, tools=tools, stream=stream, **kwargs
+        )
 
         # If streaming, wrap iterator to convert tool calls
         if stream:
@@ -340,10 +355,12 @@ class AdvantageClient(OpenAILLMClient):
         # For non-streaming, wrap in an async function to convert tool calls
         return self._complete_and_convert(result, tools)
 
-    async def _stream_and_convert(self, stream_iterator, tools: Optional[List[Dict[str, Any]]]):
+    async def _stream_and_convert(
+        self, stream_iterator, tools: list[dict[str, Any]] | None
+    ):
         """Wrap streaming iterator to convert tool calls at the end"""
-        import uuid
         import json
+        import uuid
 
         accumulated_content = ""
 
@@ -370,19 +387,14 @@ class AdvantageClient(OpenAILLMClient):
                     "type": "function",
                     "function": {
                         "name": function_call["name"],
-                        "arguments": json.dumps(function_call["arguments"])
-                    }
+                        "arguments": json.dumps(function_call["arguments"]),
+                    },
                 }
 
-                yield {
-                    "response": None,
-                    "tool_calls": [tool_call]
-                }
+                yield {"response": None, "tool_calls": [tool_call]}
 
     async def _complete_and_convert(
-        self,
-        completion_coro,
-        tools: Optional[List[Dict[str, Any]]]
+        self, completion_coro, tools: list[dict[str, Any]] | None
     ):
         """Helper to await completion and convert tool calls"""
         response = await completion_coro
@@ -395,9 +407,9 @@ class AdvantageClient(OpenAILLMClient):
 
     async def stream_completion(
         self,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
-        **kwargs
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        **kwargs,
     ):
         """
         Stream a completion with Advantage API.
@@ -441,20 +453,20 @@ class AdvantageClient(OpenAILLMClient):
                     f"{function_call['name']}"
                 )
                 # Yield a final chunk with the tool_calls in the expected format
-                import uuid
                 import json
+                import uuid
 
                 tool_call = {
                     "id": f"call_{uuid.uuid4().hex[:24]}",
                     "type": "function",
                     "function": {
                         "name": function_call["name"],
-                        "arguments": json.dumps(function_call["arguments"])
-                    }
+                        "arguments": json.dumps(function_call["arguments"]),
+                    },
                 }
 
                 # Yield final chunk with tool_calls
                 yield {
                     "response": None,  # Clear response when tool call is made
-                    "tool_calls": [tool_call]
+                    "tool_calls": [tool_call],
                 }

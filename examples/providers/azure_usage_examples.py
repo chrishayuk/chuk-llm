@@ -28,6 +28,11 @@ import time
 # dotenv
 from dotenv import load_dotenv
 
+try:
+    import httpx
+except ImportError:
+    httpx = None
+
 # load environment variables
 load_dotenv()
 
@@ -45,6 +50,9 @@ if not os.getenv("AZURE_OPENAI_ENDPOINT"):
 try:
     from chuk_llm.configuration import Feature, get_config
     from chuk_llm.llm.client import get_client, get_provider_info
+    from chuk_llm.core.models import Message, Tool, ToolFunction, TextContent, ImageUrlContent, ToolCall, FunctionCall
+    from chuk_llm.core.enums import MessageRole, ContentType, ToolType
+    from chuk_llm.llm.discovery.azure_openai_discoverer import AzureOpenAIModelDiscoverer
 except ImportError as e:
     print(f"❌ Import error: {e}")
     print("   Please make sure you're running from the chuk-llm directory")
@@ -71,6 +79,86 @@ def create_test_image(color: str = "red", size: int = 15) -> str:
         print("⚠️  PIL not available, using fallback image")
         # Fallback: 15x15 red square (valid PNG)
         return "iVBORw0KGgoAAAANSUhEUgAAAA8AAAAPCAYAAAA71pVKAAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAdgAAAHYBTnsmCAAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAABYSURBVCiRY2RgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBkYGBgZGBgYGRgYGBgZGBgYGAAAgAANgAOAUUe1wAAAABJRU5ErkJggg=="
+
+
+async def get_available_deployments():
+    """Get available Azure OpenAI deployments using the discovery system"""
+    config = get_config()
+    configured_deployments = []
+    discovered_deployments = []
+
+    # Get configured deployments
+    if "azure_openai" in config.providers:
+        provider = config.providers["azure_openai"]
+        if hasattr(provider, "models"):
+            configured_deployments = list(provider.models)
+
+    # Use discovery system to find deployments from Azure API
+    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    api_key = os.getenv("AZURE_OPENAI_API_KEY")
+
+    if endpoint and api_key:
+        try:
+            discoverer = AzureOpenAIModelDiscoverer(
+                provider_name="azure_openai",
+                api_key=api_key,
+                azure_endpoint=endpoint,
+                api_version="2024-02-01",
+            )
+            models_data = await discoverer.discover_models()
+            discovered_deployments = [m.get("name") for m in models_data if m.get("name")]
+        except Exception as e:
+            print(f"⚠️  Could not fetch deployments from Azure API: {e}")
+
+    # Combine deployments (configured first, then discovered)
+    all_deployments = list(configured_deployments)
+    for deployment in discovered_deployments:
+        if deployment not in all_deployments:
+            all_deployments.append(deployment)
+
+    return {
+        "configured": configured_deployments,
+        "discovered": discovered_deployments,
+        "all": all_deployments,
+    }
+
+
+async def find_working_deployments():
+    """Find deployments that actually work by testing them"""
+    print("   Testing common deployment names...")
+
+    # Common deployment names to try
+    candidates = [
+        "gpt-4o-mini",
+        "gpt-4o",
+        "gpt-4",
+        "gpt-4-turbo",
+        "gpt-35-turbo",
+        "gpt-4.1",
+        "gpt-4.1-mini",
+    ]
+
+    working_deployments = []
+
+    for deployment in candidates:
+        try:
+            client = get_client(
+                "azure_openai",
+                model=deployment,
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            )
+            messages = [Message(role=MessageRole.USER, content="test")]
+            response = await client.create_completion(messages, max_tokens=1)
+
+            # If we get here without error, deployment works
+            if "Error" not in response.get("response", ""):
+                working_deployments.append(deployment)
+                print(f"   ✅ {deployment}")
+        except Exception as e:
+            # Skip deployments that don't exist
+            pass
+
+    return working_deployments
 
 
 # =============================================================================
@@ -132,14 +220,14 @@ async def azure_text_example(deployment: str = "gpt-4o-mini"):
     )
 
     messages = [
-        {
-            "role": "system",
-            "content": "You are a helpful AI assistant running on Azure OpenAI.",
-        },
-        {
-            "role": "user",
-            "content": "Explain the benefits of using Azure OpenAI vs regular OpenAI (2-3 sentences).",
-        },
+        Message(
+            role=MessageRole.SYSTEM,
+            content="You are a helpful AI assistant running on Azure OpenAI.",
+        ),
+        Message(
+            role=MessageRole.USER,
+            content="Explain the benefits of using Azure OpenAI vs regular OpenAI (2-3 sentences).",
+        ),
     ]
 
     start_time = time.time()
@@ -175,10 +263,10 @@ async def azure_streaming_example(deployment: str = "gpt-4o-mini"):
     )
 
     messages = [
-        {
-            "role": "user",
-            "content": "Write a short poem about cloud computing and Azure.",
-        }
+        Message(
+            role=MessageRole.USER,
+            content="Write a short poem about cloud computing and Azure.",
+        )
     ]
 
     print("🌊 Streaming response from Azure:")
@@ -271,10 +359,10 @@ async def azure_function_calling_example(deployment: str = "gpt-4o-mini"):
     ]
 
     messages = [
-        {
-            "role": "user",
-            "content": "Tell me about Azure OpenAI service and calculate costs for 100 hours of usage in East US region.",
-        }
+        Message(
+            role=MessageRole.USER,
+            content="Tell me about Azure OpenAI service and calculate costs for 100 hours of usage in East US region.",
+        )
     ]
 
     print("🔄 Making Azure function calling request...")
@@ -288,8 +376,19 @@ async def azure_function_calling_example(deployment: str = "gpt-4o-mini"):
             print(f"   {i}. {func_name}({func_args})")
 
         # Simulate tool execution with Azure-specific responses
+        tool_calls_list = [
+            ToolCall(
+                id=tc["id"],
+                type=ToolType.FUNCTION,
+                function=FunctionCall(
+                    name=tc["function"]["name"],
+                    arguments=tc["function"]["arguments"]
+                )
+            )
+            for tc in response["tool_calls"]
+        ]
         messages.append(
-            {"role": "assistant", "content": "", "tool_calls": response["tool_calls"]}
+            Message(role=MessageRole.ASSISTANT, content="", tool_calls=tool_calls_list)
         )
 
         # Add mock tool results
@@ -304,12 +403,12 @@ async def azure_function_calling_example(deployment: str = "gpt-4o-mini"):
                 result = '{"status": "success", "message": "Azure operation completed"}'
 
             messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call["id"],
-                    "name": func_name,
-                    "content": result,
-                }
+                Message(
+                    role=MessageRole.TOOL,
+                    tool_call_id=tool_call["id"],
+                    name=func_name,
+                    content=result,
+                )
             )
 
         # Get final response
@@ -353,19 +452,19 @@ async def azure_vision_example(deployment: str = "gpt-4o"):
     test_image = create_test_image("azure", 20)  # Azure blue
 
     messages = [
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text",
-                    "text": "What color is this square? Also mention that this is being processed by Azure OpenAI.",
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{test_image}"},
-                },
+        Message(
+            role=MessageRole.USER,
+            content=[
+                TextContent(
+                    type=ContentType.TEXT,
+                    text="What color is this square? Also mention that this is being processed by Azure OpenAI.",
+                ),
+                ImageUrlContent(
+                    type=ContentType.IMAGE_URL,
+                    image_url={"url": f"data:image/png;base64,{test_image}"},
+                ),
             ],
-        }
+        )
     ]
 
     print("👀 Analyzing image with Azure OpenAI...")
@@ -400,14 +499,14 @@ async def azure_json_mode_example(deployment: str = "gpt-4o-mini"):
     )
 
     messages = [
-        {
-            "role": "system",
-            "content": "You are a helpful assistant designed to output JSON. Generate information about Azure services.",
-        },
-        {
-            "role": "user",
-            "content": "Tell me about Azure OpenAI service in JSON format with fields: name, description, key_features (array), pricing_model, and azure_regions (array).",
-        },
+        Message(
+            role=MessageRole.SYSTEM,
+            content="You are a helpful assistant designed to output JSON. Generate information about Azure services.",
+        ),
+        Message(
+            role=MessageRole.USER,
+            content="Tell me about Azure OpenAI service in JSON format with fields: name, description, key_features (array), pricing_model, and azure_regions (array).",
+        ),
     ]
 
     print("📝 Requesting JSON output from Azure...")
@@ -462,7 +561,7 @@ async def azure_deployment_comparison():
                 model=deployment,
                 azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
             )
-            messages = [{"role": "user", "content": prompt}]
+            messages = [Message(role=MessageRole.USER, content=prompt)]
 
             start_time = time.time()
             response = await client.create_completion(messages)
@@ -517,7 +616,7 @@ async def azure_auth_methods_example(deployment: str = "gpt-4o-mini"):
                 api_key=os.getenv("AZURE_OPENAI_API_KEY"),
             )
 
-            messages = [{"role": "user", "content": "Hello from API key auth!"}]
+            messages = [Message(role=MessageRole.USER, content="Hello from API key auth!")]
             response = await client.create_completion(messages)
 
             auth_methods.append(
@@ -543,7 +642,7 @@ async def azure_auth_methods_example(deployment: str = "gpt-4o-mini"):
                 azure_ad_token=azure_ad_token,
             )
 
-            messages = [{"role": "user", "content": "Hello from Azure AD token auth!"}]
+            messages = [Message(role=MessageRole.USER, content="Hello from Azure AD token auth!")]
             response = await client.create_completion(messages)
 
             auth_methods.append(
@@ -573,6 +672,292 @@ async def azure_auth_methods_example(deployment: str = "gpt-4o-mini"):
         print("   💡 Set AZURE_OPENAI_API_KEY or AZURE_AD_TOKEN")
 
     return auth_methods
+
+
+# =============================================================================
+# Example 9: Deployment Discovery
+# =============================================================================
+
+
+async def deployment_discovery_example():
+    """Discover available Azure OpenAI deployments using discovery system"""
+    print("\n🔍 Azure Deployment Discovery")
+    print("=" * 60)
+
+    deployment_info = await get_available_deployments()
+
+    print(f"📦 Configured deployments ({len(deployment_info['configured'])}):")
+    for deployment in deployment_info["configured"][:10]:  # Show first 10
+        # Identify model families from deployment names
+        if "gpt-4o" in deployment.lower():
+            print(f"   • {deployment} [🚀 GPT-4o - multimodal flagship]")
+        elif "gpt-4" in deployment.lower() and "turbo" in deployment.lower():
+            print(f"   • {deployment} [⚡ GPT-4 Turbo - fast & capable]")
+        elif "gpt-4.1" in deployment.lower():
+            print(f"   • {deployment} [🔄 GPT-4.1 - latest generation]")
+        elif "gpt-4" in deployment.lower():
+            print(f"   • {deployment} [🧠 GPT-4 - powerful reasoning]")
+        elif "gpt-3.5" in deployment.lower():
+            print(f"   • {deployment} [💨 GPT-3.5 - fast & efficient]")
+        else:
+            print(f"   • {deployment}")
+
+    if len(deployment_info["discovered"]) > 0:
+        print(f"\n🌐 Discovered from Azure API ({len(deployment_info['discovered'])}):")
+        # Show deployments that are not in config
+        new_deployments = [
+            d
+            for d in deployment_info["discovered"]
+            if d not in deployment_info["configured"]
+        ]
+        if new_deployments:
+            print("   New deployments not in config:")
+            for deployment in new_deployments[:5]:  # Show first 5
+                print(f"   ✨ {deployment}")
+        else:
+            print("   All Azure deployments are already configured")
+
+    print(f"\n📊 Total available: {len(deployment_info['all'])} deployments")
+
+    # Highlight Azure-specific benefits
+    print("\n☁️  Azure OpenAI Benefits:")
+    print("   • Enterprise-grade security and compliance")
+    print("   • Private network connectivity with VNet")
+    print("   • Data residency and regional availability")
+    print("   • Integration with Azure ecosystem")
+
+    # Test a discovered deployment if available
+    if deployment_info["all"] and len(deployment_info["all"]) > 0:
+        test_deployment = deployment_info["all"][0]
+        print(f"\n🧪 Testing deployment: {test_deployment}")
+        try:
+            client = get_client(
+                "azure_openai",
+                model=test_deployment,
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            )
+            messages = [
+                Message(role=MessageRole.USER, content="Say hello from Azure")
+            ]
+            response = await client.create_completion(messages, max_tokens=20)
+            print(f"   ✅ Deployment works: {response['response'][:50]}...")
+        except Exception as e:
+            print(f"   ⚠️ Deployment test failed: {e}")
+
+    return deployment_info
+
+
+# =============================================================================
+# Example 10: Model Comparison
+# =============================================================================
+
+
+async def model_comparison_example(working_deps=None):
+    """Compare different Azure OpenAI deployments side-by-side"""
+    print("\n⚖️  Azure Model Comparison")
+    print("=" * 60)
+
+    # Use working deployments if provided, otherwise discover
+    if working_deps:
+        available = working_deps[:3]  # Use up to 3 working deployments
+        print(f"Comparing {len(available)} working deployments")
+    else:
+        try:
+            available = await find_working_deployments()
+            available = available[:3]
+
+            if not available:
+                print("⚠️  No working deployments found")
+                return []
+
+            print(f"Comparing {len(available)} working deployments")
+        except Exception as e:
+            print(f"⚠️  Could not find deployments: {e}")
+            return []
+
+    prompt = "What is quantum computing? (2 sentences)"
+    results = []
+
+    for model in available:
+        try:
+            print(f"🔄 Testing {model}...")
+            client = get_client(
+                "azure_openai",
+                model=model,
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            )
+            messages = [Message(role=MessageRole.USER, content=prompt)]
+
+            start_time = time.time()
+            response = await client.create_completion(messages, max_tokens=100)
+            duration = time.time() - start_time
+
+            results.append({
+                "model": model,
+                "response": response.get("response", ""),
+                "time": duration,
+                "length": len(response.get("response", "")),
+            })
+            print(f"   ✅ {model}: {duration:.2f}s")
+
+        except Exception as e:
+            print(f"   ⚠️ {model} failed: {str(e)[:100]}")
+            results.append({
+                "model": model,
+                "response": f"Error: {str(e)[:100]}",
+                "time": 0,
+                "length": 0,
+            })
+
+    print("\n📊 Comparison Results:")
+    for result in results:
+        print(f"\n🤖 {result['model']}:")
+        print(f"   ⏱️  Time: {result['time']:.2f}s")
+        print(f"   📏 Length: {result['length']} chars")
+        if result['length'] > 0:
+            print(f"   💬 Response: {result['response'][:100]}...")
+
+    return results
+
+
+# =============================================================================
+# Example 11: Context Window Test
+# =============================================================================
+
+
+async def context_window_test(deployment: str = "gpt-4o-mini"):
+    """Test Azure's large context window handling"""
+    print(f"\n🪟 Azure Context Window Test with {deployment}")
+    print("=" * 60)
+
+    client = get_client(
+        "azure_openai",
+        model=deployment,
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+    )
+
+    # Generate a large context (~4500 words)
+    long_text = "The quick brown fox jumps over the lazy dog. " * 500
+
+    messages = [
+        Message(
+            role=MessageRole.SYSTEM,
+            content=f"Here is a document to analyze:\n\n{long_text}\n\nThis document contains a repeated phrase.",
+        ),
+        Message(
+            role=MessageRole.USER,
+            content="How many times does the word 'fox' appear in the document? Just give me the number.",
+        ),
+    ]
+
+    print(f"📄 Testing with ~{len(long_text.split())} words of context...")
+
+    start_time = time.time()
+    response = await client.create_completion(messages, max_tokens=150)
+    duration = time.time() - start_time
+
+    print(f"✅ Azure processed large context in {duration:.2f}s")
+    print(f"📝 Response: {response['response']}")
+
+    return response
+
+
+# =============================================================================
+# Example 12: Dynamic Model Test
+# =============================================================================
+
+
+async def dynamic_model_test(working_deps=None):
+    """Test working deployments to prove library flexibility"""
+    print("\n🔄 Dynamic Model Test")
+    print("=" * 60)
+
+    # Use working deployments
+    if working_deps and len(working_deps) > 0:
+        # Use the first working deployment
+        dynamic_model = working_deps[0]
+        print(f"Testing working deployment: {dynamic_model}")
+    else:
+        print("⚠️  No working deployments available")
+        return None
+
+    try:
+        client = get_client("azure_openai", model=dynamic_model)
+        messages = [
+            Message(
+                role=MessageRole.USER,
+                content="Say hello in exactly one creative word"
+            )
+        ]
+
+        response = await client.create_completion(messages, max_tokens=10)
+        print(f"   ✅ Deployment works: {response['response']}")
+        print(f"   Model: {dynamic_model}")
+
+        return response
+
+    except Exception as e:
+        print(f"   ⚠️ Test failed: {str(e)[:100]}")
+        return None
+
+
+# =============================================================================
+# Example 13: Parallel Processing Test
+# =============================================================================
+
+
+async def parallel_processing_test(deployment: str = "gpt-4o-mini"):
+    """Test parallel request processing with Azure"""
+    print(f"\n⚡ Azure Parallel Processing Test with {deployment}")
+    print("=" * 60)
+
+    client = get_client(
+        "azure_openai",
+        model=deployment,
+        azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+    )
+
+    prompts = [
+        "What is machine learning? (1 sentence)",
+        "What is deep learning? (1 sentence)",
+        "What is neural network? (1 sentence)",
+    ]
+
+    # Sequential processing
+    print("🔄 Testing sequential processing...")
+    sequential_start = time.time()
+    sequential_results = []
+    for prompt in prompts:
+        messages = [Message(role=MessageRole.USER, content=prompt)]
+        response = await client.create_completion(messages, max_tokens=50)
+        sequential_results.append(response)
+    sequential_time = time.time() - sequential_start
+
+    # Parallel processing
+    print("⚡ Testing parallel processing...")
+    parallel_start = time.time()
+
+    async def process_prompt(prompt):
+        messages = [Message(role=MessageRole.USER, content=prompt)]
+        return await client.create_completion(messages, max_tokens=50)
+
+    parallel_results = await asyncio.gather(*[process_prompt(p) for p in prompts])
+    parallel_time = time.time() - parallel_start
+
+    # Calculate speedup
+    speedup = sequential_time / parallel_time if parallel_time > 0 else 0
+
+    print(f"\n📊 Azure Processing Results:")
+    print(f"   Sequential: {sequential_time:.2f}s")
+    print(f"   Parallel: {parallel_time:.2f}s")
+    print(f"   Speedup: {speedup:.2f}x")
+
+    return {
+        "sequential_time": sequential_time,
+        "parallel_time": parallel_time,
+        "speedup": speedup,
+        "results": parallel_results,
+    }
 
 
 # =============================================================================
@@ -635,12 +1020,48 @@ async def main():
     except Exception as e:
         print(f"⚠️  Could not check capabilities: {e}")
 
+    # IMPORTANT: Find actual working deployments
+    print("\n🔍 Finding working Azure deployments...")
+    try:
+        working_deployments = await find_working_deployments()
+
+        if not working_deployments:
+            print(f"\n❌ NO WORKING DEPLOYMENTS FOUND!")
+            print(f"")
+            print(f"📌 To use Azure OpenAI, you need to create deployments:")
+            print(f"   1. Go to Azure Portal (portal.azure.com)")
+            print(f"   2. Navigate to your Azure OpenAI resource")
+            print(f"   3. Go to 'Model deployments' section")
+            print(f"   4. Click 'Create new deployment'")
+            print(f"   5. Choose a model (e.g., gpt-4o-mini) and give it a name")
+            print(f"")
+            print(f"💡 Tested deployment names: gpt-4o-mini, gpt-4o, gpt-4, gpt-4-turbo, gpt-35-turbo")
+            print(f"")
+            sys.exit(1)
+
+        print(f"\n✅ Found {len(working_deployments)} working deployment(s)!")
+        actual_deployment = working_deployments[0]
+
+        # Get vision deployment if available
+        vision_deployments = [d for d in working_deployments if "gpt-4o" in d.lower() or "turbo" in d.lower()]
+        vision_deployment = vision_deployments[0] if vision_deployments else actual_deployment
+
+        has_deployment = True
+    except Exception as e:
+        print(f"⚠️  Deployment check failed: {e}")
+        print(f"\nℹ️  Using default deployment '{args.deployment}' (may not work)")
+        actual_deployment = args.deployment
+        vision_deployment = "gpt-4o"
+        has_deployment = False
+        working_deployments = []
+
     examples = [
-        ("Azure Setup", lambda: azure_setup_example(args.deployment)),
-        ("Azure Text", lambda: azure_text_example(args.deployment)),
-        ("Azure Streaming", lambda: azure_streaming_example(args.deployment)),
-        ("Azure JSON Mode", lambda: azure_json_mode_example(args.deployment)),
-        ("Azure Auth Methods", lambda: azure_auth_methods_example(args.deployment)),
+        ("Azure Setup", lambda: azure_setup_example(actual_deployment)),
+        ("Deployment Discovery", deployment_discovery_example),
+        ("Azure Text", lambda: azure_text_example(actual_deployment)),
+        ("Azure Streaming", lambda: azure_streaming_example(actual_deployment)),
+        ("Azure JSON Mode", lambda: azure_json_mode_example(actual_deployment)),
+        ("Azure Auth Methods", lambda: azure_auth_methods_example(actual_deployment)),
     ]
 
     if not args.quick:
@@ -648,14 +1069,19 @@ async def main():
             examples.append(
                 (
                     "Azure Function Calling",
-                    lambda: azure_function_calling_example(args.deployment),
+                    lambda: azure_function_calling_example(actual_deployment),
                 )
             )
 
         if not args.skip_vision:
-            examples.append(("Azure Vision", lambda: azure_vision_example("gpt-4o")))
+            examples.append(("Azure Vision", lambda: azure_vision_example(vision_deployment)))
 
-        examples.append(("Azure Deployment Comparison", azure_deployment_comparison))
+        examples.extend([
+            ("Model Comparison", lambda: model_comparison_example(working_deployments)),
+            ("Context Window Test", lambda: context_window_test(actual_deployment)),
+            ("Parallel Processing", lambda: parallel_processing_test(actual_deployment)),
+            ("Dynamic Model Test", lambda: dynamic_model_test(working_deployments)),
+        ])
 
     # Run examples
     results = {}
@@ -683,7 +1109,13 @@ async def main():
     print(f"✅ Successful: {successful}/{total}")
     print(f"⏱️  Total time: {total_time:.2f}s")
     print(f"🌐 Endpoint: {os.getenv('AZURE_OPENAI_ENDPOINT', 'Not configured')}")
-    print(f"🎯 Deployment: {args.deployment}")
+    print(f"🎯 Primary deployment: {actual_deployment}")
+
+    if has_deployment and working_deployments:
+        print(f"📦 Working deployments: {', '.join(working_deployments)}")
+    elif not has_deployment:
+        print(f"\n⚠️  WARNING: No actual deployments found in Azure resource!")
+        print(f"   Create a deployment in Azure Portal to use Azure OpenAI.")
 
     for name, result in results.items():
         status = "✅" if result["success"] else "❌"
@@ -693,7 +1125,7 @@ async def main():
     if successful == total:
         print("\n🎉 All Azure OpenAI examples completed successfully!")
         print("🔗 Azure OpenAI provider is working perfectly with chuk-llm!")
-        print(f"✨ Features tested: {args.deployment} capabilities on Azure")
+        print(f"✨ Features tested: {actual_deployment} capabilities on Azure")
     else:
         print("\n⚠️  Some examples failed. Check your Azure configuration.")
 

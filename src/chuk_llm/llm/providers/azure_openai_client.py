@@ -430,14 +430,27 @@ class AzureOpenAILLMClient(
                 )
 
         # Check vision support
-        has_vision = any(
-            isinstance(msg.get("content"), list)
-            and any(
-                isinstance(item, dict) and item.get("type") == "image_url"
-                for item in msg.get("content", [])
-            )
-            for msg in messages
-        )
+        has_vision = False
+        for msg in messages:
+            # Handle both Pydantic Message objects and dict messages
+            if hasattr(msg, 'content'):
+                content = msg.content
+            else:
+                content = msg.get("content") if isinstance(msg, dict) else None
+
+            if isinstance(content, list):
+                for item in content:
+                    # Handle both Pydantic content objects and dicts
+                    if hasattr(item, 'type'):
+                        if item.type == "image_url":
+                            has_vision = True
+                            break
+                    elif isinstance(item, dict) and item.get("type") == "image_url":
+                        has_vision = True
+                        break
+
+            if has_vision:
+                break
         if has_vision and not self.supports_feature("vision"):
             log.warning(
                 f"Vision content detected but deployment '{self.azure_deployment}' doesn't support vision"

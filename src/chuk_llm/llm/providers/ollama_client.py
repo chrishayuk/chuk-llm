@@ -336,19 +336,25 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
 
                 # Handle images if present in the message content
                 if isinstance(content, list):
+                    from chuk_llm.core.enums import ContentType
+
+                    # Check for images (both dict and Pydantic formats)
                     has_images = any(
-                        item.get("type") in ["image", "image_url"] for item in content
+                        (isinstance(item, dict) and item.get("type") in ["image", "image_url"]) or
+                        (hasattr(item, "type") and item.type in [ContentType.IMAGE_URL, ContentType.IMAGE_DATA])
+                        for item in content
                     )
 
                     if has_images and not self.supports_feature("vision"):
-                        # Extract only text content
-                        text_content = " ".join(
-                            [
-                                item.get("text", "")
-                                for item in content
-                                if item.get("type") == "text"
-                            ]
-                        )
+                        # Extract only text content from both dict and Pydantic formats
+                        text_parts = []
+                        for item in content:
+                            if isinstance(item, dict) and item.get("type") == "text":
+                                text_parts.append(item.get("text", ""))
+                            elif hasattr(item, "type") and item.type == ContentType.TEXT:
+                                text_parts.append(item.text)
+
+                        text_content = " ".join(text_parts)
                         message["content"] = (
                             text_content
                             or "[Image content removed - not supported by model]"
@@ -357,23 +363,38 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                             f"Removed vision content - {self.model} doesn't support vision"
                         )
                     else:
-                        # Process images for Ollama format
+                        # Process images for Ollama format (both dict and Pydantic)
+                        from chuk_llm.core.enums import ContentType
+                        import base64
+
                         text_parts = []
                         images = []
 
                         for item in content:
-                            if item.get("type") == "text":
-                                text_parts.append(item.get("text", ""))
-                            elif item.get("type") in ["image", "image_url"]:
-                                image_url = item.get("image_url", {}).get("url", "")
-                                if image_url.startswith("data:image"):
-                                    # Extract base64 data
-                                    import base64
-
-                                    _, encoded = image_url.split(",", 1)
-                                    images.append(base64.b64decode(encoded))
-                                else:
-                                    images.append(image_url)
+                            if isinstance(item, dict):
+                                # Dict-based content
+                                if item.get("type") == "text":
+                                    text_parts.append(item.get("text", ""))
+                                elif item.get("type") in ["image", "image_url"]:
+                                    image_url = item.get("image_url", {}).get("url", "")
+                                    if image_url.startswith("data:image"):
+                                        _, encoded = image_url.split(",", 1)
+                                        images.append(base64.b64decode(encoded))
+                                    else:
+                                        images.append(image_url)
+                            else:
+                                # Pydantic object-based content
+                                if hasattr(item, "type") and item.type == ContentType.TEXT:
+                                    text_parts.append(item.text)
+                                elif hasattr(item, "type") and item.type == ContentType.IMAGE_URL:
+                                    # Extract URL from Pydantic ImageUrlContent
+                                    image_url_data = item.image_url
+                                    url = image_url_data.get("url") if isinstance(image_url_data, dict) else image_url_data
+                                    if url.startswith("data:image"):
+                                        _, encoded = url.split(",", 1)
+                                        images.append(base64.b64decode(encoded))
+                                    else:
+                                        images.append(url)
 
                         message["content"] = " ".join(text_parts)
                         if images:
@@ -642,33 +663,46 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
 
     def create_completion(
         self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        messages: list,  # Pydantic Message objects
+        tools: list | None = None,  # Pydantic Tool objects
         *,
         stream: bool = False,
         **kwargs,
     ) -> AsyncIterator[dict[str, Any]] | Any:
         """
         ENHANCED: Configuration-aware completion with proper context preservation.
+
+        Args:
+            messages: List of Pydantic Message objects
+            tools: List of Pydantic Tool objects
         """
+        # Handle backward compatibility
+        from chuk_llm.llm.core.base import _ensure_pydantic_messages, _ensure_pydantic_tools
+        messages = _ensure_pydantic_messages(messages)
+        tools = _ensure_pydantic_tools(tools)
+
+        # Convert Pydantic to dicts
+        dict_messages = [msg.to_dict() for msg in messages]
+        dict_tools = [tool.to_dict() for tool in tools] if tools else None
+
         # CRITICAL: Validate conversation context before processing
-        if not self._validate_conversation_context(messages):
+        if not self._validate_conversation_context(dict_messages):
             log.warning(
                 "Conversation context validation failed - responses may lack context"
             )
 
         # Log conversation length for debugging
-        log.debug(f"Creating completion with {len(messages)} messages in context")
-        if len(messages) > 1:
+        log.debug(f"Creating completion with {len(dict_messages)} messages in context")
+        if len(dict_messages) > 1:
             # Log the conversation flow
             roles = [
-                msg.get("role", "unknown") for msg in messages[-5:]
+                msg.get("role", "unknown") for msg in dict_messages[-5:]
             ]  # Last 5 messages
             log.debug(f"Recent conversation flow: {' -> '.join(roles)}")
 
         # Continue with existing validation and processing...
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
-            self._validate_request_with_config(messages, tools, stream, **kwargs)
+            self._validate_request_with_config(dict_messages, dict_tools, stream, **kwargs)
         )
 
         if validated_stream:
