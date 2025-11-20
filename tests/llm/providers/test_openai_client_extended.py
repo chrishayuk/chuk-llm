@@ -22,6 +22,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from chuk_llm.core.enums import MessageRole
+
 
 # Mock classes for OpenAI
 class MockToolCall:

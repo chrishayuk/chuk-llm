@@ -13,21 +13,18 @@ import os
 from collections.abc import AsyncIterator
 from typing import Any, Optional
 
-from chuk_llm.api._modern_integration import (
-    _can_use_modern_client,
-    modern_client_complete,
-)
+# Modern integration removed - using unified llm/providers architecture
 from chuk_llm.api.config import get_current_config
 from chuk_llm.configuration import ConfigValidator, Feature, get_config
-from chuk_llm.core.enums import MessageRole, ContentType, ToolType
+from chuk_llm.core.enums import ContentType, MessageRole, ToolType
 from chuk_llm.core.models import (
-    Message,
-    Tool,
-    ToolFunction,
-    TextContent,
-    ImageUrlContent,
-    ToolCall,
     FunctionCall,
+    ImageUrlContent,
+    Message,
+    TextContent,
+    Tool,
+    ToolCall,
+    ToolFunction,
 )
 from chuk_llm.llm.client import get_client
 
@@ -466,44 +463,22 @@ async def ask(
     # Add any additional kwargs
     completion_args.update(completion_kwargs)
 
-    # Make the request - Clean decision: modern OR legacy (no fallbacks)
+    # Make the request using unified llm/providers clients
     try:
-        # Check if we can use modern Pydantic client
-        if _can_use_modern_client(effective_provider):
-            logger.debug(
-                f"Using modern Pydantic client for {effective_provider}/{effective_model}"
-            )
-            response = await modern_client_complete(
-                provider=effective_provider,
-                model=effective_model,
-                messages=completion_args["messages"],
-                tools=completion_args.get("tools"),
-                temperature=completion_args.get("temperature"),
-                max_tokens=completion_args.get("max_tokens"),
-                api_key=effective_config["api_key"],
-                api_base=effective_config.get("api_base"),
-                **{
-                    k: v
-                    for k, v in completion_args.items()
-                    if k not in ["messages", "tools", "temperature", "max_tokens"]
-                },
-            )
-        else:
-            # Use legacy client
-            logger.debug(
-                f"Using legacy client for {effective_provider}/{effective_model}"
-            )
-            # Convert dict messages/tools to Pydantic objects for type safety
-            pydantic_messages = _convert_dict_to_pydantic_messages(completion_args["messages"])
-            pydantic_tools = _convert_dict_to_pydantic_tools(completion_args.get("tools"))
+        logger.debug(
+            f"Using provider client for {effective_provider}/{effective_model}"
+        )
+        # Convert dict messages/tools to Pydantic objects for type safety
+        pydantic_messages = _convert_dict_to_pydantic_messages(completion_args["messages"])
+        pydantic_tools = _convert_dict_to_pydantic_tools(completion_args.get("tools"))
 
-            # Update completion_args with Pydantic objects
-            completion_args_pydantic = completion_args.copy()
-            completion_args_pydantic["messages"] = pydantic_messages
-            if pydantic_tools is not None:
-                completion_args_pydantic["tools"] = pydantic_tools
+        # Update completion_args with Pydantic objects
+        completion_args_pydantic = completion_args.copy()
+        completion_args_pydantic["messages"] = pydantic_messages
+        if pydantic_tools is not None:
+            completion_args_pydantic["tools"] = pydantic_tools
 
-            response = await client.create_completion(**completion_args_pydantic)
+        response = await client.create_completion(**completion_args_pydantic)
 
         # Extract response
         if isinstance(response, dict):

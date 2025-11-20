@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import AsyncIterator
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from chuk_llm.core.models import Message, Tool
@@ -19,7 +19,13 @@ def _ensure_pydantic_messages(messages: list) -> list:
         return messages  # Already Pydantic objects
 
     from chuk_llm.core.enums import ContentType, MessageRole, ToolType
-    from chuk_llm.core.models import Message, TextContent, ImageUrlContent, ToolCall, FunctionCall
+    from chuk_llm.core.models import (
+        FunctionCall,
+        ImageUrlContent,
+        Message,
+        TextContent,
+        ToolCall,
+    )
 
     pydantic_messages = []
     for msg in messages:
@@ -76,8 +82,8 @@ def _ensure_pydantic_tools(tools: list | None) -> list | None:
     if not tools or not isinstance(tools[0], dict):
         return tools  # Already Pydantic objects or None
 
-    from chuk_llm.core.models import Tool, ToolFunction
     from chuk_llm.core.enums import ToolType
+    from chuk_llm.core.models import Tool, ToolFunction
 
     pydantic_tools = []
     for tool in tools:

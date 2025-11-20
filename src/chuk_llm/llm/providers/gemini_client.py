@@ -1002,7 +1002,10 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
         """
 
         # Handle backward compatibility
-        from chuk_llm.llm.core.base import _ensure_pydantic_messages, _ensure_pydantic_tools
+        from chuk_llm.llm.core.base import (
+            _ensure_pydantic_messages,
+            _ensure_pydantic_tools,
+        )
         messages = _ensure_pydantic_messages(messages)
         tools = _ensure_pydantic_tools(tools)
 

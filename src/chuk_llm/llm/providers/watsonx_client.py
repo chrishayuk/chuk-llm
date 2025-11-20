@@ -33,6 +33,9 @@ from typing import Any
 from ibm_watsonx_ai import APIClient, Credentials
 from ibm_watsonx_ai.foundation_models import ModelInference
 
+# core
+from chuk_llm.core.enums import MessageRole
+
 # providers
 from ..core.base import BaseLLMClient
 from ._config_mixin import ConfigAwareProviderMixin
@@ -890,7 +893,7 @@ class WatsonXLLMClient(
         prepared_messages: list[dict[str, Any]] = []
 
         for msg in messages:
-            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            if msg.get("role") == MessageRole.ASSISTANT.value and msg.get("tool_calls"):
                 # Sanitize tool names in assistant message tool calls
                 prepared_msg = msg.copy()
                 sanitized_tool_calls: list[dict[str, Any]] = []
@@ -1219,7 +1222,10 @@ class WatsonXLLMClient(
             tools: List of Pydantic Tool objects
         """
         # Handle backward compatibility
-        from chuk_llm.llm.core.base import _ensure_pydantic_messages, _ensure_pydantic_tools
+        from chuk_llm.llm.core.base import (
+            _ensure_pydantic_messages,
+            _ensure_pydantic_tools,
+        )
         messages = _ensure_pydantic_messages(messages)
         tools = _ensure_pydantic_tools(tools)
 

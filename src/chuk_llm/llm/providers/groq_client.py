@@ -39,6 +39,8 @@ import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
+from chuk_llm.core.enums import MessageRole
+
 # Import the OpenAI client as base
 from chuk_llm.llm.providers.openai_client import OpenAILLMClient
 
@@ -363,7 +365,7 @@ class GroqAILLMClient(OpenAILLMClient):
         client = GroqAILLMClient.__new__(GroqAILLMClient)
         known_info = client._get_known_model_info(model_name)
         if known_info:
-            return {
+            result = {
                 "max_context_length": known_info.get("context", 131072),
                 "max_output_tokens": known_info.get("max_output", 8192),
                 "supports_tools": "tools" in known_info["features"],
@@ -371,6 +373,10 @@ class GroqAILLMClient(OpenAILLMClient):
                 "ultra_fast_inference": True,
                 "model_family": known_info["family"],
             }
+            # Add open_source flag for GPT-OSS models
+            if known_info["family"] == "gpt-oss":
+                result["open_source"] = True
+            return result
 
         model_lower = model_name.lower()
 
@@ -672,13 +678,21 @@ class GroqAILLMClient(OpenAILLMClient):
         """Get optimization profile for the model"""
         model_lower = self.model.lower()
 
-        # Audio/TTS models
+        # Audio/TTS models (check first - most specific)
         if any(pattern in model_lower for pattern in ["whisper", "tts", "playai"]):
             return "audio_processing"
 
         # Safety models
         if "guard" in model_lower:
             return "safety_filtering"
+
+        # Reasoning models (check before size-based categories)
+        if any(pattern in model_lower for pattern in ["reasoning", "r1", "distill"]):
+            return "deep_reasoning"
+
+        # System models (check before size-based categories)
+        if "compound" in model_lower:
+            return "multi_model_system"
 
         # Large models
         if any(pattern in model_lower for pattern in ["70b", "120b", "large"]):
@@ -689,14 +703,6 @@ class GroqAILLMClient(OpenAILLMClient):
             pattern in model_lower for pattern in ["8b", "7b", "20b", "instant", "mini"]
         ):
             return "low_latency"
-
-        # Reasoning models
-        elif any(pattern in model_lower for pattern in ["reasoning", "r1", "distill"]):
-            return "deep_reasoning"
-
-        # System models
-        elif "compound" in model_lower:
-            return "multi_model_system"
 
         else:
             return "balanced"
@@ -873,7 +879,7 @@ class GroqAILLMClient(OpenAILLMClient):
             guidance = f"Available functions: {', '.join(function_names)}. Use them when appropriate."
 
         # Add or enhance system message (only if system messages are supported)
-        if enhanced_messages and enhanced_messages[0].get("role") == "system":
+        if enhanced_messages and enhanced_messages[0].get("role") == MessageRole.SYSTEM.value:
             enhanced_messages[0]["content"] = (
                 enhanced_messages[0]["content"] + "\n\n" + guidance
             )

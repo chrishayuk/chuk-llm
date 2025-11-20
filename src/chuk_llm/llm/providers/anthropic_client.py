@@ -30,6 +30,9 @@ from typing import Any
 # llm
 from anthropic import AsyncAnthropic
 
+# core
+from ...core.enums import MessageRole
+
 # providers
 from ..core.base import BaseLLMClient
 from ._config_mixin import ConfigAwareProviderMixin
@@ -378,12 +381,12 @@ class AnthropicLLMClient(
         for msg in messages:
             role = msg.get("role")
 
-            if role == "system":
+            if role == MessageRole.SYSTEM:
                 sys_txt.append(msg.get("content", ""))
                 continue
 
             # assistant function calls → tool_use blocks
-            if role == "assistant" and msg.get("tool_calls"):
+            if role == MessageRole.ASSISTANT and msg.get("tool_calls"):
                 blocks = [
                     {
                         "type": "tool_use",
@@ -395,14 +398,14 @@ class AnthropicLLMClient(
                     }
                     for tc in msg["tool_calls"]
                 ]
-                out.append({"role": "assistant", "content": blocks})
+                out.append({"role": MessageRole.ASSISTANT, "content": blocks})
                 continue
 
             # tool response
-            if role == "tool":
+            if role == MessageRole.TOOL:
                 out.append(
                     {
-                        "role": "user",
+                        "role": MessageRole.USER,
                         "content": [
                             {
                                 "type": "tool_result",
@@ -416,7 +419,7 @@ class AnthropicLLMClient(
                 continue
 
             # normal / multimodal messages with universal vision support
-            if role in {"user", "assistant"}:
+            if role in {MessageRole.USER, MessageRole.ASSISTANT}:
                 cont = msg.get("content")
                 if cont is None:
                     continue
@@ -542,7 +545,10 @@ class AnthropicLLMClient(
         """
 
         # Handle backward compatibility
-        from chuk_llm.llm.core.base import _ensure_pydantic_messages, _ensure_pydantic_tools
+        from chuk_llm.llm.core.base import (
+            _ensure_pydantic_messages,
+            _ensure_pydantic_tools,
+        )
         messages = _ensure_pydantic_messages(messages)
         tools = _ensure_pydantic_tools(tools)
 

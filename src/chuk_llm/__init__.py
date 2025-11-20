@@ -190,6 +190,16 @@ from .configuration import (  # noqa: E402
     reset_config,
 )
 
+# Registry (new capability system)
+from .registry import (  # noqa: E402
+    ModelQuery,
+    ModelRegistry,
+    ModelSpec,
+    ModelWithCapabilities,
+    QualityTier,
+    get_registry,
+)
+
 # Session utilities
 try:
     from .api.session_utils import (
@@ -249,6 +259,13 @@ __all__ = (
         "CapabilityChecker",
         "get_config",
         "reset_config",
+        # Registry (new capability system)
+        "ModelRegistry",
+        "ModelSpec",
+        "ModelWithCapabilities",
+        "ModelQuery",
+        "QualityTier",
+        "get_registry",
         # Conversation
         "conversation",
         "ConversationContext",

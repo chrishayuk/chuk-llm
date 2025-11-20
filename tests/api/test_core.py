@@ -21,6 +21,8 @@ from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
 import pytest
 
+from chuk_llm.core.enums import MessageRole
+
 # Import the module under test
 from chuk_llm.api import core
 from chuk_llm.api.core import (
@@ -121,9 +123,10 @@ class TestAskFunction:
         call_args = mock_client.create_completion.call_args[1]
         assert "messages" in call_args
         assert len(call_args["messages"]) == 2  # system + user
-        assert call_args["messages"][0]["role"] == "system"
-        assert call_args["messages"][1]["role"] == "user"
-        assert call_args["messages"][1]["content"] == "Hello"
+        # Messages are Pydantic objects, use attribute access
+        assert call_args["messages"][0].role == "system"
+        assert call_args["messages"][1].role == "user"
+        assert call_args["messages"][1].content == "Hello"
 
     @pytest.mark.asyncio
     async def test_ask_with_provider_override(self, mock_client, mock_config):
@@ -309,7 +312,7 @@ class TestAskFunction:
 
         # Should add JSON instruction to system message
         call_args = mock_client.create_completion.call_args[1]
-        system_message = call_args["messages"][0]["content"]
+        system_message = call_args["messages"][0].content
         assert "JSON" in system_message
         assert "valid JSON only" in system_message
 
@@ -374,12 +377,13 @@ class TestAskFunction:
         messages = call_args["messages"]
 
         # Should have system (with context), previous messages, and current user message
+        # Messages from ask() are Message objects
         assert len(messages) >= 4
         assert (
-            "Important context information" in messages[0]["content"]
+            "Important context information" in messages[0].content
         )  # Context in system
-        assert any(msg["content"] == "Previous question" for msg in messages)
-        assert any(msg["content"] == "Follow up question" for msg in messages)
+        assert any(msg.content == "Previous question" for msg in messages)
+        assert any(msg.content == "Follow up question" for msg in messages)
 
     @pytest.mark.asyncio
     async def test_ask_validation_warnings(self, setup_mocks):
@@ -801,7 +805,9 @@ class TestUtilityFunctions:
             assert "tool_calls" in result
             mock_client.create_completion.assert_called_once()
             call_args = mock_client.create_completion.call_args[1]
-            assert call_args["tools"] == tools
+            # Tools may be converted to Pydantic objects, check structure
+            assert len(call_args["tools"]) == 1
+            assert call_args["tools"][0].function.name == "test_tool"
             assert call_args["temperature"] == 0.8
 
     @pytest.mark.asyncio
@@ -1022,6 +1028,7 @@ class TestMessageBuilding:
             )
 
             # Should only have user message with system content prepended
+            # _build_messages returns dicts
             assert len(messages) == 1
             assert messages[0]["role"] == "user"
             assert "System: System prompt" in messages[0]["content"]
@@ -1036,6 +1043,7 @@ class TestMessageBuilding:
 
         _add_json_instruction_to_messages(messages)
 
+        # messages are dicts, not Message objects here
         system_content = messages[0]["content"]
         assert "You are helpful" in system_content
         assert "valid JSON only" in system_content
@@ -1047,6 +1055,7 @@ class TestMessageBuilding:
         _add_json_instruction_to_messages(messages)
 
         # Should add system message at the beginning
+        # messages are dicts, not Message objects here
         assert len(messages) == 2
         assert messages[0]["role"] == "system"
         assert "valid JSON only" in messages[0]["content"]
@@ -1157,6 +1166,7 @@ class TestErrorHandlingAndEdgeCases:
                 )
 
                 # Should use fallback system prompt
+                # _build_messages returns dicts
                 assert "function calling tools" in messages[0]["content"].lower()
 
     def test_get_session_manager_reuses_existing_instance(self):

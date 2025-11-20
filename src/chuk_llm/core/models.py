@@ -12,7 +12,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .enums import ContentType, FinishReason, MessageRole, ResponsesTextFormatType, ToolType
+from .enums import (
+    ContentType,
+    FinishReason,
+    MessageRole,
+    ResponsesTextFormatType,
+    ToolType,
+)
 from .json_utils import loads
 
 # ================================================================
@@ -116,7 +122,8 @@ class Tool(BaseModel):
 
     def to_dict(self) -> dict:
         """Convert to dict with enum values as strings."""
-        return self.model_dump(mode="python", exclude_none=True, by_alias=True)
+        # Use mode='json' to serialize enums to their values
+        return self.model_dump(mode="json", exclude_none=True, by_alias=True)
 
 
 # ================================================================
@@ -156,7 +163,8 @@ class Message(BaseModel):
 
     def to_dict(self) -> dict:
         """Convert to dict with enum values as strings."""
-        return self.model_dump(mode="python", exclude_none=True, by_alias=True)
+        # Use mode='json' to serialize enums to their values
+        return self.model_dump(mode="json", exclude_none=True, by_alias=True)
 
 
 # ================================================================

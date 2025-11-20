@@ -47,6 +47,7 @@ class MessageRole(str, Enum):
     USER = "user"
     ASSISTANT = "assistant"
     TOOL = "tool"
+    FUNCTION = "function"  # Deprecated but supported for backwards compatibility
 
 
 class FinishReason(str, Enum):

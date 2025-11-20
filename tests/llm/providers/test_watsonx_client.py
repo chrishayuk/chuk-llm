@@ -17,6 +17,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from chuk_llm.core.enums import MessageRole
+
 # ---------------------------------------------------------------------------
 # Mock modules to prevent import issues
 # ---------------------------------------------------------------------------

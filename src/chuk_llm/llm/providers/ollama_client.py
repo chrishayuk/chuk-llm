@@ -17,6 +17,9 @@ from typing import Any
 # provider
 import ollama
 
+# core
+from chuk_llm.core.enums import MessageRole
+
 # providers
 from chuk_llm.llm.core.base import BaseLLMClient
 from chuk_llm.llm.providers._config_mixin import ConfigAwareProviderMixin
@@ -228,7 +231,7 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
             )
 
         # Check system message support
-        has_system = any(msg.get("role") == "system" for msg in messages)
+        has_system = any(msg.get("role") == MessageRole.SYSTEM.value for msg in messages)
         if has_system and not self.supports_feature("system_messages"):
             log.info(
                 f"System messages will be converted - {self.model} has limited system message support"
@@ -364,8 +367,9 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                         )
                     else:
                         # Process images for Ollama format (both dict and Pydantic)
-                        from chuk_llm.core.enums import ContentType
                         import base64
+
+                        from chuk_llm.core.enums import ContentType
 
                         text_parts = []
                         images = []
@@ -449,12 +453,12 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         # Check that tool calls have corresponding tool responses
         pending_tool_calls = {}
         for msg in messages:
-            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            if msg.get("role") == MessageRole.ASSISTANT.value and msg.get("tool_calls"):
                 for tc in msg["tool_calls"]:
                     tc_id = tc.get("id", tc.get("function", {}).get("name", "unknown"))
                     pending_tool_calls[tc_id] = True
 
-            elif msg.get("role") == "tool":
+            elif msg.get("role") == MessageRole.TOOL.value:
                 tool_id = msg.get("tool_call_id", msg.get("name", "unknown"))
                 if tool_id in pending_tool_calls:
                     del pending_tool_calls[tool_id]
@@ -677,7 +681,10 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
             tools: List of Pydantic Tool objects
         """
         # Handle backward compatibility
-        from chuk_llm.llm.core.base import _ensure_pydantic_messages, _ensure_pydantic_tools
+        from chuk_llm.llm.core.base import (
+            _ensure_pydantic_messages,
+            _ensure_pydantic_tools,
+        )
         messages = _ensure_pydantic_messages(messages)
         tools = _ensure_pydantic_tools(tools)
 

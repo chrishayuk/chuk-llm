@@ -7,6 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from chuk_llm.core.enums import MessageRole
+
 # ---------------------------------------------------------------------------
 # Stub the `ollama` SDK before importing the adapter.
 # ---------------------------------------------------------------------------

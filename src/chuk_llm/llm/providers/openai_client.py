@@ -34,6 +34,7 @@ from typing import Any
 import openai
 
 from chuk_llm.configuration import get_config
+from chuk_llm.core.enums import MessageRole
 
 # base
 from chuk_llm.llm.core.base import BaseLLMClient
@@ -418,7 +419,7 @@ class OpenAILLMClient(
         system_instructions = []
 
         for msg in messages:
-            if msg.get("role") == "system":
+            if msg.get("role") == MessageRole.SYSTEM.value:
                 system_instructions.append(msg["content"])
                 log.debug(
                     f"[{self.detected_provider}] Converting system message for o1 model"
@@ -430,7 +431,7 @@ class OpenAILLMClient(
         if system_instructions and adjusted_messages:
             first_user_idx = None
             for i, msg in enumerate(adjusted_messages):
-                if msg.get("role") == "user":
+                if msg.get("role") == MessageRole.USER.value:
                     first_user_idx = i
                     break
 
@@ -672,7 +673,7 @@ class OpenAILLMClient(
         prepared_messages = []
 
         for msg in messages:
-            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            if msg.get("role") == MessageRole.ASSISTANT.value and msg.get("tool_calls"):
                 # Sanitize tool names in assistant message tool calls
                 prepared_msg = msg.copy()
                 sanitized_tool_calls = []
@@ -965,7 +966,10 @@ class OpenAILLMClient(
             tools: List of Pydantic Tool objects (or dicts for backward compatibility)
         """
         # Handle backward compatibility
-        from chuk_llm.llm.core.base import _ensure_pydantic_messages, _ensure_pydantic_tools
+        from chuk_llm.llm.core.base import (
+            _ensure_pydantic_messages,
+            _ensure_pydantic_tools,
+        )
         messages = _ensure_pydantic_messages(messages)
         tools = _ensure_pydantic_tools(tools)
 
@@ -1164,6 +1168,27 @@ class OpenAILLMClient(
 
             result = self._normalize_message(resp.choices[0].message)
 
+            # Extract usage information (including reasoning_tokens for reasoning models)
+            if hasattr(resp, "usage") and resp.usage:
+                usage_info = {
+                    "prompt_tokens": getattr(resp.usage, "prompt_tokens", 0),
+                    "completion_tokens": getattr(resp.usage, "completion_tokens", 0),
+                    "total_tokens": getattr(resp.usage, "total_tokens", 0),
+                }
+
+                # Add reasoning tokens if present (for o1/gpt-5 models)
+                if hasattr(resp.usage, "completion_tokens_details"):
+                    details = resp.usage.completion_tokens_details
+                    if hasattr(details, "reasoning_tokens") and details.reasoning_tokens:
+                        usage_info["reasoning_tokens"] = details.reasoning_tokens
+                        # Add reasoning metadata to response
+                        result["reasoning"] = {
+                            "thinking_tokens": details.reasoning_tokens,
+                            "model_type": "reasoning",
+                        }
+
+                result["usage"] = usage_info
+
             # Restore original tool names using universal restoration
             if name_mapping and result.get("tool_calls"):
                 result = self._restore_tool_names_in_response(result, name_mapping)
@@ -1171,7 +1196,8 @@ class OpenAILLMClient(
             log.debug(
                 f"[{self.detected_provider}] Completion successful: "
                 f"response={len(str(result.get('response', ''))) if result.get('response') else 0} chars, "
-                f"tool_calls={len(result.get('tool_calls', []))}"
+                f"tool_calls={len(result.get('tool_calls', []))}, "
+                f"reasoning_tokens={result.get('reasoning', {}).get('thinking_tokens', 0) if result.get('reasoning') else 0}"
             )
 
             return result

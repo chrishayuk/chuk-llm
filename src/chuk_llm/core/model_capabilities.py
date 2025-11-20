@@ -9,7 +9,6 @@ Reasoning models (GPT-5, O-series) have restricted parameters.
 from .enums import Provider
 from .protocol import ModelInfo
 
-
 # Model capability definitions
 MODEL_CAPABILITIES: dict[str, ModelInfo] = {
     # GPT-5 Series - Reasoning models with restricted parameters

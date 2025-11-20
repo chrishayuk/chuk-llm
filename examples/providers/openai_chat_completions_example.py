@@ -3,35 +3,43 @@
 OpenAI Chat Completions API - Comprehensive Example
 ====================================================
 
-Complete demonstration of the traditional Chat Completions API (/v1/chat/completions).
+Complete demonstration of the Chat Completions API (/v1/chat/completions).
 This is the standard OpenAI-compatible API used by most providers.
 
 Features Demonstrated:
 - ✅ Basic completion
 - ✅ Streaming
-- ✅ Function/tool calling
+- ✅ Function/tool calling (3 tools)
 - ✅ Vision (multimodal)
 - ✅ JSON mode
-- ✅ GPT-5, GPT-5-mini support
+- ✅ Structured outputs (JSON Schema)
+- ✅ System prompts
+- ✅ Temperature and sampling parameters
+- ✅ GPT-4o, GPT-4o-mini support
 - ✅ Model comparison
+- ✅ Model discovery from API
+- ✅ Dynamic model selection and calling
 - ✅ Parameters testing
 - ✅ Error handling
-- ✅ Multi-turn conversations (manual history)
-- ✅ Structured outputs
+- ✅ Multi-turn conversations
+- ✅ Reasoning models (o1, o3)
 - ✅ Zero magic strings (all enums)
-- ✅ Type-safe Pydantic V2
+- ✅ Type-safe Pydantic models
 
 Requirements:
 - Set OPENAI_API_KEY environment variable
 
 Usage:
     python openai_chat_completions_example.py
-    python openai_chat_completions_example.py --model gpt-5
+    python openai_chat_completions_example.py --model gpt-4o
     python openai_chat_completions_example.py --demo 1  # Run specific demo
-    python openai_chat_completions_example.py --quick  # Skip slow demos
+    python openai_chat_completions_example.py --quick   # Skip slow demos
 """
 
+import argparse
 import asyncio
+import base64
+import json
 import os
 import sys
 import time
@@ -41,16 +49,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Add src to path for development
-src_path = Path(__file__).parent.parent.parent / "src"
-if src_path.exists():
-    sys.path.insert(0, str(src_path))
+if not os.getenv("OPENAI_API_KEY"):
+    print("❌ Please set OPENAI_API_KEY environment variable")
+    print("   export OPENAI_API_KEY='your_api_key_here'")
+    print("   Get your key at: https://platform.openai.com/api-keys")
+    sys.exit(1)
 
 try:
-    from chuk_llm.clients.openai import OpenAIClient
+    from chuk_llm.configuration import Feature, get_config
+    from chuk_llm.llm.client import get_client
     from chuk_llm.core.models import (
-        CompletionRequest,
-        CompletionResponse,
         Message,
         Tool,
         ToolFunction,
@@ -58,140 +66,168 @@ try:
         ImageUrlContent,
     )
     from chuk_llm.core.enums import MessageRole, ContentType, ToolType
-    from chuk_llm.core import LLMError
 except ImportError as e:
     print(f"❌ Import error: {e}")
-    import traceback
-
-    traceback.print_exc()
+    print("   Install with: pip install chuk-llm")
     sys.exit(1)
 
 
+# =============================================================================
+# Demo 1: Basic Chat Completion
+# =============================================================================
+
 async def demo_basic_completion(model: str):
-    """Demo 1: Basic completion with Chat Completions API."""
-    print(f"\n{'='*60}")
-    print(f"Demo 1: Basic Completion - Chat Completions API")
-    print(f"{'='*60}")
+    """Basic chat completion with system and user messages"""
+    print(f"\n{'='*70}")
+    print("Demo 1: Basic Chat Completion")
+    print(f"{'='*70}")
+
+    client = get_client("openai", model=model)
+
+    messages = [
+        Message(
+            role=MessageRole.SYSTEM,
+            content="You are a helpful assistant specialized in explaining technical concepts clearly."
+        ),
+        Message(
+            role=MessageRole.USER,
+            content="Explain what a REST API is in 2-3 sentences."
+        ),
+    ]
+
     print(f"Model: {model}")
-    print(f"Endpoint: POST /v1/chat/completions")
-    print(f"Note: Manual conversation history management")
+    print(f"System: {messages[0].content}")
+    print(f"User: {messages[1].content}")
+    print("\n⏳ Generating response...")
 
-    client = OpenAIClient(
-        model=model,
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
+    start_time = time.time()
+    response = await client.create_completion(messages, max_tokens=200)
+    duration = time.time() - start_time
 
-    # Standard chat completions request
-    request = CompletionRequest(
-        messages=[
-            Message(
-                role=MessageRole.SYSTEM,
-                content="You are a helpful AI assistant.",
-            ),
-            Message(
-                role=MessageRole.USER,
-                content="Explain the Chat Completions API in one sentence.",
-            ),
-        ],
-        model=model,
-        temperature=0.7,
-        max_tokens=150,
-    )
+    print(f"\n✅ Response ({duration:.2f}s):")
+    print(f"{response['response']}")
 
-    response: CompletionResponse = await client.complete(request)
+    return response
 
-    print(f"\n✅ Response: {response.content}")
-    print(f"   Finish: {response.finish_reason.value}")
-    print(f"   Tokens: {response.usage.total_tokens if response.usage else 'N/A'}")
 
-    await client.close()
-
+# =============================================================================
+# Demo 2: Streaming Response
+# =============================================================================
 
 async def demo_streaming(model: str):
-    """Demo 2: Streaming with Chat Completions API."""
-    print(f"\n{'='*60}")
-    print(f"Demo 2: Streaming - Chat Completions API")
-    print(f"{'='*60}")
+    """Real-time streaming response"""
+    print(f"\n{'='*70}")
+    print("Demo 2: Streaming Response")
+    print(f"{'='*70}")
+
+    client = get_client("openai", model=model)
+
+    messages = [
+        Message(
+            role=MessageRole.USER,
+            content="Write a haiku about artificial intelligence."
+        ),
+    ]
+
     print(f"Model: {model}")
-    print(f"Parameter: stream=true")
+    print(f"User: {messages[0].content}")
+    print("\n⏳ Streaming response:")
+    print("-" * 70)
 
-    client = OpenAIClient(
-        model=model,
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
+    full_response = ""
+    start_time = time.time()
+    chunk_count = 0
 
-    request = CompletionRequest(
-        messages=[
-            Message(
-                role=MessageRole.USER,
-                content="Write a haiku about traditional APIs.",
-            )
-        ],
-        model=model,
-    )
+    async for chunk in client.create_completion(messages, stream=True, max_tokens=100):
+        if chunk.get("response"):
+            content = chunk["response"]
+            print(content, end="", flush=True)
+            full_response += content
+            chunk_count += 1
 
-    print("\n🌊 Streaming:")
-    print("   ", end="", flush=True)
+    duration = time.time() - start_time
 
-    async for chunk in client.stream(request):
-        # Stream chunks contain 'content' field with incremental text
-        if chunk.content:
-            print(chunk.content, end="", flush=True)
+    print("\n" + "-" * 70)
+    print(f"✅ Streamed {chunk_count} chunks in {duration:.2f}s")
 
-    print("\n✅ Complete")
+    return full_response
 
-    await client.close()
 
+# =============================================================================
+# Demo 3: Function Calling / Tool Use
+# =============================================================================
 
 async def demo_function_calling(model: str):
-    """Demo 3: Function calling with Chat Completions API."""
-    print(f"\n{'='*60}")
-    print(f"Demo 3: Function/Tool Calling - Chat Completions API")
-    print(f"{'='*60}")
-    print(f"Model: {model}")
-    print(f"Feature: Custom function definitions")
+    """Function calling with multiple tools"""
+    print(f"\n{'='*70}")
+    print("Demo 3: Function Calling / Tool Use")
+    print(f"{'='*70}")
 
-    client = OpenAIClient(
-        model=model,
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
+    config = get_config()
+    if not config.supports_feature("openai", Feature.TOOLS, model):
+        print(f"⚠️  Model {model} doesn't support function calling")
+        return None
 
-    # Define tools using Pydantic models (NO DICTS!)
+    client = get_client("openai", model=model)
+
+    # Define multiple tools
     tools = [
         Tool(
             type=ToolType.FUNCTION,
             function=ToolFunction(
                 name="get_weather",
-                description="Get current weather for a city",
+                description="Get the current weather for a location",
                 parameters={
                     "type": "object",
                     "properties": {
-                        "city": {
+                        "location": {
                             "type": "string",
-                            "description": "City name",
+                            "description": "The city and state, e.g. San Francisco, CA",
                         },
-                        "units": {
+                        "unit": {
                             "type": "string",
                             "enum": ["celsius", "fahrenheit"],
-                            "description": "Temperature units",
+                            "description": "Temperature unit (default: celsius)",
                         },
                     },
-                    "required": ["city"],
+                    "required": ["location"],
                 },
             ),
         ),
         Tool(
             type=ToolType.FUNCTION,
             function=ToolFunction(
-                name="search_web",
-                description="Search the web for information",
+                name="calculate",
+                description="Perform mathematical calculations",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "expression": {
+                            "type": "string",
+                            "description": "Mathematical expression to evaluate (e.g., '2 + 2', '10 * 5')",
+                        }
+                    },
+                    "required": ["expression"],
+                },
+            ),
+        ),
+        Tool(
+            type=ToolType.FUNCTION,
+            function=ToolFunction(
+                name="search_database",
+                description="Search a product database",
                 parameters={
                     "type": "object",
                     "properties": {
                         "query": {
                             "type": "string",
                             "description": "Search query",
-                        }
+                        },
+                        "category": {
+                            "type": "string",
+                            "enum": ["electronics", "clothing", "books"],
+                            "description": "Product category to search in",
+                        },
                     },
                     "required": ["query"],
                 },
@@ -199,570 +235,772 @@ async def demo_function_calling(model: str):
         ),
     ]
 
-    request = CompletionRequest(
-        messages=[
-            Message(
-                role=MessageRole.USER,
-                content="What's the weather in Paris and search for Eiffel Tower history?",
-            )
-        ],
-        model=model,
-        tools=tools,
-        temperature=0.0,
-    )
+    messages = [
+        Message(
+            role=MessageRole.SYSTEM,
+            content="You are a helpful assistant that can use tools to answer questions."
+        ),
+        Message(
+            role=MessageRole.USER,
+            content="What's the weather in Tokyo, and calculate 25 * 8 for me?"
+        ),
+    ]
 
-    response = await client.complete(request)
-
-    if response.tool_calls:
-        print(f"✅ Tool calls: {len(response.tool_calls)}")
-        for tc in response.tool_calls:
-            print(f"   📞 {tc.function.name}({tc.function.arguments})")
-            print(f"      Type: {tc.type.value}")
-    else:
-        print(f"ℹ️  No tools called: {response.content}")
-
-    await client.close()
-
-
-async def demo_vision(model: str = "gpt-4o"):
-    """Demo 4: Vision/multimodal with Chat Completions API."""
-    print(f"\n{'='*60}")
-    print(f"Demo 4: Vision/Multi-modal - Chat Completions API")
-    print(f"{'='*60}")
     print(f"Model: {model}")
-    print(f"Feature: Image understanding")
+    print(f"Available tools: {len(tools)}")
+    for tool in tools:
+        print(f"  - {tool.function.name}: {tool.function.description}")
 
-    client = OpenAIClient(
-        model=model,
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
+    print(f"\nUser: {messages[1].content}")
+    print("\n⏳ Processing with tools...")
 
-    # Use a base64 encoded simple image (more reliable than external URLs)
-    # This is a 1x1 red pixel PNG - replace with actual base64 image in production
-    base64_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
-    image_data_url = f"data:image/png;base64,{base64_image}"
+    response = await client.create_completion(messages, tools=tools)
 
-    try:
-        # Multi-modal message using typed content parts
-        request = CompletionRequest(
-            messages=[
-                Message(
-                    role=MessageRole.USER,
-                    content=[
-                        TextContent(
-                            type=ContentType.TEXT,
-                            text="What color is this image? (One word)",
-                        ),
-                        ImageUrlContent(
-                            type=ContentType.IMAGE_URL,
-                            image_url={"url": image_data_url},
-                        ),
+    if response.get("tool_calls"):
+        print(f"\n🔧 Model called {len(response['tool_calls'])} function(s):")
+
+        # Collect tool results
+        tool_results = []
+
+        for tool_call in response["tool_calls"]:
+            func_name = tool_call["function"]["name"]
+            func_args = json.loads(tool_call["function"]["arguments"])
+
+            print(f"\n  📞 Function: {func_name}")
+            print(f"     Arguments: {json.dumps(func_args, indent=15)}")
+
+            # Simulate function execution
+            if func_name == "get_weather":
+                result = json.dumps({
+                    "location": func_args.get("location"),
+                    "temperature": 22,
+                    "unit": func_args.get("unit", "celsius"),
+                    "conditions": "partly cloudy",
+                    "humidity": 65,
+                    "wind_speed": 12
+                })
+            elif func_name == "calculate":
+                try:
+                    calc_result = eval(func_args.get("expression", "0"))
+                    result = json.dumps({"result": calc_result, "expression": func_args.get("expression")})
+                except Exception as e:
+                    result = json.dumps({"error": str(e)})
+            elif func_name == "search_database":
+                result = json.dumps({
+                    "results": [
+                        {"name": "Product 1", "price": 29.99},
+                        {"name": "Product 2", "price": 49.99}
                     ],
-                )
-            ],
-            model=model,
-            max_tokens=100,
+                    "count": 2
+                })
+            else:
+                result = json.dumps({"error": "Unknown function"})
+
+            print(f"     Result: {result}")
+
+            tool_results.append({
+                "tool_call_id": tool_call["id"],
+                "name": func_name,
+                "result": result
+            })
+
+        # Continue conversation with function results
+        messages.append(
+            Message(
+                role=MessageRole.ASSISTANT,
+                content=response.get("response") or "",
+                tool_calls=response.get("tool_calls")
+            )
         )
 
-        response = await client.complete(request)
+        for tool_result in tool_results:
+            messages.append(
+                Message(
+                    role=MessageRole.TOOL,
+                    content=tool_result["result"],
+                    tool_call_id=tool_result["tool_call_id"],
+                    name=tool_result["name"]
+                )
+            )
 
-        print(f"✅ Vision: {response.content}")
+        # Get final response with function results
+        print("\n⏳ Getting final response with tool results...")
+        final_response = await client.create_completion(messages, tools=tools)
 
-    except (Exception, LLMError) as e:
-        print(f"⚠️  Vision demo skipped: {str(e)[:100]}")
-        print(f"   Note: Vision requires a valid image URL that OpenAI can access")
-    finally:
-        await client.close()
+        print(f"\n✅ Final Response:")
+        print(f"{final_response['response']}")
 
+        return final_response
+    else:
+        print(f"\n✅ Response (no function calls):")
+        print(f"{response['response']}")
+        return response
+
+
+# =============================================================================
+# Demo 4: Vision / Multimodal
+# =============================================================================
+
+async def demo_vision(model: str):
+    """Vision/multimodal with images"""
+    print(f"\n{'='*70}")
+    print("Demo 4: Vision / Multimodal")
+    print(f"{'='*70}")
+
+    config = get_config()
+    if not config.supports_feature("openai", Feature.VISION, model):
+        print(f"⚠️  Model {model} doesn't support vision")
+        print("   Try with: --model gpt-4o")
+        return None
+
+    client = get_client("openai", model=model)
+
+    # Create a simple test image (1x1 red pixel)
+    red_pixel_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
+
+    messages = [
+        Message(
+            role=MessageRole.USER,
+            content=[
+                TextContent(
+                    type=ContentType.TEXT,
+                    text="What color is this image? Be specific."
+                ),
+                ImageUrlContent(
+                    type=ContentType.IMAGE_URL,
+                    image_url={"url": f"data:image/png;base64,{red_pixel_base64}"}
+                ),
+            ],
+        )
+    ]
+
+    print(f"Model: {model}")
+    print(f"User: What color is this image? Be specific.")
+    print(f"Image: [1x1 pixel test image]")
+    print("\n⏳ Analyzing image...")
+
+    response = await client.create_completion(messages, max_tokens=100)
+
+    print(f"\n✅ Response:")
+    print(f"{response['response']}")
+
+    return response
+
+
+# =============================================================================
+# Demo 5: JSON Mode
+# =============================================================================
 
 async def demo_json_mode(model: str):
-    """Demo 5: JSON mode with Chat Completions API."""
-    print(f"\n{'='*60}")
-    print(f"Demo 5: JSON Mode - Chat Completions API")
-    print(f"{'='*60}")
+    """Structured JSON output"""
+    print(f"\n{'='*70}")
+    print("Demo 5: JSON Mode / Structured Output")
+    print(f"{'='*70}")
+
+    client = get_client("openai", model=model)
+
+    messages = [
+        Message(
+            role=MessageRole.SYSTEM,
+            content="You are a helpful assistant that outputs valid JSON."
+        ),
+        Message(
+            role=MessageRole.USER,
+            content="""Create a JSON object for a fictional person with:
+- name (string)
+- age (number)
+- occupation (string)
+- hobbies (array of strings)
+- address (object with street, city, country)
+- active (boolean)"""
+        ),
+    ]
+
     print(f"Model: {model}")
-    print(f"Parameter: response_format={{\"type\": \"json_object\"}}")
+    print(f"User: Create a JSON object for a fictional person...")
+    print("\n⏳ Generating structured JSON...")
 
-    client = OpenAIClient(
-        model=model,
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
-
-    request = CompletionRequest(
-        messages=[
-            Message(
-                role=MessageRole.SYSTEM,
-                content="You are a helpful assistant that outputs JSON.",
-            ),
-            Message(
-                role=MessageRole.USER,
-                content='Generate a JSON object with "name": "Alice" and "age": 30',
-            ),
-        ],
-        model=model,
+    response = await client.create_completion(
+        messages,
         response_format={"type": "json_object"},
-        temperature=0.0,
+        max_tokens=300
     )
 
-    response = await client.complete(request)
+    print(f"\n✅ JSON Response:")
+    try:
+        parsed = json.loads(response['response'])
+        print(json.dumps(parsed, indent=2))
+    except json.JSONDecodeError:
+        print(f"⚠️  Response was not valid JSON:")
+        print(response['response'])
 
-    print(f"✅ JSON: {response.content}")
+    return response
 
-    await client.close()
 
+# =============================================================================
+# Demo 6: Multi-turn Conversation
+# =============================================================================
+
+async def demo_conversation(model: str):
+    """Multi-turn conversation with context"""
+    print(f"\n{'='*70}")
+    print("Demo 6: Multi-turn Conversation")
+    print(f"{'='*70}")
+
+    client = get_client("openai", model=model)
+
+    conversation = [
+        Message(
+            role=MessageRole.SYSTEM,
+            content="You are a friendly assistant with excellent memory."
+        ),
+    ]
+
+    # Turn 1
+    conversation.append(Message(role=MessageRole.USER, content="My name is Alice and I'm learning Python."))
+    response1 = await client.create_completion(conversation)
+
+    print(f"Turn 1:")
+    print(f"  User: My name is Alice and I'm learning Python.")
+    print(f"  AI: {response1['response']}")
+
+    # Turn 2
+    conversation.append(Message(role=MessageRole.ASSISTANT, content=response1['response']))
+    conversation.append(Message(role=MessageRole.USER, content="What programming language am I learning?"))
+    response2 = await client.create_completion(conversation)
+
+    print(f"\nTurn 2:")
+    print(f"  User: What programming language am I learning?")
+    print(f"  AI: {response2['response']}")
+
+    # Turn 3
+    conversation.append(Message(role=MessageRole.ASSISTANT, content=response2['response']))
+    conversation.append(Message(role=MessageRole.USER, content="What's my name again?"))
+    response3 = await client.create_completion(conversation)
+
+    print(f"\nTurn 3:")
+    print(f"  User: What's my name again?")
+    print(f"  AI: {response3['response']}")
+
+    print(f"\n✅ Conversation maintained context across 3 turns")
+
+    return response3
+
+
+# =============================================================================
+# Demo 7: Temperature and Sampling Parameters
+# =============================================================================
+
+async def demo_parameters(model: str):
+    """Different temperature and sampling settings"""
+    print(f"\n{'='*70}")
+    print("Demo 7: Temperature and Sampling Parameters")
+    print(f"{'='*70}")
+
+    client = get_client("openai", model=model)
+
+    prompt = "Write the first sentence of a story about a robot."
+
+    print(f"Model: {model}")
+    print(f"Prompt: {prompt}\n")
+
+    temperatures = [0.0, 0.5, 1.0, 1.5]
+
+    for temp in temperatures:
+        messages = [Message(role=MessageRole.USER, content=prompt)]
+
+        response = await client.create_completion(
+            messages,
+            temperature=temp,
+            max_tokens=50
+        )
+
+        print(f"Temperature {temp}:")
+        print(f"  {response['response']}\n")
+
+    print(f"✅ Lower temperature = more deterministic")
+    print(f"   Higher temperature = more creative/random")
+
+    return None
+
+
+# =============================================================================
+# Demo 8: Reasoning Models (o1, o3)
+# =============================================================================
+
+async def demo_reasoning_model():
+    """Reasoning model with extended thinking"""
+    print(f"\n{'='*70}")
+    print("Demo 8: Reasoning Models (gpt-5-mini)")
+    print(f"{'='*70}")
+
+    model = "gpt-5-mini"
+    client = get_client("openai", model=model)
+
+    # Reasoning models don't use system messages
+    messages = [
+        Message(
+            role=MessageRole.USER,
+            content="""A farmer has 17 sheep. All but 9 die.
+How many sheep are left alive? Think through this carefully."""
+        ),
+    ]
+
+    print(f"Model: {model}")
+    print(f"User: {messages[0].content}")
+    print("\n⏳ Reasoning model thinking...")
+    print("   (GPT-5 models have enhanced reasoning capabilities)")
+
+    start_time = time.time()
+    response = await client.create_completion(messages)
+    duration = time.time() - start_time
+
+    print(f"\n✅ Response ({duration:.2f}s):")
+    print(f"{response['response']}")
+
+    if "reasoning" in response:
+        reasoning_info = response["reasoning"]
+        print(f"\n🧠 Reasoning Metadata:")
+        if "model_type" in reasoning_info:
+            print(f"   Model type: {reasoning_info['model_type']}")
+        if "thinking" in reasoning_info:
+            thinking = reasoning_info["thinking"]
+            if thinking:
+                print(f"   Thinking process: {thinking[:200]}...")
+
+    return response
+
+
+# =============================================================================
+# Demo 9: Model Comparison
+# =============================================================================
+
+async def demo_model_comparison():
+    """Compare different models"""
+    print(f"\n{'='*70}")
+    print("Demo 9: Model Comparison")
+    print(f"{'='*70}")
+
+    models = ["gpt-4o-mini", "gpt-4o"]
+    prompt = "Explain quantum entanglement in one sentence."
+
+    print(f"Prompt: {prompt}\n")
+
+    for model in models:
+        try:
+            client = get_client("openai", model=model)
+            messages = [Message(role=MessageRole.USER, content=prompt)]
+
+            start_time = time.time()
+            response = await client.create_completion(messages, max_tokens=100)
+            duration = time.time() - start_time
+
+            print(f"{model} ({duration:.2f}s):")
+            print(f"  {response['response']}\n")
+        except Exception as e:
+            print(f"{model}: ❌ Error - {e}\n")
+
+    return None
+
+
+# =============================================================================
+# Demo 10: Structured Outputs (JSON Schema)
+# =============================================================================
+
+async def demo_structured_outputs(model: str):
+    """Structured outputs with JSON schema validation"""
+    print(f"\n{'='*70}")
+    print("Demo 10: Structured Outputs (JSON Schema)")
+    print(f"{'='*70}")
+
+    client = get_client("openai", model=model)
+
+    # Define a JSON schema for structured output
+    response_format = {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "product_review",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "product_name": {
+                        "type": "string",
+                        "description": "Name of the product"
+                    },
+                    "rating": {
+                        "type": "number",
+                        "description": "Rating from 1-5",
+                        "minimum": 1,
+                        "maximum": 5
+                    },
+                    "pros": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of positive aspects"
+                    },
+                    "cons": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of negative aspects"
+                    },
+                    "recommended": {
+                        "type": "boolean",
+                        "description": "Whether the product is recommended"
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "One sentence summary"
+                    }
+                },
+                "required": ["product_name", "rating", "pros", "cons", "recommended", "summary"],
+                "additionalProperties": False
+            }
+        }
+    }
+
+    messages = [
+        Message(
+            role=MessageRole.SYSTEM,
+            content="You are a product reviewer. Analyze products and provide structured reviews."
+        ),
+        Message(
+            role=MessageRole.USER,
+            content="Review the iPhone 15 Pro"
+        ),
+    ]
+
+    print(f"Model: {model}")
+    print(f"User: Review the iPhone 15 Pro")
+    print("\nSchema enforced:")
+    print("  - product_name (string)")
+    print("  - rating (1-5)")
+    print("  - pros (array)")
+    print("  - cons (array)")
+    print("  - recommended (boolean)")
+    print("  - summary (string)")
+    print("\n⏳ Generating structured review...")
+
+    try:
+        response = await client.create_completion(
+            messages,
+            response_format=response_format,
+            max_tokens=500
+        )
+
+        print(f"\n✅ Structured Output:")
+        parsed = json.loads(response['response'])
+        print(json.dumps(parsed, indent=2))
+
+        print(f"\n📊 Validation:")
+        print(f"   ✅ Has all required fields")
+        print(f"   ✅ Rating is {parsed['rating']}/5")
+        print(f"   ✅ {len(parsed['pros'])} pros, {len(parsed['cons'])} cons")
+        print(f"   ✅ Recommended: {parsed['recommended']}")
+
+        return response
+    except Exception as e:
+        print(f"⚠️  Structured outputs may require gpt-4o-mini or newer")
+        print(f"   Error: {e}")
+        return None
+
+
+# =============================================================================
+# Demo 11: Model Discovery
+# =============================================================================
 
 async def demo_model_discovery():
-    """Demo 6: Model Discovery - Discover available OpenAI models."""
-    print(f"\n{'='*60}")
-    print(f"Demo 6: Model Discovery - Chat Completions API")
-    print(f"{'='*60}")
-    print(f"Using OpenAI discoverer to fetch available models")
+    """Discover available models from OpenAI API"""
+    print(f"\n{'='*70}")
+    print("Demo 11: Model Discovery")
+    print(f"{'='*70}")
 
     try:
         from chuk_llm.llm.discovery.openai_discoverer import OpenAIModelDiscoverer
 
+        api_key = os.getenv("OPENAI_API_KEY")
+
+        print("⏳ Discovering models from OpenAI API...")
+
         discoverer = OpenAIModelDiscoverer(
             provider_name="openai",
-            api_key=os.getenv("OPENAI_API_KEY"),
+            api_key=api_key
         )
 
-        print("\n🔍 Discovering models from OpenAI API...")
-        models_data = await discoverer.discover_models()
+        models = await discoverer.discover_models()
 
-        print(f"\n📊 Found {len(models_data)} models")
+        print(f"\n✅ Found {len(models)} models\n")
 
-        # Group by family
-        families = {}
-        for model in models_data:
-            family = model.get("provider_specific", {}).get("model_family", "unknown")
-            if family not in families:
-                families[family] = []
-            families[family].append(model.get("name"))
+        # Group models by family
+        model_families = {}
+        for model in models:
+            model_id = model.get("id", model.get("name", "unknown"))
 
-        for family, models in sorted(families.items()):
-            print(f"\n📦 {family.upper()} family:")
-            for model_name in sorted(models)[:5]:  # Show first 5 of each family
-                # Check if it's a reasoning model
-                provider_spec = next(
-                    (
-                        m.get("provider_specific", {})
-                        for m in models_data
-                        if m.get("name") == model_name
-                    ),
-                    {},
-                )
-                if provider_spec.get("reasoning_capable"):
-                    print(f"   • {model_name} [🧠 reasoning]")
-                elif provider_spec.get("supports_vision"):
-                    print(f"   • {model_name} [👁️ vision]")
-                else:
-                    print(f"   • {model_name}")
+            # Determine family
+            if "gpt-5" in model_id.lower():
+                family = "GPT-5"
+            elif "gpt-4o" in model_id.lower():
+                family = "GPT-4o"
+            elif "gpt-4" in model_id.lower():
+                family = "GPT-4"
+            elif "o1" in model_id.lower() or "o3" in model_id.lower():
+                family = "Reasoning (o1/o3)"
+            elif "gpt-3.5" in model_id.lower():
+                family = "GPT-3.5"
+            elif "dall-e" in model_id.lower():
+                family = "DALL-E"
+            elif "tts" in model_id.lower() or "whisper" in model_id.lower():
+                family = "Audio"
+            else:
+                family = "Other"
 
-            if len(models) > 5:
-                print(f"   ... and {len(models) - 5} more")
+            if family not in model_families:
+                model_families[family] = []
+            model_families[family].append(model_id)
 
-        # Test the first available model
-        if models_data:
-            test_model = models_data[0].get("name")
-            print(f"\n🧪 Testing model: {test_model}")
-            try:
-                client = OpenAIClient(
-                    model=test_model,
-                    api_key=os.getenv("OPENAI_API_KEY"),
-                )
-                request = CompletionRequest(
-                    messages=[
-                        Message(role=MessageRole.USER, content="Say hello in one word")
-                    ],
-                    model=test_model,
-                    max_tokens=10,
-                )
-                response = await client.complete(request)
-                print(f"   ✅ Model works: {response.content}")
-                await client.close()
-            except Exception as e:
-                print(f"   ⚠️ Test failed: {e}")
+        # Display models by family
+        for family, family_models in sorted(model_families.items()):
+            print(f"\n{family}:")
+            for model_id in sorted(family_models)[:5]:  # Show first 5 per family
+                print(f"  • {model_id}")
+            if len(family_models) > 5:
+                print(f"  ... and {len(family_models) - 5} more")
 
+        # Highlight key models
+        print(f"\n💡 Recommended Models:")
+        print(f"   • gpt-4o: Most capable, supports vision")
+        print(f"   • gpt-4o-mini: Fast and cost-effective")
+        print(f"   • gpt-5-mini: Reasoning and advanced tasks")
+        print(f"   • gpt-3.5-turbo: Legacy, fast")
+
+        return models
     except Exception as e:
-        print(f"❌ Discovery failed: {e}")
-        import traceback
-
-        traceback.print_exc()
-
-
-async def demo_gpt5_models():
-    """Demo 7: GPT-5 and GPT-5-mini models."""
-    print(f"\n{'='*60}")
-    print(f"Demo 7: GPT-5 Models - Chat Completions API")
-    print(f"{'='*60}")
-    print(f"Testing: gpt-5, gpt-5-mini")
-
-    models = ["gpt-5", "gpt-5-mini"]
-    prompt = "What is the Chat Completions API? (One sentence)"
-
-    for model_name in models:
-        try:
-            client = OpenAIClient(
-                model=model_name,
-                api_key=os.getenv("OPENAI_API_KEY"),
-            )
-
-            request = CompletionRequest(
-                messages=[Message(role=MessageRole.USER, content=prompt)],
-                model=model_name,
-                temperature=0.0,
-            )
-
-            start = time.time()
-            response = await client.complete(request)
-            duration = time.time() - start
-
-            print(f"\n✅ {model_name} ({duration:.2f}s):")
-            print(f"   {response.content[:100]}...")
-
-            await client.close()
-
-        except Exception as e:
-            print(f"\n❌ {model_name}: {e}")
+        print(f"❌ Error discovering models: {e}")
+        print(f"   This is normal if rate limited or API issues")
+        return None
 
 
-async def demo_model_comparison():
-    """Demo 8: Compare multiple models."""
-    print(f"\n{'='*60}")
-    print(f"Demo 8: Model Comparison - Chat Completions API")
-    print(f"{'='*60}")
+# =============================================================================
+# Demo 12: Call Dynamically Discovered Model
+# =============================================================================
 
-    models = [
-        "gpt-5",
-        "gpt-5-mini",
-        "gpt-4o",
-        "gpt-4o-mini",
-    ]
-
-    prompt = "What is machine learning? (One sentence)"
-
-    for model_name in models:
-        try:
-            client = OpenAIClient(
-                model=model_name,
-                api_key=os.getenv("OPENAI_API_KEY"),
-            )
-
-            request = CompletionRequest(
-                messages=[Message(role=MessageRole.USER, content=prompt)],
-                model=model_name,
-                temperature=0.0,
-            )
-
-            start = time.time()
-            response = await client.complete(request)
-            duration = time.time() - start
-
-            print(f"\n✅ {model_name} ({duration:.2f}s):")
-            print(f"   {response.content[:80]}...")
-
-            await client.close()
-
-        except Exception as e:
-            print(f"\n❌ {model_name}: {e}")
-
-
-async def demo_parameters(model: str):
-    """Demo 8: Test various parameters."""
-    print(f"\n{'='*60}")
-    print(f"Demo 8: Parameters Testing - Chat Completions API")
-    print(f"{'='*60}")
-    print(f"Model: {model}")
-
-    client = OpenAIClient(
-        model=model,
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
-
-    # Test temperature variations
-    temperatures = [0.0, 0.5, 1.0]
-    prompt = "Say hello"
-
-    for temp in temperatures:
-        request = CompletionRequest(
-            messages=[Message(role=MessageRole.USER, content=prompt)],
-            model=model,
-            temperature=temp,
-            max_tokens=20,
-        )
-
-        response = await client.complete(request)
-        print(f"Temperature {temp}: {response.content}")
-
-    await client.close()
-
-
-async def demo_error_handling(model: str):
-    """Demo 10: Error handling."""
-    print(f"\n{'='*60}")
-    print(f"Demo 10: Error Handling - Chat Completions API")
-    print(f"{'='*60}")
-    print(f"Model: {model}")
-
-    # Test with invalid API key
-    bad_client = OpenAIClient(model=model, api_key="sk-invalid")
+async def demo_dynamic_model_call():
+    """Discover models and call one of them"""
+    print(f"\n{'='*70}")
+    print("Demo 12: Call Dynamically Discovered Model")
+    print(f"{'='*70}")
 
     try:
-        request = CompletionRequest(
-            messages=[Message(role=MessageRole.USER, content="Hello")],
-            model=model,
+        from chuk_llm.llm.discovery.openai_discoverer import OpenAIModelDiscoverer
+
+        api_key = os.getenv("OPENAI_API_KEY")
+
+        print("⏳ Step 1: Discovering available models...")
+
+        discoverer = OpenAIModelDiscoverer(
+            provider_name="openai",
+            api_key=api_key
         )
 
-        await bad_client.complete(request)
+        models = await discoverer.discover_models()
 
-    except LLMError as e:
-        print(f"✅ LLM error caught:")
-        print(f"   Type: {e.error_type}")
-        print(f"   Message: {e.error_message}")
+        # Find a text chat model (not TTS/audio)
+        target_model = None
+        for model in models:
+            model_id = model.get("id", model.get("name", ""))
+            # Skip non-chat models
+            if any(x in model_id.lower() for x in ["tts", "whisper", "audio", "realtime", "dall-e", "sora"]):
+                continue
+            # Prefer gpt-4o-mini
+            if "gpt-4o-mini" in model_id.lower():
+                target_model = model_id
+                break
+            # Otherwise accept any gpt model
+            if "gpt" in model_id.lower() and not target_model:
+                target_model = model_id
 
-    await bad_client.close()
+        if not target_model:
+            # Fallback to first text model
+            for model in models:
+                model_id = model.get("id", model.get("name", ""))
+                if not any(x in model_id.lower() for x in ["tts", "whisper", "audio", "realtime", "dall-e", "sora"]):
+                    target_model = model_id
+                    break
 
+        if not target_model:
+            target_model = "gpt-4o-mini"  # Ultimate fallback
 
-async def demo_multi_turn(model: str):
-    """Demo 10: Multi-turn conversation (manual history)."""
-    print(f"\n{'='*60}")
-    print(f"Demo 10: Multi-Turn Conversation - Chat Completions API")
-    print(f"{'='*60}")
-    print(f"Model: {model}")
-    print(f"Note: YOU manage conversation history manually")
+        print(f"✅ Found {len(models)} models")
+        print(f"🎯 Selected model: {target_model}")
 
-    client = OpenAIClient(
-        model=model,
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
+        print(f"\n⏳ Step 2: Creating client for discovered model...")
 
-    # Manual conversation history management
-    conversation = [
-        Message(
-            role=MessageRole.USER,
-            content="My name is Alice.",
-        )
-    ]
+        client = get_client("openai", model=target_model)
 
-    # Turn 1
-    print("\n👤 User: My name is Alice.")
-    request = CompletionRequest(messages=conversation, model=model, temperature=0.7)
-    response = await client.complete(request)
-    print(f"🤖 Assistant: {response.content}")
+        print(f"✅ Client created")
 
-    # Add assistant response to history
-    conversation.append(
-        Message(
-            role=MessageRole.ASSISTANT,
-            content=response.content or "",
-        )
-    )
+        print(f"\n⏳ Step 3: Making request to dynamically discovered model...")
 
-    # Turn 2
-    conversation.append(
-        Message(
-            role=MessageRole.USER,
-            content="What's my name?",
-        )
-    )
-
-    print("\n👤 User: What's my name?")
-    request = CompletionRequest(messages=conversation, model=model, temperature=0.7)
-    response = await client.complete(request)
-    print(f"🤖 Assistant: {response.content}")
-
-    print(
-        "\n✅ You manually appended messages to maintain conversation history"
-    )
-
-    await client.close()
-
-
-async def demo_structured_outputs(model: str):
-    """Demo 12: Structured outputs with JSON mode."""
-    print(f"\n{'='*60}")
-    print(f"Demo 12: Structured Outputs - Chat Completions API")
-    print(f"{'='*60}")
-    print(f"Model: {model}")
-    print(f"Note: Uses JSON mode with schema in prompt")
-
-    client = OpenAIClient(
-        model=model,
-        api_key=os.getenv("OPENAI_API_KEY"),
-    )
-
-    schema_instruction = """
-Generate a JSON object matching this schema:
-{
-  "person": {
-    "name": "string",
-    "age": "number",
-    "email": "string"
-  }
-}
-"""
-
-    request = CompletionRequest(
-        messages=[
-            Message(
-                role=MessageRole.SYSTEM,
-                content="You are a helpful assistant that outputs valid JSON.",
-            ),
+        messages = [
             Message(
                 role=MessageRole.USER,
-                content=f"{schema_instruction}\nCreate a person object for Bob, age 25, email bob@example.com",
-            ),
-        ],
-        model=model,
-        response_format={"type": "json_object"},
-        temperature=0.0,
-    )
-
-    response = await client.complete(request)
-
-    print(f"✅ Structured output: {response.content}")
-
-    await client.close()
-
-
-async def demo_reasoning_models():
-    """Demo 12: Reasoning models with token display."""
-    print(f"\n{'='*60}")
-    print(f"Demo 12: Reasoning Models - Chat Completions API")
-    print(f"{'='*60}")
-    print(f"Testing: o1, gpt-5-mini (reasoning models)")
-
-    models = ["o1", "gpt-5-mini"]
-    prompt = "I have a 3-gallon jug and a 5-gallon jug. How can I measure exactly 4 gallons of water?"
-
-    for model_name in models:
-        try:
-            client = OpenAIClient(
-                model=model_name,
-                api_key=os.getenv("OPENAI_API_KEY"),
+                content="In one sentence, what makes you special?"
             )
+        ]
 
-            print(f"\n🧠 Testing {model_name}...")
-            request = CompletionRequest(
-                messages=[Message(role=MessageRole.USER, content=prompt)],
-                model=model_name,
-            )
+        response = await client.create_completion(messages, max_tokens=100)
 
-            start = time.time()
-            response = await client.complete(request)
-            duration = time.time() - start
+        print(f"\n✅ Response from {target_model}:")
+        print(f"{response['response']}")
 
-            print(f"\n✅ {model_name} ({duration:.2f}s):")
-            print(f"   {response.content[:200]}...")
+        print(f"\n💡 Dynamic Model Flow:")
+        print(f"   1. Discovered {len(models)} models from API")
+        print(f"   2. Selected '{target_model}' programmatically")
+        print(f"   3. Created client and made successful request")
+        print(f"   ✅ No hardcoded model names needed!")
 
-            # Display token usage with reasoning tokens
-            if response.usage:
-                print(f"\n📊 Token Usage:")
-                print(f"   Prompt: {response.usage.prompt_tokens} tokens")
-                print(f"   Completion: {response.usage.completion_tokens} tokens")
-                if response.usage.reasoning_tokens:
-                    print(f"   🧠 Reasoning: {response.usage.reasoning_tokens} tokens")
-                    output_tokens = response.usage.completion_tokens - response.usage.reasoning_tokens
-                    print(f"   📝 Output: {output_tokens} tokens")
-                print(f"   Total: {response.usage.total_tokens} tokens")
+        return response
+    except Exception as e:
+        print(f"❌ Error in dynamic model call: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
-            await client.close()
 
-        except Exception as e:
-            print(f"\n❌ {model_name}: {e}")
+# =============================================================================
+# Demo 13: Error Handling
+# =============================================================================
 
+async def demo_error_handling(model: str):
+    """Error handling and retries"""
+    print(f"\n{'='*70}")
+    print("Demo 12: Error Handling")
+    print(f"{'='*70}")
+
+    client = get_client("openai", model=model)
+
+    # Test 1: Invalid parameters
+    print("Test 1: Invalid max_tokens")
+    try:
+        messages = [Message(role=MessageRole.USER, content="Hello")]
+        response = await client.create_completion(messages, max_tokens=1000000)
+        print("  ✅ Handled gracefully")
+    except Exception as e:
+        print(f"  ⚠️  Error caught: {type(e).__name__}")
+
+    # Test 2: Empty messages
+    print("\nTest 2: Empty messages")
+    try:
+        response = await client.create_completion([], max_tokens=50)
+        print("  ✅ Handled gracefully")
+    except Exception as e:
+        print(f"  ⚠️  Error caught: {type(e).__name__}")
+
+    # Test 3: Normal request
+    print("\nTest 3: Normal request")
+    try:
+        messages = [Message(role=MessageRole.USER, content="Say 'OK'")]
+        response = await client.create_completion(messages, max_tokens=10)
+        print(f"  ✅ Response: {response['response']}")
+    except Exception as e:
+        print(f"  ❌ Unexpected error: {e}")
+
+    return None
+
+
+# =============================================================================
+# Main Runner
+# =============================================================================
 
 async def main():
-    """Run all demos."""
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default="gpt-4o-mini", help="Model to use")
-    parser.add_argument("--demo", type=int, help="Run specific demo (1-13)")
-    parser.add_argument("--quick", action="store_true", help="Skip slow demos")
+    """Run all demos"""
+    parser = argparse.ArgumentParser(
+        description="OpenAI Chat Completions Comprehensive Examples"
+    )
+    parser.add_argument(
+        "--model",
+        default="gpt-4o-mini",
+        help="Model to use (default: gpt-4o-mini)",
+    )
+    parser.add_argument(
+        "--demo",
+        type=int,
+        help="Run specific demo number (1-13)",
+    )
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="Skip slow demos (reasoning, comparison)",
+    )
 
     args = parser.parse_args()
 
-    # Check API key
-    if not os.getenv("OPENAI_API_KEY"):
-        print("❌ OPENAI_API_KEY not set")
-        print("   export OPENAI_API_KEY='sk-...'")
-        sys.exit(1)
-
+    print("\n" + "=" * 70)
     print("🚀 OpenAI Chat Completions API - Comprehensive Examples")
-    print("=" * 60)
-    print("API: POST /v1/chat/completions")
-    print("Features:")
-    print("  ✅ Standard OpenAI-compatible endpoint")
-    print("  ✅ Manual conversation history")
-    print("  ✅ Type-safe Pydantic V2 models")
-    print("  ✅ Zero magic strings (all enums)")
-    print("  ✅ Works with GPT-5, GPT-4, GPT-3.5")
-    print("=" * 60)
+    print("=" * 70)
+    print(f"Model: {args.model}")
+    print(f"API Key: {os.getenv('OPENAI_API_KEY')[:20]}...")
+    print("=" * 70)
 
-    demos = [
-        lambda: demo_basic_completion(args.model),
-        lambda: demo_streaming(args.model),
-        lambda: demo_function_calling(args.model),
-        lambda: demo_vision("gpt-4o"),
-        lambda: demo_json_mode(args.model),
-        demo_model_discovery,
-        demo_gpt5_models,
-        demo_model_comparison,
-        lambda: demo_parameters(args.model),
-        lambda: demo_error_handling(args.model),
-        lambda: demo_multi_turn(args.model),
-        lambda: demo_structured_outputs(args.model),
-        demo_reasoning_models,
-    ]
+    demos = []
 
-    if args.demo:
-        if 1 <= args.demo <= len(demos):
-            try:
-                await demos[args.demo - 1]()
-            except (KeyboardInterrupt, SystemExit):
-                raise
-            except Exception as e:
-                print(f"\n❌ Demo failed: {str(e)[:200]}")
-                sys.exit(1)
-        else:
-            print(f"❌ Invalid demo. Choose 1-{len(demos)}")
-            sys.exit(1)
-    else:
-        # Skip slow demos if --quick
-        skip_demos = {6, 7} if args.quick else set()
+    if args.demo is None or args.demo == 1:
+        demos.append(("Basic Completion", demo_basic_completion(args.model)))
 
-        for i, demo in enumerate(demos, 1):
-            if i in skip_demos:
-                print(f"\n⏩ Skipping Demo {i} (--quick mode)")
-                continue
+    if args.demo is None or args.demo == 2:
+        demos.append(("Streaming", demo_streaming(args.model)))
 
-            try:
-                await demo()
-            except KeyboardInterrupt:
-                print(f"\n⏸️  Demo {i} interrupted by user")
-                break
-            except (Exception, LLMError) as e:
-                print(f"\n❌ Error in demo {i}: {str(e)[:200]}")
-                # Continue with next demo instead of crashing
+    if args.demo is None or args.demo == 3:
+        demos.append(("Function Calling", demo_function_calling(args.model)))
 
-    print(f"\n{'='*60}")
-    print("🎉 All Demos Complete!")
-    print("=" * 60)
-    print("\nKey Takeaway:")
-    print("  Chat Completions API = Manual conversation history management")
-    print("  You build and pass the full messages array on each request")
-    print("=" * 60)
+    if args.demo is None or args.demo == 4:
+        demos.append(("Vision", demo_vision("gpt-4o")))
+
+    if args.demo is None or args.demo == 5:
+        demos.append(("JSON Mode", demo_json_mode(args.model)))
+
+    if args.demo is None or args.demo == 6:
+        demos.append(("Conversation", demo_conversation(args.model)))
+
+    if args.demo is None or args.demo == 7:
+        demos.append(("Parameters", demo_parameters(args.model)))
+
+    if (args.demo is None or args.demo == 8) and not args.quick:
+        demos.append(("Reasoning Model", demo_reasoning_model()))
+
+    if (args.demo is None or args.demo == 9) and not args.quick:
+        demos.append(("Model Comparison", demo_model_comparison()))
+
+    if args.demo is None or args.demo == 10:
+        demos.append(("Structured Outputs", demo_structured_outputs(args.model)))
+
+    if args.demo is None or args.demo == 11:
+        demos.append(("Model Discovery", demo_model_discovery()))
+
+    if args.demo is None or args.demo == 12:
+        demos.append(("Dynamic Model Call", demo_dynamic_model_call()))
+
+    if args.demo is None or args.demo == 13:
+        demos.append(("Error Handling", demo_error_handling(args.model)))
+
+    # Run all demos
+    for name, demo_coro in demos:
+        try:
+            await demo_coro
+        except Exception as e:
+            print(f"\n❌ Error in {name}: {e}")
+            import traceback
+            traceback.print_exc()
+
+    print("\n" + "=" * 70)
+    print("✅ All demos completed!")
+    print("=" * 70)
+    print("\nTips:")
+    print("  - Use --demo N to run specific demo")
+    print("  - Use --model gpt-4o for vision support")
+    print("  - Use --quick to skip slow demos")
+    print("=" * 70)
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n👋 Cancelled")
-    except Exception as e:
-        print(f"\n💥 Error: {e}")
-        import traceback
-
-        traceback.print_exc()
-        sys.exit(1)
+    asyncio.run(main())

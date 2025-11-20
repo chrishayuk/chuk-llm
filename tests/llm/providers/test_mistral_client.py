@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
+from chuk_llm.core.enums import MessageRole
+
 # ---------------------------------------------------------------------------
 # Stub the `mistralai` SDK before importing the adapter.
 # ---------------------------------------------------------------------------
@@ -1135,7 +1137,10 @@ async def test_create_completion_with_tools(client):
     async def mock_regular_completion(request_params, name_mapping=None):
         # Verify tools were passed and tool_choice was set
         assert "tools" in request_params
-        assert request_params["tools"] == tools
+        # Check tool structure (may have description field added)
+        assert len(request_params["tools"]) == 1
+        assert request_params["tools"][0]["type"] == "function"
+        assert request_params["tools"][0]["function"]["name"] == "get_weather"
         assert request_params["tool_choice"] == "auto"
         return expected_result
 

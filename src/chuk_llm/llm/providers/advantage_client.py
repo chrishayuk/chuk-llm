@@ -59,6 +59,8 @@ class AdvantageClient(OpenAILLMClient):
         # Reinitialize the config mixin with correct provider
         from chuk_llm.llm.providers._config_mixin import ConfigAwareProviderMixin
 
+from chuk_llm.core.enums import MessageRole
+
         ConfigAwareProviderMixin.__init__(self, "advantage", model)
 
         log.info(
@@ -139,7 +141,7 @@ class AdvantageClient(OpenAILLMClient):
             new_messages.append(msg.copy())
 
         # If first message is already system, prepend to it
-        if new_messages and new_messages[0].get("role") == "system":
+        if new_messages and new_messages[0].get("role") == MessageRole.SYSTEM.value:
             existing_content = new_messages[0]["content"]
             new_messages[0]["content"] = f"{function_prompt}\n\n{existing_content}"
             log.debug(

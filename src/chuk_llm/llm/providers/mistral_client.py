@@ -324,11 +324,12 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
             # Extract tool calls if present and supported
             if hasattr(message, "tool_calls") and message.tool_calls:
                 if self.supports_feature("tools"):
+                    from chuk_llm.core.enums import ToolType
                     for tc in message.tool_calls:
                         tool_calls.append(
                             {
                                 "id": tc.id,
-                                "type": tc.type,
+                                "type": ToolType.FUNCTION,  # Always use enum value
                                 "function": {
                                     "name": tc.function.name,
                                     "arguments": tc.function.arguments,
@@ -456,7 +457,10 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
             AsyncIterator for streaming, awaitable for non-streaming
         """
         # Handle backward compatibility
-        from chuk_llm.llm.core.base import _ensure_pydantic_messages, _ensure_pydantic_tools
+        from chuk_llm.llm.core.base import (
+            _ensure_pydantic_messages,
+            _ensure_pydantic_tools,
+        )
         messages = _ensure_pydantic_messages(messages)
         tools = _ensure_pydantic_tools(tools)
 
@@ -612,9 +616,12 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                                                     # Mark as complete and add to current chunk
                                                     tool_call_data["complete"] = True
 
+                                                    from chuk_llm.core.enums import (
+                                                        ToolType,
+                                                    )
                                                     tool_call = {
                                                         "id": tool_call_data["id"],
-                                                        "type": "function",
+                                                        "type": ToolType.FUNCTION,  # Always use enum value
                                                         "function": {
                                                             "name": tool_call_data[
                                                                 "name"
