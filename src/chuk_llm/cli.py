@@ -128,10 +128,8 @@ def trigger_discovery_for_provider(provider: str, quiet: bool = True) -> bool:
                     discovery_config = DiscoveryConfig(
                         enabled=True,
                         discoverer_type=discovery_data.get("discoverer_type", "openai"),
-                        cache_timeout=0
-                        if not quiet
-                        else discovery_data.get(
-                            "cache_timeout", 300
+                        cache_timeout=(
+                            0 if not quiet else discovery_data.get("cache_timeout", 300)
                         ),  # Force refresh in CLI
                         inference_config=discovery_data.get("inference_config", {}),
                         discoverer_config=discovery_data.get("discoverer_config", {}),

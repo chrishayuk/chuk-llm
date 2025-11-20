@@ -29,17 +29,28 @@ def _ensure_pydantic_messages(messages: list) -> list:
 
     pydantic_messages = []
     for msg in messages:
-        role = MessageRole(msg["role"]) if isinstance(msg.get("role"), str) else msg.get("role")
+        role = (
+            MessageRole(msg["role"])
+            if isinstance(msg.get("role"), str)
+            else msg.get("role")
+        )
         content = msg.get("content")
 
         # Convert content if it's a list of dicts
         if isinstance(content, list) and content and isinstance(content[0], dict):
-            content_parts = []
+            content_parts: list[TextContent | ImageUrlContent] = []
             for part in content:
                 if part.get("type") == "text":
-                    content_parts.append(TextContent(type=ContentType.TEXT, text=part.get("text", "")))
+                    content_parts.append(
+                        TextContent(type=ContentType.TEXT, text=part.get("text", ""))
+                    )
                 elif part.get("type") == "image_url":
-                    content_parts.append(ImageUrlContent(type=ContentType.IMAGE_URL, image_url=part.get("image_url", {})))
+                    content_parts.append(
+                        ImageUrlContent(
+                            type=ContentType.IMAGE_URL,
+                            image_url=part.get("image_url", {}),
+                        )
+                    )
             content = content_parts if content_parts else content
 
         # Convert tool_calls if present
@@ -62,18 +73,20 @@ def _ensure_pydantic_messages(messages: list) -> list:
                         type=tc_type,
                         function=FunctionCall(
                             name=tc["function"]["name"],
-                            arguments=tc["function"].get("arguments", "{}")
-                        )
+                            arguments=tc["function"].get("arguments", "{}"),
+                        ),
                     )
                 )
 
-        pydantic_messages.append(Message(
-            role=role,
-            content=content,
-            tool_calls=tool_calls_list,
-            tool_call_id=msg.get("tool_call_id"),
-            name=msg.get("name")
-        ))
+        pydantic_messages.append(
+            Message(
+                role=role,
+                content=content,
+                tool_calls=tool_calls_list,
+                tool_call_id=msg.get("tool_call_id"),
+                name=msg.get("name"),
+            )
+        )
     return pydantic_messages
 
 
@@ -96,14 +109,16 @@ def _ensure_pydantic_tools(tools: list | None) -> list | None:
         if isinstance(tool_type, str):
             tool_type = ToolType(tool_type)
 
-        pydantic_tools.append(Tool(
-            type=tool_type,
-            function=ToolFunction(
-                name=tool["function"]["name"],
-                description=tool["function"].get("description", ""),
-                parameters=tool["function"].get("parameters", {})
+        pydantic_tools.append(
+            Tool(
+                type=tool_type,
+                function=ToolFunction(
+                    name=tool["function"]["name"],
+                    description=tool["function"].get("description", ""),
+                    parameters=tool["function"].get("parameters", {}),
+                ),
             )
-        ))
+        )
     return pydantic_tools
 
 

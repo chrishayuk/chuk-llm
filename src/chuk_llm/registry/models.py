@@ -30,10 +30,19 @@ class ModelSpec(BaseModel):
     It represents the minimal information needed to identify a model.
     """
 
-    provider: str = Field(..., description="Provider name (e.g., 'openai', 'anthropic')")
-    name: str = Field(..., description="Model identifier (e.g., 'gpt-4o', 'claude-3-5-sonnet-20241022')")
-    family: str | None = Field(None, description="Model family (e.g., 'gpt-4', 'claude-3')")
-    aliases: list[str] = Field(default_factory=list, description="Alternative names for this model")
+    provider: str = Field(
+        ..., description="Provider name (e.g., 'openai', 'anthropic')"
+    )
+    name: str = Field(
+        ...,
+        description="Model identifier (e.g., 'gpt-4o', 'claude-3-5-sonnet-20241022')",
+    )
+    family: str | None = Field(
+        None, description="Model family (e.g., 'gpt-4', 'claude-3')"
+    )
+    aliases: list[str] = Field(
+        default_factory=list, description="Alternative names for this model"
+    )
 
     model_config = ConfigDict(frozen=True)
 
@@ -55,15 +64,27 @@ class ModelCapabilities(BaseModel):
     """
 
     # Core capabilities (usually queryable or documented)
-    max_context: int | None = Field(None, description="Maximum context window in tokens")
-    max_output_tokens: int | None = Field(None, description="Maximum output tokens per request")
+    max_context: int | None = Field(
+        None, description="Maximum context window in tokens"
+    )
+    max_output_tokens: int | None = Field(
+        None, description="Maximum output tokens per request"
+    )
 
-    supports_tools: bool | None = Field(None, description="Function/tool calling support")
+    supports_tools: bool | None = Field(
+        None, description="Function/tool calling support"
+    )
     supports_vision: bool | None = Field(None, description="Image/vision input support")
     supports_audio: bool | None = Field(None, description="Audio input support")
-    supports_json_mode: bool | None = Field(None, description="Structured JSON output mode")
-    supports_streaming: bool | None = Field(None, description="Streaming response support")
-    supports_system_messages: bool | None = Field(None, description="System message support")
+    supports_json_mode: bool | None = Field(
+        None, description="Structured JSON output mode"
+    )
+    supports_streaming: bool | None = Field(
+        None, description="Streaming response support"
+    )
+    supports_system_messages: bool | None = Field(
+        None, description="System message support"
+    )
 
     # Parameter compatibility
     known_params: set[str] = Field(
@@ -72,12 +93,20 @@ class ModelCapabilities(BaseModel):
     )
 
     # Pricing (from provider APIs or static data)
-    input_cost_per_1m: float | None = Field(None, description="Cost per 1M input tokens (USD)")
-    output_cost_per_1m: float | None = Field(None, description="Cost per 1M output tokens (USD)")
+    input_cost_per_1m: float | None = Field(
+        None, description="Cost per 1M input tokens (USD)"
+    )
+    output_cost_per_1m: float | None = Field(
+        None, description="Cost per 1M output tokens (USD)"
+    )
 
     # Soft capabilities (inferred or measured)
-    quality_tier: QualityTier = Field(QualityTier.UNKNOWN, description="Quality tier classification")
-    speed_hint_tps: float | None = Field(None, description="Typical tokens per second (measured or estimated)")
+    quality_tier: QualityTier = Field(
+        QualityTier.UNKNOWN, description="Quality tier classification"
+    )
+    speed_hint_tps: float | None = Field(
+        None, description="Typical tokens per second (measured or estimated)"
+    )
 
     # Metadata
     source: str | None = Field(None, description="Where this capability data came from")
@@ -169,9 +198,15 @@ class ModelQuery(BaseModel):
             return False
 
         # Context constraints
-        if self.min_context and (not caps.max_context or caps.max_context < self.min_context):
+        if self.min_context and (
+            not caps.max_context or caps.max_context < self.min_context
+        ):
             return False
-        if self.max_context and caps.max_context and caps.max_context > self.max_context:
+        if (
+            self.max_context
+            and caps.max_context
+            and caps.max_context > self.max_context
+        ):
             return False
 
         # Cost constraints

@@ -126,9 +126,9 @@ async def discover_models(
             "name": model.name,
             "provider": model.provider,
             "family": model.family,
-            "size_gb": round(model.size_bytes / (1024**3), 1)
-            if model.size_bytes
-            else None,
+            "size_gb": (
+                round(model.size_bytes / (1024**3), 1) if model.size_bytes else None
+            ),
             "parameters": model.parameters,
             "context_length": model.context_length,
             "max_output_tokens": model.max_output_tokens,
@@ -233,9 +233,9 @@ async def update_provider_configuration(
             "default_model": text_models[0] if text_models else None,
             "families": list(families),
             "feature_summary": feature_counts,
-            "config_source": "custom"
-            if (inference_config or inference_config_path)
-            else "provider",
+            "config_source": (
+                "custom" if (inference_config or inference_config_path) else "provider"
+            ),
         }
 
     except Exception as e:
@@ -356,9 +356,9 @@ async def get_model_info(
                 "name": model.name,
                 "provider": model.provider,
                 "family": model.family,
-                "size_gb": round(model.size_bytes / (1024**3), 1)
-                if model.size_bytes
-                else None,
+                "size_gb": (
+                    round(model.size_bytes / (1024**3), 1) if model.size_bytes else None
+                ),
                 "size_bytes": model.size_bytes,
                 "parameters": model.parameters,
                 "context_length": model.context_length,

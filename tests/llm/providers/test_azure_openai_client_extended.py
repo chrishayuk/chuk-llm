@@ -165,7 +165,8 @@ def mock_env():
 def client(mock_configuration, mock_env, monkeypatch):
     """Create Azure OpenAI client for testing with configuration mocking"""
     from chuk_llm.llm.providers.azure_openai_client import AzureOpenAILLMClient
-    
+    from chuk_llm.core.models import Message, Tool
+
     cl = AzureOpenAILLMClient(
         model="gpt-4o-mini",
         api_key="test-key",
@@ -800,7 +801,10 @@ class TestAzureOpenAIErrorHandling:
     @pytest.mark.asyncio
     async def test_deployment_not_found_error(self, client):
         """Test handling of deployment not found errors."""
-        messages = [{"role": "user", "content": "Hello"}]
+        messages_dicts = [{"role": "user", "content": "Hello"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         # Mock deployment not found error
         error_response = {
@@ -825,7 +829,10 @@ class TestAzureOpenAIErrorHandling:
     @pytest.mark.asyncio
     async def test_max_tokens_exceeded_error(self, client):
         """Test handling of max tokens exceeded error."""
-        messages = [{"role": "user", "content": "Hello"}]
+        messages_dicts = [{"role": "user", "content": "Hello"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         # Mock max tokens error
         error_response = {
@@ -849,7 +856,10 @@ class TestAzureOpenAIErrorHandling:
     @pytest.mark.asyncio
     async def test_streaming_deployment_error(self, client):
         """Test streaming with deployment errors."""
-        messages = [{"role": "user", "content": "Hello"}]
+        messages_dicts = [{"role": "user", "content": "Hello"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         # Mock deployment error in streaming
         async def mock_create(**kwargs):
@@ -880,10 +890,10 @@ class TestAzureOpenAIToolCompatibility:
     def test_tool_name_sanitization_for_azure(self, client):
         """Test tool name sanitization for Azure OpenAI."""
         tools = [
-            {"type": "function", "function": {"name": "stdio.read_query"}},
-            {"type": "function", "function": {"name": "web.api:search"}},
-            {"type": "function", "function": {"name": "azure.resource@analyzer"}},
-            {"type": "function", "function": {"name": "db-connector.execute"}},
+            {"type": "function", "function": {"name": "stdio.read_query", "description": "stdio.read_query description", "parameters": {}}},
+            {"type": "function", "function": {"name": "web.api:search", "description": "web.api:search description", "parameters": {}}},
+            {"type": "function", "function": {"name": "azure.resource@analyzer", "description": "azure.resource@analyzer description", "parameters": {}}},
+            {"type": "function", "function": {"name": "db-connector.execute", "description": "db-connector.execute description", "parameters": {}}},
         ]
 
         # Mock the sanitization
@@ -895,10 +905,10 @@ class TestAzureOpenAIToolCompatibility:
                 "db_connector_execute": "db-connector.execute",
             }
             return [
-                {"type": "function", "function": {"name": "stdio_read_query"}},
-                {"type": "function", "function": {"name": "web_api_search"}},
-                {"type": "function", "function": {"name": "azure_resource_analyzer"}},
-                {"type": "function", "function": {"name": "db_connector_execute"}},
+                {"type": "function", "function": {"name": "stdio_read_query", "description": "stdio_read_query description", "parameters": {}}},
+                {"type": "function", "function": {"name": "web_api_search", "description": "web_api_search description", "parameters": {}}},
+                {"type": "function", "function": {"name": "azure_resource_analyzer", "description": "azure_resource_analyzer description", "parameters": {}}},
+                {"type": "function", "function": {"name": "db_connector_execute", "description": "db_connector_execute description", "parameters": {}}},
             ]
 
         client._sanitize_tool_names = mock_sanitize
@@ -1387,7 +1397,10 @@ class TestAzureOpenAIArgumentFormatting:
             return_value=mock_stream
         )
 
-        messages = [{"role": "user", "content": "Test"}]
+        messages_dicts = [{"role": "user", "content": "Test"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         chunks = []
         async for chunk in client._stream_completion_async(messages):
@@ -1436,7 +1449,10 @@ class TestAzureOpenAIJsonErrorHandling:
             return_value=mock_stream
         )
 
-        messages = [{"role": "user", "content": "Test"}]
+        messages_dicts = [{"role": "user", "content": "Test"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         chunks = []
         async for chunk in client._stream_completion_async(messages):
@@ -1462,7 +1478,10 @@ class TestAzureOpenAIJsonErrorHandling:
             return_value=mock_stream
         )
 
-        messages = [{"role": "user", "content": "Test"}]
+        messages_dicts = [{"role": "user", "content": "Test"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         chunks = []
         async for chunk in client._stream_completion_async(messages):
@@ -1479,7 +1498,10 @@ class TestAzureOpenAIJsonErrorHandling:
 
         client.async_client.chat.completions.create = mock_create
 
-        messages = [{"role": "user", "content": "Test"}]
+        messages_dicts = [{"role": "user", "content": "Test"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         chunks = []
         async for chunk in client._stream_completion_async(messages):
@@ -1502,7 +1524,10 @@ class TestAzureOpenAIRegularCompletionErrors:
     @pytest.mark.asyncio
     async def test_regular_completion_deployment_not_found(self, client):
         """Test deployment not found error in regular completion."""
-        messages = [{"role": "user", "content": "Hello"}]
+        messages_dicts = [{"role": "user", "content": "Hello"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         client.async_client.chat.completions.create = AsyncMock(
             side_effect=Exception(
@@ -1518,7 +1543,10 @@ class TestAzureOpenAIRegularCompletionErrors:
     @pytest.mark.asyncio
     async def test_regular_completion_tool_naming_error(self, client):
         """Test tool naming error in regular completion."""
-        messages = [{"role": "user", "content": "Hello"}]
+        messages_dicts = [{"role": "user", "content": "Hello"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         client.async_client.chat.completions.create = AsyncMock(
             side_effect=Exception(
@@ -1693,7 +1721,10 @@ class TestAzureOpenAIAdditionalCoverage:
             return_value=mock_stream
         )
 
-        messages = [{"role": "user", "content": "Test"}]
+        messages_dicts = [{"role": "user", "content": "Test"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         chunks = []
         async for chunk in client._stream_completion_async(messages):
@@ -1716,8 +1747,11 @@ class TestAzureOpenAIAdditionalCoverage:
         # Mock that deployment has no explicit config
         client._has_explicit_deployment_config = lambda deployment: False
 
-        messages = [{"role": "user", "content": "Hello"}]
-        tools = [{"type": "function", "function": {"name": "test_tool"}}]
+        messages_dicts = [{"role": "user", "content": "Hello"}]
+        tools = [{"type": "function", "function": {"name": "test_tool", "description": "test_tool description", "parameters": {}}}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         # This should trigger smart defaults path in validation
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
@@ -1798,7 +1832,10 @@ class TestAzureOpenAIAdditionalCoverage:
             return_value=mock_stream
         )
 
-        messages = [{"role": "user", "content": "Test"}]
+        messages_dicts = [{"role": "user", "content": "Test"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         chunks = []
         async for chunk in client._stream_completion_async(messages):
@@ -1824,7 +1861,10 @@ class TestAzureOpenAIAdditionalCoverage:
 
         client.async_client.chat.completions.create = mock_create
 
-        messages = [{"role": "user", "content": "Test"}]
+        messages_dicts = [{"role": "user", "content": "Test"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         chunks = []
         async for chunk in client._stream_completion_async(messages):
@@ -1845,7 +1885,10 @@ class TestAzureOpenAIAdditionalCoverage:
 
         client.async_client.chat.completions.create = mock_create
 
-        messages = [{"role": "user", "content": "Test"}]
+        messages_dicts = [{"role": "user", "content": "Test"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         chunks = []
         async for chunk in client._stream_completion_async(messages):
@@ -1915,25 +1958,27 @@ class TestAzureOpenAIInitializationErrors:
 
     def test_missing_azure_endpoint(self, mock_configuration):
         """Test error when azure_endpoint is missing."""
-        with pytest.raises(ValueError) as exc_info:
-            AzureOpenAILLMClient(
-                model="gpt-4o-mini",
-                api_key="test-key",
-                azure_endpoint=None,  # Missing
-            )
-        assert "azure_endpoint is required" in str(exc_info.value)
+        with patch.dict('os.environ', {}, clear=True):
+            with pytest.raises(ValueError) as exc_info:
+                AzureOpenAILLMClient(
+                    model="gpt-4o-mini",
+                    api_key="test-key",
+                    azure_endpoint=None,  # Missing
+                )
+            assert "azure_endpoint is required" in str(exc_info.value)
 
     def test_missing_all_authentication(self, mock_configuration):
         """Test error when no authentication is provided."""
-        with pytest.raises(ValueError) as exc_info:
-            AzureOpenAILLMClient(
-                model="gpt-4o-mini",
-                api_key=None,
-                azure_ad_token=None,
-                azure_ad_token_provider=None,
-                azure_endpoint="https://test.openai.azure.com",
-            )
-        assert "Authentication required" in str(exc_info.value)
+        with patch.dict('os.environ', {}, clear=True):
+            with pytest.raises(ValueError) as exc_info:
+                AzureOpenAILLMClient(
+                    model="gpt-4o-mini",
+                    api_key=None,
+                    azure_ad_token=None,
+                    azure_ad_token_provider=None,
+                    azure_endpoint="https://test.openai.azure.com",
+                )
+            assert "Authentication required" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
@@ -1967,13 +2012,16 @@ class TestAzureOpenAIEdgeCases:
     @pytest.mark.asyncio
     async def test_create_completion_with_name_mapping(self, client):
         """Test create_completion stores name mapping."""
-        messages = [{"role": "user", "content": "Hello"}]
-        tools = [{"type": "function", "function": {"name": "test.tool"}}]
+        messages_dicts = [{"role": "user", "content": "Hello"}]
+        tools = [{"type": "function", "function": {"name": "test.tool", "description": "test.tool description", "parameters": {}}}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         # Mock the sanitization to create a mapping
         def mock_sanitize(tools_list):
             client._current_name_mapping = {"test_tool": "test.tool"}
-            return [{"type": "function", "function": {"name": "test_tool"}}]
+            return [{"type": "function", "function": {"name": "test_tool", "description": "test_tool description", "parameters": {}}}]
 
         client._sanitize_tool_names = mock_sanitize
 
@@ -2007,8 +2055,11 @@ class TestAzureOpenAIEdgeCases:
         # Mock client to not support json_mode
         client.supports_feature = lambda feature: feature != "json_mode"
 
-        messages = [{"role": "user", "content": "Hello"}]
+        messages_dicts = [{"role": "user", "content": "Hello"}]
         kwargs = {"response_format": {"type": "json_object"}}
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
             client._validate_request_with_config(messages, None, False, **kwargs)
@@ -2023,7 +2074,10 @@ class TestAzureOpenAIEdgeCases:
         # Mock client to not support streaming
         client.supports_feature = lambda feature: feature != "streaming"
 
-        messages = [{"role": "user", "content": "Hello"}]
+        messages_dicts = [{"role": "user", "content": "Hello"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
             client._validate_request_with_config(messages, None, True)
@@ -2038,8 +2092,11 @@ class TestAzureOpenAIEdgeCases:
         # Mock client to not support tools
         client.supports_feature = lambda feature: feature != "tools"
 
-        messages = [{"role": "user", "content": "Hello"}]
-        tools = [{"type": "function", "function": {"name": "test_tool"}}]
+        messages_dicts = [{"role": "user", "content": "Hello"}]
+        tools = [{"type": "function", "function": {"name": "test_tool", "description": "test_tool description", "parameters": {}}}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
             client._validate_request_with_config(messages, tools, False)
@@ -2105,7 +2162,10 @@ class TestAzureOpenAIEdgeCases:
     @pytest.mark.asyncio
     async def test_regular_completion_generic_error(self, client):
         """Test generic error handling in regular completion."""
-        messages = [{"role": "user", "content": "Hello"}]
+        messages_dicts = [{"role": "user", "content": "Hello"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         client.async_client.chat.completions.create = AsyncMock(
             side_effect=Exception("Some random error")
@@ -2227,7 +2287,10 @@ class TestAzureOpenAINormalizeMessageComprehensive:
             return_value=mock_stream
         )
 
-        messages = [{"role": "user", "content": "Test"}]
+        messages_dicts = [{"role": "user", "content": "Test"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         chunks = []
         async for chunk in client._stream_completion_async(messages):

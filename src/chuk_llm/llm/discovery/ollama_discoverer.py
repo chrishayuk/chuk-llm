@@ -198,9 +198,9 @@ class OllamaModelDiscoverer(BaseModelDiscoverer):
             "supports_vision": "vision" in capabilities,
             "supports_reasoning": "reasoning" in capabilities,
             "estimated_context_length": context_length,
-            "estimated_max_output": min(context_length // 4, 8192)
-            if context_length
-            else 4096,
+            "estimated_max_output": (
+                min(context_length // 4, 8192) if context_length else 4096
+            ),
             # Detailed info from show command if available
             "detailed_info": detailed_info,
         }

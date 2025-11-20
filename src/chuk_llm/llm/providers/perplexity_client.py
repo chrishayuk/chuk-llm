@@ -46,7 +46,9 @@ class PerplexityLLMClient(OpenAILLMClient):
 
         log.debug(f"Perplexity client initialized: model={self.model}")
 
-    def _translate_response_format(self, response_format: dict[str, Any] | None) -> dict[str, Any] | None:
+    def _translate_response_format(
+        self, response_format: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
         """
         Translate OpenAI-style response_format to Perplexity format.
 
@@ -73,12 +75,9 @@ class PerplexityLLMClient(OpenAILLMClient):
                 "type": "json_schema",
                 "json_schema": {
                     "name": "json_response",
-                    "schema": {
-                        "type": "object",
-                        "additionalProperties": True
-                    },
-                    "strict": False
-                }
+                    "schema": {"type": "object", "additionalProperties": True},
+                    "strict": False,
+                },
             }
         elif format_type == "json_schema":
             # Already in Perplexity format
@@ -124,7 +123,7 @@ class PerplexityLLMClient(OpenAILLMClient):
             messages=messages,
             tools=None,  # Always None for Perplexity
             name_mapping=name_mapping,
-            **kwargs
+            **kwargs,
         )
 
     async def _stream_completion_async(
@@ -147,11 +146,15 @@ class PerplexityLLMClient(OpenAILLMClient):
 
         # Translate response_format if present
         if "response_format" in kwargs:
-            log.debug(f"[Streaming] Original response_format: {kwargs['response_format']}")
+            log.debug(
+                f"[Streaming] Original response_format: {kwargs['response_format']}"
+            )
             kwargs["response_format"] = self._translate_response_format(
                 kwargs["response_format"]
             )
-            log.debug(f"[Streaming] Translated response_format: {kwargs['response_format']}")
+            log.debug(
+                f"[Streaming] Translated response_format: {kwargs['response_format']}"
+            )
             if kwargs["response_format"] is None:
                 del kwargs["response_format"]
 
@@ -160,7 +163,7 @@ class PerplexityLLMClient(OpenAILLMClient):
             messages=messages,
             tools=None,  # Always None for Perplexity
             name_mapping=name_mapping,
-            **kwargs
+            **kwargs,
         ):
             yield chunk
 

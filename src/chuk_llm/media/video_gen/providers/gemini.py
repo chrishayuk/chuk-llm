@@ -34,8 +34,9 @@ class GeminiVideoGenerator(BaseVideoGenerator):
         self,
         model: str = "veo-2.0-generate-001",
         api_key: str | None = None,
-        api_base: str
-        | None = None,  # Not used but kept for consistency with other providers
+        api_base: (
+            str | None
+        ) = None,  # Not used but kept for consistency with other providers
     ) -> None:
         """
         Initialize the Gemini video generator.

@@ -576,11 +576,13 @@ class GroqAILLMClient(OpenAILLMClient):
             {
                 "provider": "groq",
                 "detected_provider": "groq",
-                "model_status": "production"
-                if is_production
-                else "preview"
-                if is_preview
-                else "unknown",
+                "model_status": (
+                    "production"
+                    if is_production
+                    else "preview"
+                    if is_preview
+                    else "unknown"
+                ),
                 "groq_specific": {
                     "ultra_fast_inference": True,
                     "openai_compatible": True,
@@ -588,9 +590,11 @@ class GroqAILLMClient(OpenAILLMClient):
                     "model_family": self._detect_groq_model_family(),
                     "duplication_fix": "enabled",
                     "optimized_for": self._get_optimization_profile(),
-                    "huge_context": "131k tokens standard"
-                    if not known_info or known_info.get("context", 0) > 100000
-                    else "Limited context",
+                    "huge_context": (
+                        "131k tokens standard"
+                        if not known_info or known_info.get("context", 0) > 100000
+                        else "Limited context"
+                    ),
                 },
                 # Groq doesn't support these OpenAI parameters
                 "unsupported_parameters": [
@@ -879,7 +883,10 @@ class GroqAILLMClient(OpenAILLMClient):
             guidance = f"Available functions: {', '.join(function_names)}. Use them when appropriate."
 
         # Add or enhance system message (only if system messages are supported)
-        if enhanced_messages and enhanced_messages[0].get("role") == MessageRole.SYSTEM.value:
+        if (
+            enhanced_messages
+            and enhanced_messages[0].get("role") == MessageRole.SYSTEM.value
+        ):
             enhanced_messages[0]["content"] = (
                 enhanced_messages[0]["content"] + "\n\n" + guidance
             )

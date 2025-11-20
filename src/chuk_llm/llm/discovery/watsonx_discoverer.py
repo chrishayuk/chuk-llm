@@ -16,9 +16,7 @@ log = logging.getLogger(__name__)
 class WatsonxModelDiscoverer(BaseModelDiscoverer):
     """Discoverer for IBM Watsonx foundation models"""
 
-    def __init__(
-        self, provider_name: str, api_key: str, watsonx_url: str, **config
-    ):
+    def __init__(self, provider_name: str, api_key: str, watsonx_url: str, **config):
         super().__init__(provider_name, **config)
         self.api_key = api_key
         self.watsonx_url = watsonx_url.rstrip("/")

@@ -30,7 +30,9 @@ class OllamaSource(BaseModelSource):
             base_url: Ollama API base URL (default: http://localhost:11434)
             timeout: Request timeout in seconds
         """
-        self.base_url = base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        self.base_url = base_url or os.getenv(
+            "OLLAMA_BASE_URL", "http://localhost:11434"
+        )
         self.timeout = timeout
 
     async def discover(self) -> list[ModelSpec]:

@@ -124,6 +124,7 @@ from chuk_llm.llm.providers.gemini_client import (
     _safe_parse_gemini_response,  # Fixed: use the correct function name
     validate_and_map_model,
 )  # noqa: E402  pylint: disable=wrong-import-position
+from chuk_llm.core.models import Message, Tool
 
 # ---------------------------------------------------------------------------
 # Configuration Mock Classes
@@ -840,7 +841,10 @@ async def test_split_for_gemini_async_tool_calls(client):
 @pytest.mark.asyncio
 async def test_regular_completion_async(client):
     """Test regular (non-streaming) completion."""
-    messages = [{"role": "user", "content": "Hello"}]
+    messages_dicts = [{"role": "user", "content": "Hello"}]
+    # Convert dicts to Pydantic models
+    messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
     # Mock the client's generate_content method
     mock_response = create_mock_gemini_response(text="Hello! How can I help you?")
@@ -866,8 +870,11 @@ async def test_regular_completion_async(client):
 @pytest.mark.asyncio
 async def test_regular_completion_async_with_system(client):
     """Test regular completion with system instruction."""
-    messages = [{"role": "user", "content": "Hello"}]
+    messages_dicts = [{"role": "user", "content": "Hello"}]
     system = "You are a helpful assistant."
+    # Convert dicts to Pydantic models
+    messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
     # Mock the client's generate_content method
     mock_response = create_mock_gemini_response(text="Hello! I'm here to help.")
@@ -896,7 +903,10 @@ async def test_regular_completion_async_with_system(client):
 @pytest.mark.asyncio
 async def test_regular_completion_async_error_handling(client):
     """Test error handling in regular completion."""
-    messages = [{"role": "user", "content": "Hello"}]
+    messages_dicts = [{"role": "user", "content": "Hello"}]
+    # Convert dicts to Pydantic models
+    messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
     # Mock the client to raise an exception
     async def mock_generate_content_error(**kwargs):
@@ -926,7 +936,10 @@ async def test_regular_completion_async_error_handling(client):
 @pytest.mark.asyncio
 async def test_stream_completion_async(client):
     """Test streaming completion."""
-    messages = [{"role": "user", "content": "Hello"}]
+    messages_dicts = [{"role": "user", "content": "Hello"}]
+    # Convert dicts to Pydantic models
+    messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
     # Mock the streaming response
     async def mock_stream():
@@ -961,7 +974,10 @@ async def test_stream_completion_async(client):
 @pytest.mark.asyncio
 async def test_stream_completion_async_error_handling(client):
     """Test error handling in streaming completion."""
-    messages = [{"role": "user", "content": "Hello"}]
+    messages_dicts = [{"role": "user", "content": "Hello"}]
+    # Convert dicts to Pydantic models
+    messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
     # Mock the streaming to raise an error
     async def mock_generate_content_stream_error(**kwargs):
@@ -998,7 +1014,10 @@ async def test_stream_completion_async_error_handling(client):
 @pytest.mark.asyncio
 async def test_create_completion_non_streaming(client):
     """Test create_completion with non-streaming."""
-    messages = [{"role": "user", "content": "Hello"}]
+    messages_dicts = [{"role": "user", "content": "Hello"}]
+    # Convert dicts to Pydantic models
+    messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
     # Mock the regular completion method
     expected_result = {"response": "Hello!", "tool_calls": []}
@@ -1022,7 +1041,10 @@ async def test_create_completion_non_streaming(client):
 @pytest.mark.asyncio
 async def test_create_completion_streaming(client):
     """Test create_completion with streaming."""
-    messages = [{"role": "user", "content": "Hello"}]
+    messages_dicts = [{"role": "user", "content": "Hello"}]
+    # Convert dicts to Pydantic models
+    messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
     # Mock the streaming method
     async def mock_stream_completion_async(
@@ -1050,7 +1072,10 @@ async def test_create_completion_streaming(client):
 @pytest.mark.asyncio
 async def test_create_completion_streaming_not_supported(client, monkeypatch):
     """Test create_completion with streaming when not supported."""
-    messages = [{"role": "user", "content": "Hello"}]
+    messages_dicts = [{"role": "user", "content": "Hello"}]
+    # Convert dicts to Pydantic models
+    messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
     # Mock streaming as not supported
     monkeypatch.setattr(
@@ -1080,10 +1105,13 @@ async def test_create_completion_streaming_not_supported(client, monkeypatch):
 @pytest.mark.asyncio
 async def test_create_completion_with_tools(client):
     """Test create_completion with tools."""
-    messages = [{"role": "user", "content": "What's the weather?"}]
+    messages_dicts = [{"role": "user", "content": "What's the weather?"}]
     tools = [
-        {"type": "function", "function": {"name": "get_weather", "parameters": {}}}
+        {"type": "function", "function": {"name": "get_weather", "description": "get_weather description", "parameters": {}}}
     ]
+    # Convert dicts to Pydantic models
+    messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
     # Mock regular completion
     expected_result = {
@@ -1116,10 +1144,13 @@ async def test_create_completion_with_tools(client):
 @pytest.mark.asyncio
 async def test_create_completion_with_tools_not_supported(client, monkeypatch):
     """Test create_completion with tools when not supported."""
-    messages = [{"role": "user", "content": "What's the weather?"}]
+    messages_dicts = [{"role": "user", "content": "What's the weather?"}]
     tools = [
-        {"type": "function", "function": {"name": "get_weather", "parameters": {}}}
+        {"type": "function", "function": {"name": "get_weather", "description": "get_weather description", "parameters": {}}}
     ]
+    # Convert dicts to Pydantic models
+    messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
     # Mock tools as not supported
     monkeypatch.setattr(client, "supports_feature", lambda feature: feature != "tools")
@@ -1144,7 +1175,10 @@ async def test_create_completion_with_tools_not_supported(client, monkeypatch):
 @pytest.mark.asyncio
 async def test_create_completion_with_max_tokens(client):
     """Test create_completion with max_tokens parameter."""
-    messages = [{"role": "user", "content": "Hello"}]
+    messages_dicts = [{"role": "user", "content": "Hello"}]
+    # Convert dicts to Pydantic models
+    messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
     # Mock regular completion to check parameters
     async def mock_regular_completion_async(
@@ -1245,7 +1279,10 @@ async def test_full_integration_non_streaming(client):
 @pytest.mark.asyncio
 async def test_full_integration_streaming(client):
     """Test full integration for streaming completion."""
-    messages = [{"role": "user", "content": "Tell me a story"}]
+    messages_dicts = [{"role": "user", "content": "Tell me a story"}]
+    # Convert dicts to Pydantic models
+    messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
     # Mock streaming response
     async def mock_stream():
@@ -1271,7 +1308,10 @@ async def test_full_integration_streaming(client):
 @pytest.mark.asyncio
 async def test_full_integration_streaming_not_supported(client, monkeypatch):
     """Test full integration for streaming when not supported."""
-    messages = [{"role": "user", "content": "Tell me a story"}]
+    messages_dicts = [{"role": "user", "content": "Tell me a story"}]
+    # Convert dicts to Pydantic models
+    messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
     # Mock streaming as not supported
     monkeypatch.setattr(
@@ -1408,7 +1448,7 @@ def test_tool_name_sanitization_and_restoration(client):
     """Test tool name sanitization and restoration."""
     # Test that sanitization is called (mocked to return tools unchanged)
     tools = [
-        {"type": "function", "function": {"name": "test.tool:name", "parameters": {}}}
+        {"type": "function", "function": {"name": "test.tool:name", "description": "test.tool:name description", "parameters": {}}}
     ]
 
     # Mock sanitization to simulate real behavior
@@ -2573,7 +2613,10 @@ async def test_stream_completion_tool_call_deduplication(client):
 @pytest.mark.asyncio
 async def test_stream_completion_chunk_processing_error(client):
     """Test streaming completion with chunk processing error."""
-    messages = [{"role": "user", "content": "Hello"}]
+    messages_dicts = [{"role": "user", "content": "Hello"}]
+    # Convert dicts to Pydantic models
+    messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
     # Mock streaming response with error in chunk
     async def mock_stream():
@@ -2613,8 +2656,11 @@ async def test_stream_completion_chunk_processing_error(client):
 @pytest.mark.asyncio
 async def test_stream_completion_json_instruction(client):
     """Test streaming completion with JSON instruction."""
-    messages = [{"role": "user", "content": "Hello"}]
+    messages_dicts = [{"role": "user", "content": "Hello"}]
     json_instruction = "Respond with JSON only"
+    # Convert dicts to Pydantic models
+    messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
     # Mock streaming response
     async def mock_stream():
@@ -2685,7 +2731,10 @@ async def test_stream_completion_with_system_not_supported(client, monkeypatch):
 @pytest.mark.asyncio
 async def test_stream_completion_max_output_tokens_default(client):
     """Test streaming completion sets default max_output_tokens."""
-    messages = [{"role": "user", "content": "Hello"}]
+    messages_dicts = [{"role": "user", "content": "Hello"}]
+    # Convert dicts to Pydantic models
+    messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
     # Mock streaming response
     async def mock_stream():
@@ -2765,8 +2814,11 @@ async def test_stream_completion_config_creation_error(client):
 @pytest.mark.asyncio
 async def test_stream_completion_system_instruction_supported(client):
     """Test streaming completion with system instruction when supported."""
-    messages = [{"role": "user", "content": "Hello"}]
+    messages_dicts = [{"role": "user", "content": "Hello"}]
     system = "You are helpful"
+    # Convert dicts to Pydantic models
+    messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
     # Mock streaming response
     async def mock_stream():
@@ -2806,8 +2858,11 @@ async def test_stream_completion_system_instruction_supported(client):
 @pytest.mark.asyncio
 async def test_regular_completion_json_instruction(client):
     """Test regular completion with JSON instruction."""
-    messages = [{"role": "user", "content": "Hello"}]
+    messages_dicts = [{"role": "user", "content": "Hello"}]
     json_instruction = "Respond with JSON only"
+    # Convert dicts to Pydantic models
+    messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
     # Mock the client's generate_content method
     mock_response = create_mock_gemini_response(text='{"response": "Hello"}')
@@ -2833,7 +2888,10 @@ async def test_regular_completion_json_instruction(client):
 @pytest.mark.asyncio
 async def test_regular_completion_max_output_tokens_default(client):
     """Test regular completion sets default max_output_tokens."""
-    messages = [{"role": "user", "content": "Hello"}]
+    messages_dicts = [{"role": "user", "content": "Hello"}]
+    # Convert dicts to Pydantic models
+    messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
     # Mock the client's generate_content method
     mock_response = create_mock_gemini_response(text="Hello!")
@@ -2863,7 +2921,10 @@ async def test_regular_completion_max_output_tokens_default(client):
 @pytest.mark.asyncio
 async def test_regular_completion_config_creation_error(client):
     """Test regular completion with config creation error."""
-    messages = [{"role": "user", "content": "Hello"}]
+    messages_dicts = [{"role": "user", "content": "Hello"}]
+    # Convert dicts to Pydantic models
+    messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
     # Mock GenerateContentConfig to raise error
     original_config = sys.modules["google.genai.types"].GenerateContentConfig
@@ -2944,8 +3005,11 @@ async def test_regular_completion_multimodal_content(client):
 @pytest.mark.asyncio
 async def test_regular_completion_system_not_supported(client, monkeypatch):
     """Test regular completion with system message when not supported."""
-    messages = [{"role": "user", "content": "Hello"}]
+    messages_dicts = [{"role": "user", "content": "Hello"}]
     system = "You are helpful"
+    # Convert dicts to Pydantic models
+    messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
     # Mock system_messages as not supported
     monkeypatch.setattr(

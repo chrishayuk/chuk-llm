@@ -751,8 +751,8 @@ class UniversalModelDiscoveryManager:
             "families": families,
             "features": feature_counts,
             "total_size_gb": round(total_size / (1024**3), 1),
-            "cache_age_seconds": int(time.time() - self._last_update)
-            if self._last_update
-            else 0,
+            "cache_age_seconds": (
+                int(time.time() - self._last_update) if self._last_update else 0
+            ),
             "provider": self.provider_name,
         }

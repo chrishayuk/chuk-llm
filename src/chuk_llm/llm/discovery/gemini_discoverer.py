@@ -67,8 +67,10 @@ class GeminiModelDiscoverer(BaseModelDiscoverer):
                     model_name = model_data.get("name", "").replace("models/", "")
 
                     # Only include generative models (not embeddings, etc)
-                    if not any(method in model_data.get("supportedGenerationMethods", [])
-                              for method in ["generateContent", "streamGenerateContent"]):
+                    if not any(
+                        method in model_data.get("supportedGenerationMethods", [])
+                        for method in ["generateContent", "streamGenerateContent"]
+                    ):
                         continue
 
                     # Categorize model
@@ -89,7 +91,9 @@ class GeminiModelDiscoverer(BaseModelDiscoverer):
         model_lower = model_id.lower()
 
         # Determine capabilities
-        is_vision = "vision" in model_lower or "pro" in model_lower or "flash" in model_lower
+        is_vision = (
+            "vision" in model_lower or "pro" in model_lower or "flash" in model_lower
+        )
         is_code = "code" in model_lower
 
         # Extract version
@@ -118,7 +122,8 @@ class GeminiModelDiscoverer(BaseModelDiscoverer):
             "is_vision": is_vision,
             "is_code": is_code,
             "supports_tools": True,  # Most Gemini models support function calling
-            "supports_streaming": "streamGenerateContent" in model_data.get("supportedGenerationMethods", []),
+            "supports_streaming": "streamGenerateContent"
+            in model_data.get("supportedGenerationMethods", []),
             "supports_system_messages": True,
             # Model characteristics
             "version": version,

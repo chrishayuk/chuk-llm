@@ -231,7 +231,9 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
             )
 
         # Check system message support
-        has_system = any(msg.get("role") == MessageRole.SYSTEM.value for msg in messages)
+        has_system = any(
+            msg.get("role") == MessageRole.SYSTEM.value for msg in messages
+        )
         if has_system and not self.supports_feature("system_messages"):
             log.info(
                 f"System messages will be converted - {self.model} has limited system message support"
@@ -343,8 +345,15 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
 
                     # Check for images (both dict and Pydantic formats)
                     has_images = any(
-                        (isinstance(item, dict) and item.get("type") in ["image", "image_url"]) or
-                        (hasattr(item, "type") and item.type in [ContentType.IMAGE_URL, ContentType.IMAGE_DATA])
+                        (
+                            isinstance(item, dict)
+                            and item.get("type") in ["image", "image_url"]
+                        )
+                        or (
+                            hasattr(item, "type")
+                            and item.type
+                            in [ContentType.IMAGE_URL, ContentType.IMAGE_DATA]
+                        )
                         for item in content
                     )
 
@@ -354,7 +363,9 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                         for item in content:
                             if isinstance(item, dict) and item.get("type") == "text":
                                 text_parts.append(item.get("text", ""))
-                            elif hasattr(item, "type") and item.type == ContentType.TEXT:
+                            elif (
+                                hasattr(item, "type") and item.type == ContentType.TEXT
+                            ):
                                 text_parts.append(item.text)
 
                         text_content = " ".join(text_parts)
@@ -388,16 +399,26 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                                         images.append(image_url)
                             else:
                                 # Pydantic object-based content
-                                if hasattr(item, "type") and item.type == ContentType.TEXT:
+                                if (
+                                    hasattr(item, "type")
+                                    and item.type == ContentType.TEXT
+                                ):
                                     text_parts.append(item.text)
-                                elif hasattr(item, "type") and item.type == ContentType.IMAGE_URL:
+                                elif (
+                                    hasattr(item, "type")
+                                    and item.type == ContentType.IMAGE_URL
+                                ):
                                     # Extract URL from Pydantic ImageUrlContent
                                     image_url_data = item.image_url
-                                    url = image_url_data.get("url") if isinstance(image_url_data, dict) else image_url_data
-                                    if url.startswith("data:image"):
+                                    url = (
+                                        image_url_data.get("url")
+                                        if isinstance(image_url_data, dict)
+                                        else image_url_data
+                                    )
+                                    if url and url.startswith("data:image"):
                                         _, encoded = url.split(",", 1)
                                         images.append(base64.b64decode(encoded))
-                                    else:
+                                    elif url:
                                         images.append(url)
 
                         message["content"] = " ".join(text_parts)
@@ -685,6 +706,7 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
             _ensure_pydantic_messages,
             _ensure_pydantic_tools,
         )
+
         messages = _ensure_pydantic_messages(messages)
         tools = _ensure_pydantic_tools(tools)
 
@@ -709,7 +731,9 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
 
         # Continue with existing validation and processing...
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
-            self._validate_request_with_config(dict_messages, dict_tools, stream, **kwargs)
+            self._validate_request_with_config(
+                dict_messages, dict_tools, stream, **kwargs
+            )
         )
 
         if validated_stream:
@@ -1017,9 +1041,9 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                 if has_tools and not tool_calls_yielded:
                     # Yield tool calls immediately when we first see them
                     chunk_data = {
-                        "response": stream_content
-                        if stream_content
-                        else "",  # Empty string instead of None
+                        "response": (
+                            stream_content if stream_content else ""
+                        ),  # Empty string instead of None
                         "tool_calls": chunk_tool_calls,
                     }
 

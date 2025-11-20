@@ -24,12 +24,20 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load .env from project root (two levels up from this script)
+project_root = Path(__file__).parent.parent.parent
+env_path = project_root / ".env"
+load_dotenv(env_path)
 
 # Check environment
 if not os.getenv("AZURE_OPENAI_API_KEY"):
     print("❌ Please set AZURE_OPENAI_API_KEY environment variable")
     print("   export AZURE_OPENAI_API_KEY='your_api_key_here'")
+    sys.exit(1)
+
+if not os.getenv("AZURE_OPENAI_ENDPOINT"):
+    print("❌ Please set AZURE_OPENAI_ENDPOINT environment variable")
+    print("   export AZURE_OPENAI_ENDPOINT='https://your-resource.openai.azure.com'")
     sys.exit(1)
 
 try:
@@ -64,8 +72,8 @@ async def main():
     parser = argparse.ArgumentParser(description="Azure OpenAI Provider Examples")
     parser.add_argument(
         "--model",
-        default="gpt-4o",
-        help="Model to use (default: gpt-4o)",
+        default=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"),
+        help=f"Model/deployment to use (default: {os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME', 'gpt-4o')})",
     )
     parser.add_argument(
         "--skip-tools", action="store_true", help="Skip function calling demo"
@@ -89,21 +97,21 @@ async def main():
     print(f"API Key: {os.getenv('AZURE_OPENAI_API_KEY')[:20]}...")
     print("=" * 70)
 
-    client = get_client("azure", model=args.model)
+    client = get_client("azure_openai", model=args.model)
 
     # Run specific demo or all demos
     if args.demo:
         demo_map = {
-            1: ("Basic Completion", demo_basic_completion(client, "azure", args.model)),
-            2: ("Streaming", demo_streaming(client, "azure", args.model)),
-            3: ("Function Calling", demo_function_calling(client, "azure", args.model)),
-            4: ("Vision", demo_vision(client, "azure", args.model)),
-            5: ("JSON Mode", demo_json_mode(client, "azure", args.model)),
-            6: ("Reasoning", demo_reasoning(client, "azure", args.model)),
-            7: ("Structured Outputs", demo_structured_outputs(client, "azure", args.model)),
-            8: ("Conversation", demo_conversation(client, "azure", args.model)),
-            9: ("Model Discovery", demo_model_discovery(client, "azure", args.model)),
-            10: ("Error Handling", demo_error_handling(client, "azure", args.model)),
+            1: ("Basic Completion", demo_basic_completion(client, "azure_openai", args.model)),
+            2: ("Streaming", demo_streaming(client, "azure_openai", args.model)),
+            3: ("Function Calling", demo_function_calling(client, "azure_openai", args.model)),
+            4: ("Vision", demo_vision(client, "azure_openai", args.model)),
+            5: ("JSON Mode", demo_json_mode(client, "azure_openai", args.model)),
+            6: ("Reasoning", demo_reasoning(client, "azure_openai", args.model)),
+            7: ("Structured Outputs", demo_structured_outputs(client, "azure_openai", args.model)),
+            8: ("Conversation", demo_conversation(client, "azure_openai", args.model)),
+            9: ("Model Discovery", demo_model_discovery(client, "azure_openai", args.model)),
+            10: ("Error Handling", demo_error_handling(client, "azure_openai", args.model)),
         }
 
         name, demo_coro = demo_map[args.demo]
@@ -117,7 +125,7 @@ async def main():
         # Run all demos
         await run_all_demos(
             client,
-            "azure",
+            "azure_openai",
             args.model,
             skip_tools=args.skip_tools,
             skip_vision=args.skip_vision

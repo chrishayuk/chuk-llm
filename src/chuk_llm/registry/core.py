@@ -9,6 +9,7 @@ all available models.
 from __future__ import annotations
 
 import asyncio
+from typing import cast
 
 from chuk_llm.registry.models import (
     ModelCapabilities,
@@ -57,7 +58,9 @@ class ModelRegistry:
         self.resolvers = resolvers
         self._cache: dict[tuple[str, str], ModelWithCapabilities] | None = None
 
-    async def get_models(self, *, force_refresh: bool = False) -> list[ModelWithCapabilities]:
+    async def get_models(
+        self, *, force_refresh: bool = False
+    ) -> list[ModelWithCapabilities]:
         """
         Get all available models with capabilities.
 
@@ -82,7 +85,9 @@ class ModelRegistry:
 
         return models
 
-    async def find_model(self, provider: str, name: str) -> ModelWithCapabilities | None:
+    async def find_model(
+        self, provider: str, name: str
+    ) -> ModelWithCapabilities | None:
         """
         Find a specific model by provider and name.
 
@@ -180,12 +185,13 @@ class ModelRegistry:
         )
 
         # Collect specs, handling exceptions
-        all_specs = []
+        all_specs: list[ModelSpec] = []
         for result in results:
             if isinstance(result, Exception):
                 # Log error but continue
                 continue
-            all_specs.extend(result)
+            # Type narrowing: result is list[ModelSpec] here (not BaseException)
+            all_specs.extend(cast(list[ModelSpec], result))
 
         # Deduplicate by (provider, name)
         seen = set()

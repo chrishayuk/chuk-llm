@@ -630,9 +630,11 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
                         "system_messages"
                     ),
                     "gemini_specific": {
-                        "context_length": "2M tokens"
-                        if "2.5" in self.model
-                        else ("2M tokens" if "2.0" in self.model else "1M tokens"),
+                        "context_length": (
+                            "2M tokens"
+                            if "2.5" in self.model
+                            else ("2M tokens" if "2.0" in self.model else "1M tokens")
+                        ),
                         "model_family": self._detect_model_family(),
                         "experimental_features": "2.0" in self.model
                         or "2.5" in self.model,
@@ -946,19 +948,35 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
                                 # ImageUrlContent - convert to dict for processing
                                 if item.type == ContentType.IMAGE_URL:
                                     image_url_data = item.image_url
-                                    url = image_url_data.get("url") if isinstance(image_url_data, dict) else image_url_data
+                                    url = (
+                                        image_url_data.get("url")
+                                        if isinstance(image_url_data, dict)
+                                        else image_url_data
+                                    )
 
                                     try:
-                                        gemini_image = await self._convert_universal_vision_to_gemini_async({
-                                            "type": "image_url",
-                                            "image_url": {"url": url} if isinstance(url, str) else url
-                                        })
+                                        gemini_image = await self._convert_universal_vision_to_gemini_async(
+                                            {
+                                                "type": "image_url",
+                                                "image_url": (
+                                                    {"url": url}
+                                                    if isinstance(url, str)
+                                                    else url
+                                                ),
+                                            }
+                                        )
                                         if "inline_data" in gemini_image:
                                             gemini_parts.append(gemini_image)
                                         else:
-                                            gemini_parts.append(gemini_image.get("text", "[Image processing failed]"))
+                                            gemini_parts.append(
+                                                gemini_image.get(
+                                                    "text", "[Image processing failed]"
+                                                )
+                                            )
                                     except Exception as e:
-                                        log.warning(f"Failed to convert Pydantic image: {e}")
+                                        log.warning(
+                                            f"Failed to convert Pydantic image: {e}"
+                                        )
                                         gemini_parts.append("[Image conversion failed]")
                             else:
                                 gemini_parts.append(str(item))
@@ -1006,6 +1024,7 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
             _ensure_pydantic_messages,
             _ensure_pydantic_tools,
         )
+
         messages = _ensure_pydantic_messages(messages)
         tools = _ensure_pydantic_tools(tools)
 
@@ -1029,11 +1048,20 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
         # Apply universal tool name sanitization (stores mapping for restoration)
         name_mapping = {}
         if dict_tools:
-            dict_tools = self._sanitize_tool_names(dict_tools)
+            from chuk_llm.core.models import Tool as ToolModel
+
+            sanitized_tools = self._sanitize_tool_names(dict_tools)
+            # After sanitization, tools are always Pydantic Tool models
+            assert isinstance(sanitized_tools, list) and all(
+                isinstance(t, ToolModel) for t in sanitized_tools
+            )
+
             name_mapping = self._current_name_mapping
             log.debug(
                 f"Tool sanitization: {len(name_mapping)} tools processed for Gemini compatibility"
             )
+            # Convert Pydantic models back to dicts for Gemini format conversion
+            dict_tools = [tool.model_dump() for tool in sanitized_tools]  # type: ignore[union-attr]
 
         gemini_tools = _convert_tools_to_gemini_format(dict_tools)
 

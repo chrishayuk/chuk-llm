@@ -35,8 +35,9 @@ class GeminiImageGenerator(BaseImageGenerator):
         self,
         model: str = "imagen-3.0-generate-002",
         api_key: str | None = None,
-        api_base: str
-        | None = None,  # Not used but kept for consistency with other providers
+        api_base: (
+            str | None
+        ) = None,  # Not used but kept for consistency with other providers
     ) -> None:
         """
         Initialize the Gemini image generator.

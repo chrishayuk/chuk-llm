@@ -9,9 +9,14 @@ import json
 import logging
 import re
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from chuk_llm.core.enums import MessageRole
 
 from .openai_client import OpenAILLMClient
+
+if TYPE_CHECKING:
+    from chuk_llm.core.models import Message, Tool
 
 log = logging.getLogger(__name__)
 
@@ -59,8 +64,6 @@ class AdvantageClient(OpenAILLMClient):
         # Reinitialize the config mixin with correct provider
         from chuk_llm.llm.providers._config_mixin import ConfigAwareProviderMixin
 
-from chuk_llm.core.enums import MessageRole
-
         ConfigAwareProviderMixin.__init__(self, "advantage", model)
 
         log.info(
@@ -72,28 +75,31 @@ from chuk_llm.core.enums import MessageRole
     # FUNCTION CALLING WORKAROUND
     # ================================================================
 
-    def _add_strict_parameter_to_tools(
-        self, tools: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def _add_strict_parameter_to_tools(self, tools: list[Tool]) -> list[dict[str, Any]]:  # type: ignore[override]
         """
         Override to ensure strict parameter is added as a boolean.
 
+        Pydantic native - converts Tool models to dicts with strict parameter.
+
         The Advantage API requires the strict parameter to be present and
-        be a boolean value.
+        be a boolean value. This returns dicts because the parent OpenAI client
+        expects dicts for the final API call.
         """
+
         modified_tools = []
         for tool in tools:
-            tool_copy = tool.copy()
-            if tool_copy.get("type") == "function" and "function" in tool_copy:
-                # Make a copy of the function dict to avoid modifying the original
-                func_copy = tool_copy["function"].copy()
-                if "strict" not in func_copy:
-                    func_copy["strict"] = False
+            # Convert Tool to dict
+            tool_dict = tool.model_dump()
+
+            # Add strict parameter to function
+            if tool_dict.get("type") == "function" and "function" in tool_dict:
+                if "strict" not in tool_dict["function"]:
+                    tool_dict["function"]["strict"] = False
                     log.debug(
-                        f"[advantage] Added strict=False to tool: {func_copy.get('name', 'unknown')}"
+                        f"[advantage] Added strict=False to tool: {tool_dict['function'].get('name', 'unknown')}"
                     )
-                tool_copy["function"] = func_copy
-            modified_tools.append(tool_copy)
+
+            modified_tools.append(tool_dict)
         return modified_tools
 
     def _create_function_calling_system_prompt(self) -> str:
@@ -114,31 +120,33 @@ from chuk_llm.core.enums import MessageRole
         )
 
     def _inject_function_calling_prompt(
-        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None
+        self, messages: list[Message], tools: list[Tool] | None
     ) -> list[dict[str, Any]]:
         """
         Inject system prompt to guide function calling.
+
+        Pydantic native - works with Message models and returns dicts for parent client.
 
         This modifies the messages list to include instructions for the model
         to return function calls in a parseable JSON format.
 
         Args:
-            messages: Original conversation messages
+            messages: Original Pydantic Message objects
             tools: Tool/function definitions (if None, no modification)
 
         Returns:
-            New list of messages with system prompt added/modified
+            List of message dicts with system prompt added/modified
         """
+
         # Only inject if tools are provided
         if not tools:
-            return messages
+            # Convert to dicts for parent client
+            return [msg.model_dump() for msg in messages]
 
         function_prompt = self._create_function_calling_system_prompt()
 
-        # Copy messages to avoid mutating original
-        new_messages = []
-        for msg in messages:
-            new_messages.append(msg.copy())
+        # Convert messages to dicts for manipulation
+        new_messages = [msg.model_dump() for msg in messages]
 
         # If first message is already system, prepend to it
         if new_messages and new_messages[0].get("role") == MessageRole.SYSTEM.value:
@@ -315,8 +323,8 @@ from chuk_llm.core.enums import MessageRole
 
     def create_completion(
         self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        messages: list[Message],
+        tools: list[Tool] | None = None,
         *,
         stream: bool = False,
         **kwargs,
@@ -336,26 +344,62 @@ from chuk_llm.core.enums import MessageRole
         Returns:
             Response with tool_calls properly formatted (or AsyncIterator for streaming)
         """
+        # Pydantic native - auto-convert dicts to Pydantic if needed
+        from chuk_llm.core.models import Message as MessageModel
+        from chuk_llm.core.models import Tool as ToolModel
+
+        pydantic_messages = [
+            msg if isinstance(msg, MessageModel) else MessageModel.model_validate(msg)
+            for msg in messages
+        ]
+        pydantic_tools = (
+            [
+                tool if isinstance(tool, ToolModel) else ToolModel.model_validate(tool)
+                for tool in tools
+            ]
+            if tools
+            else None
+        )
+
+        messages_dicts = None
+        tools_dicts = None
+
         # Inject function calling prompt if tools provided
-        if tools:
-            messages = self._inject_function_calling_prompt(messages, tools)
+        if pydantic_tools:
+            # This returns dicts after injection
+            messages_dicts = self._inject_function_calling_prompt(
+                pydantic_messages, pydantic_tools
+            )
             log.debug("[advantage] Injected function calling prompt")
 
-            # Add strict parameter to tools (required by Advantage API)
-            tools = self._add_strict_parameter_to_tools(tools)
+            # Add strict parameter to tools (returns dicts)
+            tools_dicts = self._add_strict_parameter_to_tools(pydantic_tools)
+        else:
+            # No tools, convert messages to dicts
+            messages_dicts = [msg.model_dump() for msg in pydantic_messages]
+            tools_dicts = None
 
-        # Call parent implementation
+        # Convert modified dicts back to Pydantic for parent client
+        from chuk_llm.llm.core.base import (
+            _ensure_pydantic_messages,
+            _ensure_pydantic_tools,
+        )
+
+        messages_for_parent = _ensure_pydantic_messages(messages_dicts)
+        tools_for_parent = _ensure_pydantic_tools(tools_dicts) if tools_dicts else None
+
+        # Call parent implementation with Pydantic models
         # For streaming, parent returns AsyncIterator, for non-streaming returns coroutine
         result = super().create_completion(
-            messages, tools=tools, stream=stream, **kwargs
+            messages_for_parent, tools=tools_for_parent, stream=stream, **kwargs
         )
 
         # If streaming, wrap iterator to convert tool calls
         if stream:
-            return self._stream_and_convert(result, tools)
+            return self._stream_and_convert(result, tools_dicts)
 
         # For non-streaming, wrap in an async function to convert tool calls
-        return self._complete_and_convert(result, tools)
+        return self._complete_and_convert(result, tools_dicts)
 
     async def _stream_and_convert(
         self, stream_iterator, tools: list[dict[str, Any]] | None
@@ -409,34 +453,64 @@ from chuk_llm.core.enums import MessageRole
 
     async def stream_completion(
         self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        messages: list[Message],
+        tools: list[Tool] | None = None,
         **kwargs,
     ):
         """
         Stream a completion with Advantage API.
+
+        Pydantic native - auto-converts dicts to Pydantic models.
 
         Note: Function calling with streaming is complex with Advantage's
         non-standard implementation. The function call JSON needs to be
         accumulated before it can be parsed.
 
         Args:
-            messages: Conversation messages
-            tools: Tool/function definitions
+            messages: Conversation messages (Pydantic Message objects or dicts)
+            tools: Tool/function definitions (Pydantic Tool objects or dicts)
             **kwargs: Additional parameters
 
         Yields:
             Completion chunks
         """
+        # Pydantic native - auto-convert dicts if needed
+        from chuk_llm.core.models import Message as MessageModel
+        from chuk_llm.core.models import Tool as ToolModel
+
+        pydantic_messages = [
+            msg if isinstance(msg, MessageModel) else MessageModel.model_validate(msg)
+            for msg in messages
+        ]
+        pydantic_tools = (
+            [
+                tool if isinstance(tool, ToolModel) else ToolModel.model_validate(tool)
+                for tool in tools
+            ]
+            if tools
+            else None
+        )
+
         # Inject function calling prompt if tools provided
-        if tools:
-            messages = self._inject_function_calling_prompt(messages, tools)
+        messages_dicts = None
+        tools_dicts = None
+
+        if pydantic_tools:
+            messages_dicts = self._inject_function_calling_prompt(
+                pydantic_messages, pydantic_tools
+            )
             log.debug("[advantage] Injected function calling prompt for streaming")
+            tools_dicts = [tool.model_dump() for tool in pydantic_tools]
+        else:
+            messages_dicts = [msg.model_dump() for msg in pydantic_messages]
+            tools_dicts = None
 
         # For streaming, we need to accumulate content to detect function calls
         accumulated_content = ""
 
-        async for chunk in super().stream_completion(messages, tools=tools, **kwargs):
+        async for chunk in super().stream_completion(
+            messages_dicts, tools=tools_dicts, **kwargs
+        ):
             # Accumulate content chunks
             if "choices" in chunk:
                 for choice in chunk["choices"]:

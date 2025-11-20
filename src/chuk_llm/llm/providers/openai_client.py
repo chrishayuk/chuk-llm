@@ -478,63 +478,75 @@ class OpenAILLMClient(
                     "openai_compatible": True,
                     # Smart defaults info
                     "using_smart_defaults": using_smart_defaults,
-                    "smart_default_features": list(
-                        self._get_smart_default_features(self.model)
-                    )
-                    if using_smart_defaults
-                    else [],
+                    "smart_default_features": (
+                        list(self._get_smart_default_features(self.model))
+                        if using_smart_defaults
+                        else []
+                    ),
                     # Reasoning model info
                     "is_reasoning_model": is_reasoning,
                     "reasoning_generation": reasoning_generation,
                     "requires_max_completion_tokens": is_reasoning,
                     "supports_streaming": True,  # All current models support streaming
-                    "supports_system_messages": reasoning_generation != "o1"
-                    if is_reasoning
-                    else True,
+                    "supports_system_messages": (
+                        reasoning_generation != "o1" if is_reasoning else True
+                    ),
                     # GPT-5 specific info
-                    "is_gpt5_family": reasoning_generation == "gpt5"
-                    if is_reasoning
-                    else False,
-                    "unified_reasoning": reasoning_generation == "gpt5"
-                    if is_reasoning
-                    else False,
+                    "is_gpt5_family": (
+                        reasoning_generation == "gpt5" if is_reasoning else False
+                    ),
+                    "unified_reasoning": (
+                        reasoning_generation == "gpt5" if is_reasoning else False
+                    ),
                     # Universal tool compatibility info
                     **tool_compatibility,
                     "parameter_mapping": {
-                        "temperature": "temperature"
-                        if reasoning_generation != "gpt5"
-                        else None,  # GPT-5 doesn't support temperature
-                        "max_tokens": "max_completion_tokens"
-                        if is_reasoning
-                        else "max_tokens",
-                        "top_p": "top_p"
-                        if reasoning_generation not in ["o1", "gpt5"]
-                        else None,
-                        "frequency_penalty": "frequency_penalty"
-                        if reasoning_generation not in ["o1", "gpt5"]
-                        else None,
-                        "presence_penalty": "presence_penalty"
-                        if reasoning_generation not in ["o1", "gpt5"]
-                        else None,
+                        "temperature": (
+                            "temperature" if reasoning_generation != "gpt5" else None
+                        ),  # GPT-5 doesn't support temperature
+                        "max_tokens": (
+                            "max_completion_tokens" if is_reasoning else "max_tokens"
+                        ),
+                        "top_p": (
+                            "top_p"
+                            if reasoning_generation not in ["o1", "gpt5"]
+                            else None
+                        ),
+                        "frequency_penalty": (
+                            "frequency_penalty"
+                            if reasoning_generation not in ["o1", "gpt5"]
+                            else None
+                        ),
+                        "presence_penalty": (
+                            "presence_penalty"
+                            if reasoning_generation not in ["o1", "gpt5"]
+                            else None
+                        ),
                         "stop": "stop",
                         "stream": "stream",
                     },
-                    "reasoning_model_restrictions": {
-                        "unsupported_params": self._get_unsupported_params_for_generation(
-                            reasoning_generation or "o1"  # type: ignore[arg-type]
-                        )
+                    "reasoning_model_restrictions": (
+                        {
+                            "unsupported_params": (
+                                self._get_unsupported_params_for_generation(
+                                    reasoning_generation or "o1"  # type: ignore[arg-type]
+                                )
+                                if is_reasoning
+                                else []
+                            ),
+                            "requires_parameter_mapping": is_reasoning,
+                            "system_message_conversion": (
+                                reasoning_generation == "o1" if is_reasoning else False
+                            ),
+                            "temperature_fixed": (
+                                reasoning_generation == "gpt5"
+                                if is_reasoning
+                                else False
+                            ),
+                        }
                         if is_reasoning
-                        else [],
-                        "requires_parameter_mapping": is_reasoning,
-                        "system_message_conversion": reasoning_generation == "o1"
-                        if is_reasoning
-                        else False,
-                        "temperature_fixed": reasoning_generation == "gpt5"
-                        if is_reasoning
-                        else False,
-                    }
-                    if is_reasoning
-                    else {},
+                        else {}
+                    ),
                 }
             )
 
@@ -845,9 +857,9 @@ class OpenAILLMClient(
                 if content_delta or completed_tool_calls:
                     result = {
                         "response": content_delta,
-                        "tool_calls": completed_tool_calls
-                        if completed_tool_calls
-                        else None,
+                        "tool_calls": (
+                            completed_tool_calls if completed_tool_calls else None
+                        ),
                     }
 
                     # Restore tool names using universal restoration
@@ -963,6 +975,7 @@ class OpenAILLMClient(
             _ensure_pydantic_messages,
             _ensure_pydantic_tools,
         )
+
         messages = _ensure_pydantic_messages(messages)
         tools = _ensure_pydantic_tools(tools)
 
@@ -972,7 +985,9 @@ class OpenAILLMClient(
 
         # Validate request against configuration (with smart defaults)
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
-            self._validate_request_with_config(dict_messages, dict_tools, stream, **kwargs)
+            self._validate_request_with_config(
+                dict_messages, dict_tools, stream, **kwargs
+            )
         )
 
         # Apply universal tool name sanitization
@@ -1172,7 +1187,10 @@ class OpenAILLMClient(
                 # Add reasoning tokens if present (for o1/gpt-5 models)
                 if hasattr(resp.usage, "completion_tokens_details"):
                     details = resp.usage.completion_tokens_details
-                    if hasattr(details, "reasoning_tokens") and details.reasoning_tokens:
+                    if (
+                        hasattr(details, "reasoning_tokens")
+                        and details.reasoning_tokens
+                    ):
                         usage_info["reasoning_tokens"] = details.reasoning_tokens
                         # Add reasoning metadata to response
                         result["reasoning"] = {

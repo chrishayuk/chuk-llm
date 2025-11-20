@@ -525,6 +525,7 @@ def _create_provider_function(
                         return _run_sync(
                             provider_model_func_async(prompt, image, **kwargs)
                         )
+
         else:
 
             async def provider_model_func_async(prompt: str, **kwargs) -> str:
@@ -605,6 +606,7 @@ def _create_provider_function(
                         return _run_sync(
                             provider_func_async(prompt, image, model, **kwargs)
                         )
+
         else:
 
             async def provider_func_async(
@@ -660,6 +662,7 @@ def _create_stream_function(
                     prompt, provider=provider_name, model=model_name, **kwargs
                 ):
                     yield chunk
+
         else:
 
             async def stream_model_func(prompt: str, **kwargs) -> AsyncIterator[str]:
@@ -691,6 +694,7 @@ def _create_stream_function(
                     prompt, provider=provider_name, model=model, **kwargs
                 ):
                     yield chunk
+
         else:
 
             async def stream_func(
@@ -726,6 +730,7 @@ def _create_sync_function(
                 return _run_sync(
                     ask(prompt, provider=provider_name, model=model_name, **kwargs)
                 )
+
         else:
 
             def sync_model_func(prompt: str, **kwargs) -> str:
@@ -755,6 +760,7 @@ def _create_sync_function(
                     )
                     kwargs["messages"] = [vision_message]
                 return _run_sync(ask(prompt, provider=provider_name, **kwargs))
+
         else:
 
             def sync_func(prompt: str, model: str | None = None, **kwargs) -> str:
@@ -806,6 +812,7 @@ def _create_global_alias_function(
                 kwargs["messages"] = [vision_message]
             async for chunk in stream(prompt, provider=provider, model=model, **kwargs):
                 yield chunk
+
     else:
 
         async def alias_func(prompt: str, **kwargs) -> str:

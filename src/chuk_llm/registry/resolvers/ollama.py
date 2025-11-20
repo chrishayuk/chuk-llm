@@ -6,6 +6,7 @@ Resolves capabilities by querying the Ollama API for model metadata.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from datetime import datetime
 
@@ -30,7 +31,9 @@ class OllamaCapabilityResolver(BaseCapabilityResolver):
             base_url: Ollama API base URL (default: http://localhost:11434)
             timeout: Request timeout in seconds
         """
-        self.base_url = base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        self.base_url = base_url or os.getenv(
+            "OLLAMA_BASE_URL", "http://localhost:11434"
+        )
         self.timeout = timeout
 
     async def get_capabilities(self, spec: ModelSpec) -> ModelCapabilities:
@@ -83,10 +86,8 @@ class OllamaCapabilityResolver(BaseCapabilityResolver):
             # Sometimes params is a string like "num_ctx 4096"
             for line in params.split("\n"):
                 if "num_ctx" in line:
-                    try:
+                    with contextlib.suppress(ValueError, IndexError):
                         max_context = int(line.split()[-1])
-                    except (ValueError, IndexError):
-                        pass
 
         # Check for vision support based on families
         families = data.get("details", {}).get("families", [])

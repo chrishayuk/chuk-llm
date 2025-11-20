@@ -202,6 +202,7 @@ class MockConfig:
 
 # Now import the client
 from chuk_llm.llm.providers.azure_openai_client import AzureOpenAILLMClient
+from chuk_llm.core.models import Message, Tool
 
 # ---------------------------------------------------------------------------
 # Fixtures with Configuration Mocking
@@ -424,8 +425,12 @@ class TestAzureOpenAIRequestValidation:
 
     def test_validate_request_with_config(self, client):
         """Test request validation against configuration."""
-        messages = [{"role": "user", "content": "Hello"}]
-        tools = [{"type": "function", "function": {"name": "test_tool"}}]
+        messages_dicts = [{"role": "user", "content": "Hello"}]
+        tools_dicts = [{"type": "function", "function": {"name": "test_tool", "description": "Test tool", "parameters": {}}}]
+
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+        tools = [Tool.model_validate(tool) for tool in tools_dicts]
 
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
             client._validate_request_with_config(
@@ -440,8 +445,12 @@ class TestAzureOpenAIRequestValidation:
 
     def test_validate_request_unsupported_features(self, client, monkeypatch):
         """Test request validation when features are not supported."""
-        messages = [{"role": "user", "content": "Hello"}]
-        tools = [{"type": "function", "function": {"name": "test_tool"}}]
+        messages_dicts = [{"role": "user", "content": "Hello"}]
+        tools_dicts = [{"type": "function", "function": {"name": "test_tool", "description": "test_tool description", "parameters": {}}}]
+
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+        tools = [Tool.model_validate(tool) for tool in tools_dicts]
 
         # Mock configuration to not support streaming or tools
         monkeypatch.setattr(client, "supports_feature", lambda feature: False)
@@ -541,7 +550,10 @@ class TestAzureOpenAIStreaming:
     @pytest.mark.asyncio
     async def test_streaming_basic(self, client):
         """Test basic streaming functionality."""
-        messages = [{"role": "user", "content": "Hello"}]
+        messages_dicts = [{"role": "user", "content": "Hello"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         # Mock the async client to return our mock stream
         mock_stream = MockAsyncStream(
@@ -677,7 +689,10 @@ class TestAzureOpenAIStreaming:
     @pytest.mark.asyncio
     async def test_streaming_error_handling(self, client):
         """Test error handling in streaming."""
-        messages = [{"role": "user", "content": "Hello"}]
+        messages_dicts = [{"role": "user", "content": "Hello"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         # Mock client to raise exception
         client.async_client.chat.completions.create = AsyncMock(
@@ -733,7 +748,10 @@ class TestAzureOpenAICompletion:
     @pytest.mark.asyncio
     async def test_regular_completion_basic(self, client):
         """Test basic regular completion."""
-        messages = [{"role": "user", "content": "Hello"}]
+        messages_dicts = [{"role": "user", "content": "Hello"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         mock_response = MockChatCompletion("Hello! How can I help you?")
         client.async_client.chat.completions.create = AsyncMock(
@@ -748,8 +766,11 @@ class TestAzureOpenAICompletion:
     @pytest.mark.asyncio
     async def test_regular_completion_with_tools(self, client):
         """Test regular completion with tools."""
-        messages = [{"role": "user", "content": "What's the weather?"}]
+        messages_dicts = [{"role": "user", "content": "What's the weather?"}]
         tools = [{"function": {"name": "get_weather"}}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         # Create a mock response that mimics having no actual tool calls
         # but with some content
@@ -800,7 +821,10 @@ class TestAzureOpenAICompletion:
     @pytest.mark.asyncio
     async def test_regular_completion_error_handling(self, client):
         """Test error handling in regular completion."""
-        messages = [{"role": "user", "content": "Hello"}]
+        messages_dicts = [{"role": "user", "content": "Hello"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         # Mock client to raise exception
         client.async_client.chat.completions.create = AsyncMock(
@@ -902,7 +926,10 @@ class TestAzureOpenAIInterface:
     @pytest.mark.asyncio
     async def test_create_completion_non_streaming(self, client):
         """Test create_completion with non-streaming."""
-        messages = [{"role": "user", "content": "Hello"}]
+        messages_dicts = [{"role": "user", "content": "Hello"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         expected_result = {"response": "Hello!", "tool_calls": []}
 
@@ -919,7 +946,10 @@ class TestAzureOpenAIInterface:
     @pytest.mark.asyncio
     async def test_create_completion_streaming(self, client):
         """Test create_completion with streaming."""
-        messages = [{"role": "user", "content": "Hello"}]
+        messages_dicts = [{"role": "user", "content": "Hello"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         async def mock_stream_completion(
             messages, tools=None, name_mapping=None, **kwargs
@@ -940,10 +970,13 @@ class TestAzureOpenAIInterface:
     @pytest.mark.asyncio
     async def test_create_completion_with_tools(self, client):
         """Test create_completion with tools."""
-        messages = [{"role": "user", "content": "What's the weather?"}]
+        messages_dicts = [{"role": "user", "content": "What's the weather?"}]
         tools = [
-            {"type": "function", "function": {"name": "get_weather", "parameters": {}}}
+            {"type": "function", "function": {"name": "get_weather", "description": "get_weather description", "parameters": {}}}
         ]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         # Mock regular completion
         expected_result = {
@@ -975,10 +1008,13 @@ class TestAzureOpenAIInterface:
         self, client, monkeypatch
     ):
         """Test create_completion with tools when not supported."""
-        messages = [{"role": "user", "content": "What's the weather?"}]
+        messages_dicts = [{"role": "user", "content": "What's the weather?"}]
         tools = [
-            {"type": "function", "function": {"name": "get_weather", "parameters": {}}}
+            {"type": "function", "function": {"name": "get_weather", "description": "get_weather description", "parameters": {}}}
         ]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         # Mock tools as not supported
         monkeypatch.setattr(
@@ -1057,7 +1093,10 @@ class TestAzureOpenAIIntegration:
     @pytest.mark.asyncio
     async def test_full_integration_non_streaming(self, client):
         """Test full integration for non-streaming completion."""
-        messages = [{"role": "user", "content": "Hello Azure!"}]
+        messages_dicts = [{"role": "user", "content": "Hello Azure!"}]
+        # Convert dicts to Pydantic models
+        messages = [Message.model_validate(msg) for msg in messages_dicts]
+
 
         mock_response = MockChatCompletion("Hello! I'm running on Azure OpenAI.")
 
@@ -1313,7 +1352,7 @@ class TestAzureOpenAIComplexScenarios:
         ]
 
         tools = [
-            {"type": "function", "function": {"name": "test_tool", "parameters": {}}}
+            {"type": "function", "function": {"name": "test_tool", "description": "test_tool description", "parameters": {}}}
         ]
 
         # Mock completion

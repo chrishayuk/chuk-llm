@@ -518,7 +518,9 @@ class AnthropicLLMClient(
     def create_completion(
         self,
         messages: list,  # Pydantic Message objects (or dicts for backward compat)
-        tools: list | None = None,  # Pydantic Tool objects (or dicts for backward compat)
+        tools: (
+            list | None
+        ) = None,  # Pydantic Tool objects (or dicts for backward compat)
         *,
         stream: bool = False,
         max_tokens: int | None = None,
@@ -549,6 +551,7 @@ class AnthropicLLMClient(
             _ensure_pydantic_messages,
             _ensure_pydantic_tools,
         )
+
         messages = _ensure_pydantic_messages(messages)
         tools = _ensure_pydantic_tools(tools)
 
@@ -572,11 +575,20 @@ class AnthropicLLMClient(
         # Apply universal tool name sanitization (stores mapping for restoration)
         name_mapping = {}
         if dict_tools:
-            dict_tools = self._sanitize_tool_names(dict_tools)
+            from chuk_llm.core.models import Tool as ToolModel
+
+            sanitized_tools = self._sanitize_tool_names(dict_tools)
+            # After sanitization, tools are always Pydantic Tool models
+            assert isinstance(sanitized_tools, list) and all(
+                isinstance(t, ToolModel) for t in sanitized_tools
+            )
+
             name_mapping = self._current_name_mapping
             log.debug(
                 f"Tool sanitization: {len(name_mapping)} tools processed for Anthropic compatibility"
             )
+            # Convert Pydantic models back to dicts for Anthropic format conversion
+            dict_tools = [tool.model_dump() for tool in sanitized_tools]  # type: ignore[union-attr]
 
         anth_tools = self._convert_tools(dict_tools)
 

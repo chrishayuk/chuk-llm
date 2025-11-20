@@ -21,6 +21,7 @@ Session Storage:
 # Configure clean logging on import
 import logging
 import os
+from typing import Any
 
 
 def _configure_clean_logging():
@@ -179,7 +180,7 @@ _LAZY_IMPORTS = {
 }
 
 # Cache for already-imported modules
-_imported_attrs = {}
+_imported_attrs: dict[str, Any] = {}
 
 
 def __getattr__(name):
@@ -196,6 +197,7 @@ def __getattr__(name):
         if module_path == ".api":
             # Special handling for .api - use wildcard import to get all provider functions
             from . import api
+
             # Get all exports from api module
             for attr_name in dir(api):
                 if not attr_name.startswith("_"):
@@ -208,6 +210,7 @@ def __getattr__(name):
         else:
             # Import specific submodule
             from importlib import import_module
+
             module = import_module(module_path, package="chuk_llm")
             attr = getattr(module, name)
             _imported_attrs[name] = attr
@@ -216,14 +219,17 @@ def __getattr__(name):
     # Not found
     raise AttributeError(f"module 'chuk_llm' has no attribute '{name}'")
 
+
 # Add session utilities to lazy imports
-_LAZY_IMPORTS.update({
-    "check_session_backend_availability": ".api.session_utils",
-    "validate_session_configuration": ".api.session_utils",
-    "get_session_recommendations": ".api.session_utils",
-    "auto_configure_sessions": ".api.session_utils",
-    "print_session_diagnostics": ".api.session_utils",
-})
+_LAZY_IMPORTS.update(
+    {
+        "check_session_backend_availability": ".api.session_utils",
+        "validate_session_configuration": ".api.session_utils",
+        "get_session_recommendations": ".api.session_utils",
+        "auto_configure_sessions": ".api.session_utils",
+        "print_session_diagnostics": ".api.session_utils",
+    }
+)
 
 # Assume session utilities are available - will fail gracefully if not
 SESSION_UTILS_AVAILABLE = True
@@ -232,13 +238,18 @@ SESSION_UTILS_AVAILABLE = True
 # Enhanced diagnostics function (also lazy)
 def print_full_diagnostics():
     """Print comprehensive ChukLLM diagnostics including session info."""
-    # These will be lazy-loaded when called
+    # Lazy import to avoid loading modules unnecessarily
+    from chuk_llm.api.session_utils import print_session_diagnostics
+    from chuk_llm.api.utils import print_diagnostics
+
     print_diagnostics()
     print_session_diagnostics()
 
 
 # Define what's exported - all lazy imports plus version
-__all__ = ["__version__", "SESSION_UTILS_AVAILABLE", "print_full_diagnostics"] + list(_LAZY_IMPORTS.keys())
+__all__ = ["__version__", "SESSION_UTILS_AVAILABLE", "print_full_diagnostics"] + list(
+    _LAZY_IMPORTS.keys()
+)
 
 # DON'T auto-configure sessions on import - it forces imports!
 # Let it happen lazily when session functions are first used

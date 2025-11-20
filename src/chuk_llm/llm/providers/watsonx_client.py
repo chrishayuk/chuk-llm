@@ -1106,8 +1106,15 @@ class WatsonXLLMClient(
                     from chuk_llm.core.enums import ContentType
 
                     has_images = any(
-                        (isinstance(item, dict) and item.get("type") in ["image", "image_url"]) or
-                        (hasattr(item, "type") and item.type in [ContentType.IMAGE_URL, ContentType.IMAGE_DATA])
+                        (
+                            isinstance(item, dict)
+                            and item.get("type") in ["image", "image_url"]
+                        )
+                        or (
+                            hasattr(item, "type")
+                            and item.type
+                            in [ContentType.IMAGE_URL, ContentType.IMAGE_DATA]
+                        )
                         for item in content
                     )
 
@@ -1117,7 +1124,9 @@ class WatsonXLLMClient(
                         for item in content:
                             if isinstance(item, dict) and item.get("type") == "text":
                                 text_parts.append(item.get("text", ""))
-                            elif hasattr(item, "type") and item.type == ContentType.TEXT:
+                            elif (
+                                hasattr(item, "type") and item.type == ContentType.TEXT
+                            ):
                                 text_parts.append(item.text)
 
                         formatted.append(
@@ -1156,13 +1165,23 @@ class WatsonXLLMClient(
                                     watsonx_content.append(item)
                             else:
                                 # Pydantic object-based content
-                                if hasattr(item, "type") and item.type == ContentType.TEXT:
+                                if (
+                                    hasattr(item, "type")
+                                    and item.type == ContentType.TEXT
+                                ):
                                     watsonx_content.append(
                                         {"type": "text", "text": item.text}
                                     )
-                                elif hasattr(item, "type") and item.type == ContentType.IMAGE_URL:
+                                elif (
+                                    hasattr(item, "type")
+                                    and item.type == ContentType.IMAGE_URL
+                                ):
                                     image_url_data = item.image_url
-                                    url = image_url_data.get("url") if isinstance(image_url_data, dict) else image_url_data
+                                    url = (
+                                        image_url_data.get("url")
+                                        if isinstance(image_url_data, dict)
+                                        else image_url_data
+                                    )
                                     watsonx_content.append(
                                         {"type": "image_url", "image_url": {"url": url}}
                                     )
@@ -1226,6 +1245,7 @@ class WatsonXLLMClient(
             _ensure_pydantic_messages,
             _ensure_pydantic_tools,
         )
+
         messages = _ensure_pydantic_messages(messages)
         tools = _ensure_pydantic_tools(tools)
 
@@ -1235,7 +1255,9 @@ class WatsonXLLMClient(
 
         # Validate request against configuration
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
-            self._validate_request_with_config(dict_messages, dict_tools, stream, **extra)
+            self._validate_request_with_config(
+                dict_messages, dict_tools, stream, **extra
+            )
         )
 
         # Apply max_tokens if provided (will be mapped or skipped based on model)

@@ -181,8 +181,12 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
 
                     # Check if vision is supported before processing (both formats)
                     has_images = any(
-                        (isinstance(item, dict) and item.get("type") == "image_url") or
-                        (hasattr(item, "type") and item.type in [ContentType.IMAGE_URL, ContentType.IMAGE_DATA])
+                        (isinstance(item, dict) and item.get("type") == "image_url")
+                        or (
+                            hasattr(item, "type")
+                            and item.type
+                            in [ContentType.IMAGE_URL, ContentType.IMAGE_DATA]
+                        )
                         for item in content
                     )
 
@@ -195,7 +199,9 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                         for item in content:
                             if isinstance(item, dict) and item.get("type") == "text":
                                 text_parts.append(item.get("text", ""))
-                            elif hasattr(item, "type") and item.type == ContentType.TEXT:
+                            elif (
+                                hasattr(item, "type") and item.type == ContentType.TEXT
+                            ):
                                 text_parts.append(item.text)
 
                         mistral_messages.append(
@@ -217,17 +223,32 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                                     )
                                 elif item.get("type") == "image_url":
                                     image_url = item.get("image_url", {})
-                                    url = image_url.get("url", "") if isinstance(image_url, dict) else str(image_url)
+                                    url = (
+                                        image_url.get("url", "")
+                                        if isinstance(image_url, dict)
+                                        else str(image_url)
+                                    )
 
                                     # Download HTTP(S) URLs and convert to base64
                                     if url.startswith(("http://", "https://")):
                                         try:
-                                            log.debug(f"Downloading image from URL for Mistral: {url[:100]}...")
-                                            encoded_data, image_format = await OpenAIStyleMixin._download_and_encode_image(url)
+                                            log.debug(
+                                                f"Downloading image from URL for Mistral: {url[:100]}..."
+                                            )
+                                            (
+                                                encoded_data,
+                                                image_format,
+                                            ) = await OpenAIStyleMixin._download_and_encode_image(
+                                                url
+                                            )
                                             url = f"data:image/{image_format};base64,{encoded_data}"
-                                            log.debug("Image downloaded and encoded successfully")
+                                            log.debug(
+                                                "Image downloaded and encoded successfully"
+                                            )
                                         except Exception as e:
-                                            log.error(f"Failed to download image from {url}: {e}")
+                                            log.error(
+                                                f"Failed to download image from {url}: {e}"
+                                            )
                                             # Keep original URL and let Mistral handle the error
 
                                     mistral_content.append(
@@ -235,23 +256,44 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                                     )
                             else:
                                 # Pydantic object-based content
-                                if hasattr(item, "type") and item.type == ContentType.TEXT:
+                                if (
+                                    hasattr(item, "type")
+                                    and item.type == ContentType.TEXT
+                                ):
                                     mistral_content.append(
                                         {"type": "text", "text": item.text}
                                     )
-                                elif hasattr(item, "type") and item.type == ContentType.IMAGE_URL:
+                                elif (
+                                    hasattr(item, "type")
+                                    and item.type == ContentType.IMAGE_URL
+                                ):
                                     image_url_data = item.image_url
-                                    url = image_url_data.get("url") if isinstance(image_url_data, dict) else image_url_data
+                                    url = (
+                                        image_url_data.get("url")
+                                        if isinstance(image_url_data, dict)
+                                        else image_url_data
+                                    )
 
                                     # Download HTTP(S) URLs and convert to base64
-                                    if url.startswith(("http://", "https://")):
+                                    if url and url.startswith(("http://", "https://")):
                                         try:
-                                            log.debug(f"Downloading image from URL for Mistral: {url[:100]}...")
-                                            encoded_data, image_format = await OpenAIStyleMixin._download_and_encode_image(url)
+                                            log.debug(
+                                                f"Downloading image from URL for Mistral: {url[:100]}..."
+                                            )
+                                            (
+                                                encoded_data,
+                                                image_format,
+                                            ) = await OpenAIStyleMixin._download_and_encode_image(
+                                                url
+                                            )
                                             url = f"data:image/{image_format};base64,{encoded_data}"
-                                            log.debug("Image downloaded and encoded successfully")
+                                            log.debug(
+                                                "Image downloaded and encoded successfully"
+                                            )
                                         except Exception as e:
-                                            log.error(f"Failed to download image from {url}: {e}")
+                                            log.error(
+                                                f"Failed to download image from {url}: {e}"
+                                            )
                                             # Keep original URL and let Mistral handle the error
 
                                     mistral_content.append(
@@ -350,6 +392,7 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
             if hasattr(message, "tool_calls") and message.tool_calls:
                 if self.supports_feature("tools"):
                     from chuk_llm.core.enums import ToolType
+
                     for tc in message.tool_calls:
                         tool_calls.append(
                             {
@@ -374,7 +417,9 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
 
                 usage = response.usage
                 # Mistral may include reasoning_tokens for magistral models
-                reasoning_tokens = getattr(usage, ResponseKey.REASONING_TOKENS.value, None)
+                reasoning_tokens = getattr(
+                    usage, ResponseKey.REASONING_TOKENS.value, None
+                )
 
                 usage_info = {
                     ResponseKey.PROMPT_TOKENS.value: getattr(
@@ -461,7 +506,9 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
     def create_completion(
         self,
         messages: list,  # Pydantic Message objects (or dicts for backward compat)
-        tools: list | None = None,  # Pydantic Tool objects (or dicts for backward compat)
+        tools: (
+            list | None
+        ) = None,  # Pydantic Tool objects (or dicts for backward compat)
         *,
         stream: bool = False,
         **kwargs: Any,
@@ -486,6 +533,7 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
             _ensure_pydantic_messages,
             _ensure_pydantic_tools,
         )
+
         messages = _ensure_pydantic_messages(messages)
         tools = _ensure_pydantic_tools(tools)
 
@@ -495,7 +543,9 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
 
         # Validate request against configuration
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
-            self._validate_request_with_config(dict_messages, dict_tools, stream, **kwargs)
+            self._validate_request_with_config(
+                dict_messages, dict_tools, stream, **kwargs
+            )
         )
 
         # Apply universal tool name sanitization (stores mapping for restoration)
@@ -649,6 +699,7 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                                                     from chuk_llm.core.enums import (
                                                         ToolType,
                                                     )
+
                                                     tool_call = {
                                                         "id": tool_call_data["id"],
                                                         "type": ToolType.FUNCTION,  # Always use enum value
@@ -691,9 +742,9 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                 # Create chunk response
                 chunk_response = {
                     "response": content,
-                    "tool_calls": completed_tool_calls
-                    if completed_tool_calls
-                    else None,
+                    "tool_calls": (
+                        completed_tool_calls if completed_tool_calls else None
+                    ),
                 }
 
                 # Restore tool names using universal restoration

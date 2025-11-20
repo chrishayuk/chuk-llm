@@ -89,14 +89,12 @@ class OpenAIStyleMixin:
                 else:
                     image_format = "jpeg"  # Default
 
-            encoded_data = base64.b64encode(image_data).decode('utf-8')
+            encoded_data = base64.b64encode(image_data).decode("utf-8")
             return encoded_data, image_format
 
     @classmethod
     async def _process_image_urls_in_messages(
-        cls,
-        messages: list[dict[str, Any]],
-        supports_direct_urls: bool = False
+        cls, messages: list[dict[str, Any]], supports_direct_urls: bool = False
     ) -> list[dict[str, Any]]:
         """
         Process messages to download and encode image URLs if needed.
@@ -126,17 +124,28 @@ class OpenAIStyleMixin:
                         # Check if URL is HTTP(S) and not already base64
                         if url.startswith(("http://", "https://")):
                             try:
-                                logger.debug(f"Downloading image from URL: {url[:100]}...")
-                                encoded_data, image_format = await cls._download_and_encode_image(url)
+                                logger.debug(
+                                    f"Downloading image from URL: {url[:100]}..."
+                                )
+                                (
+                                    encoded_data,
+                                    image_format,
+                                ) = await cls._download_and_encode_image(url)
                                 # Replace URL with base64 data URI
-                                new_url = f"data:image/{image_format};base64,{encoded_data}"
+                                new_url = (
+                                    f"data:image/{image_format};base64,{encoded_data}"
+                                )
                                 item = {
                                     **item,
-                                    "image_url": {**image_url_dict, "url": new_url}
+                                    "image_url": {**image_url_dict, "url": new_url},
                                 }
-                                logger.debug(f"Image downloaded and encoded as {image_format}")
+                                logger.debug(
+                                    f"Image downloaded and encoded as {image_format}"
+                                )
                             except Exception as e:
-                                logger.error(f"Failed to download image from {url}: {e}")
+                                logger.error(
+                                    f"Failed to download image from {url}: {e}"
+                                )
                                 # Keep original URL and let the provider handle the error
 
                         processed_content.append(item)

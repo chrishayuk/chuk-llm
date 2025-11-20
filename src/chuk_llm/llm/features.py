@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from chuk_llm.configuration import Feature, get_config
+from chuk_llm.llm.core.base import _ensure_pydantic_messages, _ensure_pydantic_tools
 
 logger = logging.getLogger(__name__)
 
@@ -346,9 +347,15 @@ class UnifiedLLMInterface:
             self.provider, self.model, tools or []
         )
 
-        # Make the request
-        return await self.client.create_completion(  # type: ignore[misc]
-            processed_messages, tools=processed_tools, **kwargs
+        # Convert to Pydantic models for type safety
+        pydantic_messages = _ensure_pydantic_messages(processed_messages)
+        pydantic_tools = (
+            _ensure_pydantic_tools(processed_tools) if processed_tools else None
+        )
+
+        # Make the request (returns AsyncIterator for streaming, or response dict for non-streaming)
+        return self.client.create_completion(
+            pydantic_messages, tools=pydantic_tools, **kwargs
         )
 
     async def simple_chat(self, message: str, **kwargs) -> str:

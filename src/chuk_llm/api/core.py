@@ -61,9 +61,18 @@ def _convert_dict_to_pydantic_messages(messages: list[dict[str, Any]]) -> list[M
                 if isinstance(part, dict):
                     part_type = part.get("type")
                     if part_type == "text":
-                        content_parts.append(TextContent(type=ContentType.TEXT, text=part.get("text", "")))
+                        content_parts.append(
+                            TextContent(
+                                type=ContentType.TEXT, text=part.get("text", "")
+                            )
+                        )
                     elif part_type == "image_url":
-                        content_parts.append(ImageUrlContent(type=ContentType.IMAGE_URL, image_url=part.get("image_url", {})))
+                        content_parts.append(
+                            ImageUrlContent(
+                                type=ContentType.IMAGE_URL,
+                                image_url=part.get("image_url", {}),
+                            )
+                        )
                     else:
                         # Unknown type, keep as-is (shouldn't happen with proper Pydantic validation)
                         pass
@@ -81,39 +90,45 @@ def _convert_dict_to_pydantic_messages(messages: list[dict[str, Any]]) -> list[M
                     type=ToolType(tc.get("type", "function")),
                     function=FunctionCall(
                         name=tc.get("function", {}).get("name", ""),
-                        arguments=tc.get("function", {}).get("arguments", "{}")
-                    )
+                        arguments=tc.get("function", {}).get("arguments", "{}"),
+                    ),
                 )
                 for tc in msg_dict["tool_calls"]
             ]
 
         # Create Message
-        pydantic_messages.append(Message(
-            role=role,
-            content=content,
-            tool_calls=tool_calls_list,
-            tool_call_id=msg_dict.get("tool_call_id"),
-            name=msg_dict.get("name")
-        ))
+        pydantic_messages.append(
+            Message(
+                role=role,
+                content=content,
+                tool_calls=tool_calls_list,
+                tool_call_id=msg_dict.get("tool_call_id"),
+                name=msg_dict.get("name"),
+            )
+        )
 
     return pydantic_messages
 
 
-def _convert_dict_to_pydantic_tools(tools: list[dict[str, Any]] | None) -> list[Tool] | None:
+def _convert_dict_to_pydantic_tools(
+    tools: list[dict[str, Any]] | None,
+) -> list[Tool] | None:
     """Convert dict tools to Pydantic Tool objects for backward compatibility."""
     if not tools:
         return None
 
     pydantic_tools = []
     for tool_dict in tools:
-        pydantic_tools.append(Tool(
-            type=ToolType(tool_dict.get("type", "function")),
-            function=ToolFunction(
-                name=tool_dict.get("function", {}).get("name", ""),
-                description=tool_dict.get("function", {}).get("description", ""),
-                parameters=tool_dict.get("function", {}).get("parameters", {})
+        pydantic_tools.append(
+            Tool(
+                type=ToolType(tool_dict.get("type", "function")),
+                function=ToolFunction(
+                    name=tool_dict.get("function", {}).get("name", ""),
+                    description=tool_dict.get("function", {}).get("description", ""),
+                    parameters=tool_dict.get("function", {}).get("parameters", {}),
+                ),
             )
-        ))
+        )
 
     return pydantic_tools
 
@@ -351,12 +366,12 @@ async def ask(
         "api_key": api_key or effective_api_key,  # Dynamic override takes precedence
         "api_base": base_url or effective_api_base,  # Dynamic override takes precedence
         "system_prompt": system_prompt or config.get("system_prompt"),
-        "temperature": temperature
-        if temperature is not None
-        else config.get("temperature"),
-        "max_tokens": max_tokens
-        if max_tokens is not None
-        else config.get("max_tokens"),
+        "temperature": (
+            temperature if temperature is not None else config.get("temperature")
+        ),
+        "max_tokens": (
+            max_tokens if max_tokens is not None else config.get("max_tokens")
+        ),
     }
 
     # Validate request compatibility
@@ -469,7 +484,9 @@ async def ask(
             f"Using provider client for {effective_provider}/{effective_model}"
         )
         # Convert dict messages/tools to Pydantic objects for type safety
-        pydantic_messages = _convert_dict_to_pydantic_messages(completion_args["messages"])
+        pydantic_messages = _convert_dict_to_pydantic_messages(
+            completion_args["messages"]
+        )
         pydantic_tools = _convert_dict_to_pydantic_tools(completion_args.get("tools"))
 
         # Update completion_args with Pydantic objects
@@ -630,12 +647,16 @@ async def stream(
         "api_key": effective_api_key,
         "api_base": effective_api_base,
         "system_prompt": system_prompt or config.get("system_prompt"),
-        "temperature": kwargs.get("temperature")
-        if "temperature" in kwargs
-        else config.get("temperature"),
-        "max_tokens": kwargs.get("max_tokens")
-        if "max_tokens" in kwargs
-        else config.get("max_tokens"),
+        "temperature": (
+            kwargs.get("temperature")
+            if "temperature" in kwargs
+            else config.get("temperature")
+        ),
+        "max_tokens": (
+            kwargs.get("max_tokens")
+            if "max_tokens" in kwargs
+            else config.get("max_tokens")
+        ),
     }
 
     # Validate streaming support
@@ -761,7 +782,9 @@ async def stream(
         )
 
         # Convert dict messages/tools to Pydantic objects for type safety
-        pydantic_messages = _convert_dict_to_pydantic_messages(completion_args["messages"])
+        pydantic_messages = _convert_dict_to_pydantic_messages(
+            completion_args["messages"]
+        )
         pydantic_tools = _convert_dict_to_pydantic_tools(completion_args.get("tools"))
 
         # Update completion_args with Pydantic objects

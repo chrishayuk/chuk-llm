@@ -584,9 +584,11 @@ class ToolCompatibilityMixin:
             "requires_sanitization": requirements.compatibility_level
             != CompatibilityLevel.NATIVE,
             "compatibility_level": requirements.compatibility_level.value,
-            "forbidden_characters": list(requirements.forbidden_chars)
-            if requirements.forbidden_chars
-            else [],
+            "forbidden_characters": (
+                list(requirements.forbidden_chars)
+                if requirements.forbidden_chars
+                else []
+            ),
             "sample_transformations": self._get_sample_transformations(),
             "case_sensitive": requirements.case_sensitive,
         }
@@ -625,11 +627,11 @@ class ToolCompatibilityMixin:
             for original in samples
         }
 
-    def _sanitize_tool_names(
-        self, tools: list[dict[str, Any]] | None
-    ) -> list[dict[str, Any]] | None:
+    def _sanitize_tool_names(self, tools: list[Any] | None) -> list[Any] | None:
         """
         Standardized tool name sanitization with bidirectional mapping.
+
+        Pydantic native - works with Tool objects or dicts (backward compatible).
 
         This method should be called by all provider clients before sending
         tools to the API. It ensures compatibility while preserving original
@@ -647,8 +649,16 @@ class ToolCompatibilityMixin:
         # Reset mapping for new request
         self._current_name_mapping = {}
 
+        # Auto-convert dicts to Pydantic models using model_validate
+        from chuk_llm.core.models import Tool as ToolModel
+
+        pydantic_tools = [
+            tool if isinstance(tool, ToolModel) else ToolModel.model_validate(tool)
+            for tool in tools
+        ]
+
         sanitized_tools, self._current_name_mapping = self._sanitize_tools_with_mapping(
-            tools
+            pydantic_tools
         )
 
         # Log sanitization activity
@@ -663,50 +673,59 @@ class ToolCompatibilityMixin:
         return sanitized_tools
 
     def _sanitize_tools_with_mapping(
-        self, tools: list[dict[str, Any]]
-    ) -> tuple[list[dict[str, Any]], dict[str, str]]:
+        self, tools: list[Any]
+    ) -> tuple[list[Any], dict[str, str]]:
         """
         Sanitize tools and create bidirectional mapping for restoration.
+
+        Pydantic native - creates new Tool instances with sanitized names.
 
         Returns:
             Tuple of (sanitized_tools, name_mapping)
             name_mapping: Dict[sanitized_name, original_name]
         """
-        sanitized_tools = []
+        from chuk_llm.core.enums import ToolType
+        from chuk_llm.core.models import Tool, ToolFunction
+
+        sanitized_tools: list[Tool] = []
         name_mapping = {}
 
         for tool in tools:
-            if (
-                isinstance(tool, dict)
-                and tool.get("type") == "function"
-                and "function" in tool
-            ):
-                original_name = tool["function"].get("name", "")
+            original_name = tool.function.name
 
-                if original_name:
-                    # Sanitize the name
-                    sanitized_name = self._sanitizer.sanitize_for_provider(
-                        original_name, self.provider_name
-                    )
+            if original_name:
+                # Sanitize the name
+                sanitized_name = self._sanitizer.sanitize_for_provider(
+                    original_name, self.provider_name
+                )
 
-                    # Store mapping
-                    name_mapping[sanitized_name] = original_name
+                # Store mapping
+                name_mapping[sanitized_name] = original_name
 
-                    # Create sanitized tool
-                    sanitized_tool = tool.copy()
-                    sanitized_tool["function"] = tool["function"].copy()
-                    sanitized_tool["function"]["name"] = sanitized_name
+                # Create new ToolFunction with sanitized name (Tool is frozen, must create new instance)
+                sanitized_function = ToolFunction(
+                    name=sanitized_name,
+                    description=tool.function.description,
+                    parameters=tool.function.parameters,
+                )
 
-                    sanitized_tools.append(sanitized_tool)
-                else:
-                    # Tool without name, add default
-                    sanitized_tool = tool.copy()
-                    sanitized_tool["function"] = tool["function"].copy()
-                    sanitized_tool["function"]["name"] = "unnamed_function"
-                    sanitized_tools.append(sanitized_tool)
+                # Create new Tool with sanitized function
+                sanitized_tool = Tool(
+                    type=ToolType.FUNCTION, function=sanitized_function
+                )
+
+                sanitized_tools.append(sanitized_tool)
             else:
-                # Non-function tools pass through unchanged
-                sanitized_tools.append(tool)
+                # Tool without name - use unnamed_function
+                sanitized_function = ToolFunction(
+                    name="unnamed_function",
+                    description=tool.function.description,
+                    parameters=tool.function.parameters,
+                )
+                sanitized_tool = Tool(
+                    type=ToolType.FUNCTION, function=sanitized_function
+                )
+                sanitized_tools.append(sanitized_tool)
 
         return sanitized_tools, name_mapping
 

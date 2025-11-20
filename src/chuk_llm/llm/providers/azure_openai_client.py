@@ -21,9 +21,12 @@ import logging
 import os
 import uuid
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import openai
+
+if TYPE_CHECKING:
+    from chuk_llm.core.models import Message, Tool
 
 from chuk_llm.llm.providers._config_mixin import ConfigAwareProviderMixin
 
@@ -189,12 +192,16 @@ class AzureOpenAILLMClient(
             for pattern in ["o1", "o3", "o4", "o5", "gpt-5", "gpt5"]
         ):
             return {
-                "max_context_length": 272000
-                if "gpt-5" in deployment_lower or "gpt5" in deployment_lower
-                else 200000,
-                "max_output_tokens": 16384
-                if "gpt-5" in deployment_lower or "gpt5" in deployment_lower
-                else 65536,
+                "max_context_length": (
+                    272000
+                    if "gpt-5" in deployment_lower or "gpt5" in deployment_lower
+                    else 200000
+                ),
+                "max_output_tokens": (
+                    16384
+                    if "gpt-5" in deployment_lower or "gpt5" in deployment_lower
+                    else 65536
+                ),
                 "requires_max_completion_tokens": True,
                 "parameter_mapping": {"max_tokens": "max_completion_tokens"},
                 "unsupported_params": [
@@ -394,11 +401,11 @@ class AzureOpenAILLMClient(
 
     def _validate_request_with_config(
         self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        messages: list[Message],
+        tools: list[Tool] | None = None,
         stream: bool = False,
         **kwargs,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]] | None, bool, dict[str, Any]]:
+    ) -> tuple[list[Message], list[Tool] | None, bool, dict[str, Any]]:
         """
         Enhanced validation that uses smart defaults for unknown deployments.
         FIXED: Actually disable streaming when not supported.
@@ -429,26 +436,15 @@ class AzureOpenAILLMClient(
                     f"Using smart default: assuming deployment '{self.azure_deployment}' supports tools"
                 )
 
-        # Check vision support
+        # Check vision support (Pydantic native)
         has_vision = False
         for msg in messages:
-            # Handle both Pydantic Message objects and dict messages
-            if hasattr(msg, 'content'):
-                content = msg.content
-            else:
-                content = msg.get("content") if isinstance(msg, dict) else None
-
+            content = msg.content
             if isinstance(content, list):
                 for item in content:
-                    # Handle both Pydantic content objects and dicts
-                    if hasattr(item, 'type'):
-                        if item.type == "image_url":
-                            has_vision = True
-                            break
-                    elif isinstance(item, dict) and item.get("type") == "image_url":
+                    if hasattr(item, "type") and item.type == "image_url":
                         has_vision = True
                         break
-
             if has_vision:
                 break
         if has_vision and not self.supports_feature("vision"):
@@ -464,10 +460,47 @@ class AzureOpenAILLMClient(
                 )
                 validated_kwargs.pop("response_format", None)
 
-        # Use smart parameter defaults if no config
-        if not self._has_explicit_deployment_config(self.azure_deployment):
-            smart_params = self._get_smart_default_parameters(self.azure_deployment)
+        # Get smart parameters for this deployment
+        smart_params = self._get_smart_default_parameters(self.azure_deployment)
 
+        # Apply parameter mapping (e.g., max_tokens -> max_completion_tokens for GPT-5/o1+ models)
+        # This is applied REGARDLESS of whether there's explicit config, because it's based on model architecture
+        parameter_mapping = smart_params.get("parameter_mapping", {})
+        if parameter_mapping:
+            for old_param, new_param in parameter_mapping.items():
+                if old_param in validated_kwargs and new_param not in validated_kwargs:
+                    original_value = validated_kwargs[old_param]
+                    validated_kwargs[new_param] = original_value
+                    validated_kwargs.pop(old_param)
+
+                    # For reasoning models, ensure minimum max_completion_tokens
+                    # Reasoning models need tokens for BOTH reasoning AND output
+                    if new_param == "max_completion_tokens" and original_value < 1000:
+                        # If user specified a small value like 150, bump it to at least 2000
+                        # to allow room for reasoning tokens + output
+                        validated_kwargs[new_param] = max(2000, original_value * 10)
+                        log.debug(
+                            f"[azure_openai] Increased max_completion_tokens from {original_value} to {validated_kwargs[new_param]} "
+                            f"for reasoning model '{self.azure_deployment}' (needs tokens for reasoning + output)"
+                        )
+                    else:
+                        log.debug(
+                            f"[azure_openai] Mapped parameter '{old_param}' -> '{new_param}' for '{self.azure_deployment}'"
+                        )
+
+        # Remove unsupported parameters
+        # This is applied REGARDLESS of whether there's explicit config, because it's based on model architecture
+        unsupported_params = smart_params.get("unsupported_params", [])
+        if unsupported_params:
+            for param in unsupported_params:
+                if param in validated_kwargs:
+                    removed_value = validated_kwargs.pop(param)
+                    log.debug(
+                        f"[azure_openai] Removed unsupported parameter '{param}' (value: {removed_value}) for '{self.azure_deployment}'"
+                    )
+
+        # Apply smart parameter defaults only if no explicit config
+        if not self._has_explicit_deployment_config(self.azure_deployment):
             # Apply smart defaults for max_tokens if not set
             if (
                 "max_tokens" not in validated_kwargs
@@ -511,8 +544,8 @@ class AzureOpenAILLMClient(
     # ------------------------------------------------------------------ #
     def create_completion(
         self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        messages: list[Message],
+        tools: list[Tool] | None = None,
         *,
         stream: bool = False,
         **kwargs: Any,
@@ -522,9 +555,28 @@ class AzureOpenAILLMClient(
         Uses universal tool name compatibility with bidirectional mapping.
         Supports discovered deployments with smart defaults!
         """
+        # Pydantic native - auto-convert dicts to Pydantic models if needed
+        from chuk_llm.core.models import Message as MessageModel
+        from chuk_llm.core.models import Tool as ToolModel
+
+        pydantic_messages = [
+            msg if isinstance(msg, MessageModel) else MessageModel.model_validate(msg)
+            for msg in messages
+        ]
+        pydantic_tools = (
+            [
+                tool if isinstance(tool, ToolModel) else ToolModel.model_validate(tool)
+                for tool in tools
+            ]
+            if tools
+            else None
+        )
+
         # Validate request against configuration (with smart defaults for unknown deployments)
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
-            self._validate_request_with_config(messages, tools, stream, **kwargs)
+            self._validate_request_with_config(
+                pydantic_messages, pydantic_tools, stream, **kwargs
+            )
         )
 
         # Apply universal tool name sanitization (stores mapping for restoration)
@@ -539,13 +591,19 @@ class AzureOpenAILLMClient(
         # Use configuration-aware parameter adjustment
         validated_kwargs = self._adjust_parameters_for_provider(validated_kwargs)
 
+        # Convert Pydantic models to dicts for OpenAI SDK
+        messages_dicts = [msg.model_dump() for msg in validated_messages]
+        tools_dicts = (
+            [tool.model_dump() for tool in validated_tools] if validated_tools else None
+        )
+
         if validated_stream:
             return self._stream_completion_async(
-                validated_messages, validated_tools, name_mapping, **validated_kwargs
+                messages_dicts, tools_dicts, name_mapping, **validated_kwargs
             )
         else:
             return self._regular_completion(
-                validated_messages, validated_tools, name_mapping, **validated_kwargs
+                messages_dicts, tools_dicts, name_mapping, **validated_kwargs
             )
 
     async def _stream_completion_async(
@@ -580,6 +638,16 @@ class AzureOpenAILLMClient(
                 if tools:
                     request_params["tools"] = tools
                 request_params["stream"] = True
+
+                # For reasoning models (GPT-5, o1+), enable streaming of reasoning tokens
+                # This allows seeing the thinking process in real-time
+                if self.supports_feature("reasoning"):
+                    # Use stream_options to get reasoning content in the stream
+                    if "stream_options" not in request_params:
+                        request_params["stream_options"] = {"include_usage": True}
+                    log.debug(
+                        f"[azure_openai] Enabled stream_options for reasoning model '{self.azure_deployment}'"
+                    )
 
                 response_stream = await self.async_client.chat.completions.create(
                     **request_params
@@ -724,9 +792,9 @@ class AzureOpenAILLMClient(
                     # Prepare result
                     result = {
                         "response": content,
-                        "tool_calls": completed_tool_calls
-                        if completed_tool_calls
-                        else None,
+                        "tool_calls": (
+                            completed_tool_calls if completed_tool_calls else None
+                        ),
                     }
 
                     # Restore tool names using universal restoration
@@ -1005,13 +1073,49 @@ class AzureOpenAILLMClient(
         adjusted = kwargs.copy()
 
         try:
+            # Get smart parameters for this deployment
+            smart_params = self._get_smart_default_parameters(self.azure_deployment)
+
+            # Apply parameter mapping (e.g., max_tokens -> max_completion_tokens)
+            # This must be done BEFORE validation to ensure correct parameter names
+            parameter_mapping = smart_params.get("parameter_mapping", {})
+            if parameter_mapping:
+                for old_param, new_param in parameter_mapping.items():
+                    if old_param in adjusted and new_param not in adjusted:
+                        original_value = adjusted[old_param]
+                        adjusted[new_param] = original_value
+                        adjusted.pop(old_param)
+
+                        # For reasoning models, ensure minimum max_completion_tokens
+                        if (
+                            new_param == "max_completion_tokens"
+                            and original_value < 1000
+                        ):
+                            adjusted[new_param] = max(2000, original_value * 10)
+                            log.debug(
+                                f"[azure_openai] Increased max_completion_tokens from {original_value} to {adjusted[new_param]} "
+                                f"for reasoning model (needs tokens for reasoning + output)"
+                            )
+                        else:
+                            log.debug(
+                                f"[azure_openai] Mapped parameter '{old_param}' -> '{new_param}' in adjust_parameters"
+                            )
+
+            # Remove unsupported parameters
+            unsupported_params = smart_params.get("unsupported_params", [])
+            if unsupported_params:
+                for param in unsupported_params:
+                    if param in adjusted:
+                        removed_value = adjusted.pop(param)
+                        log.debug(
+                            f"[azure_openai] Removed unsupported parameter '{param}' (value: {removed_value}) in adjust_parameters"
+                        )
+
             # Use the configuration-aware parameter validation
             adjusted = self.validate_parameters(**adjusted)
 
             # If no explicit config, use smart defaults
             if not self._has_explicit_deployment_config(self.azure_deployment):
-                smart_params = self._get_smart_default_parameters(self.azure_deployment)
-
                 # Apply smart defaults if not already set
                 if (
                     "max_tokens" not in adjusted
@@ -1023,7 +1127,7 @@ class AzureOpenAILLMClient(
                     else:
                         adjusted["max_tokens"] = max_output
                     log.debug(
-                        f"[azure_openai] Applied smart default max_tokens={max_output} for '{self.azure_deployment}'"
+                        f"[azure_openai] Applied smart default for max output tokens={max_output} for '{self.azure_deployment}'"
                     )
 
             # Additional Azure OpenAI-specific parameter handling
@@ -1047,9 +1151,14 @@ class AzureOpenAILLMClient(
 
         except Exception as e:
             log.debug(f"Could not adjust parameters using config: {e}")
-            # Fallback: ensure max_tokens is set
-            if "max_tokens" not in adjusted:
-                adjusted["max_tokens"] = 4096
+            # Fallback: check if we need max_completion_tokens instead
+            smart_params = self._get_smart_default_parameters(self.azure_deployment)
+            if smart_params.get("requires_max_completion_tokens"):
+                if "max_completion_tokens" not in adjusted:
+                    adjusted["max_completion_tokens"] = 4096
+            else:
+                if "max_tokens" not in adjusted:
+                    adjusted["max_tokens"] = 4096
 
         return adjusted
 
@@ -1057,10 +1166,20 @@ class AzureOpenAILLMClient(
         """Cleanup resources"""
         # Reset name mapping
         self._current_name_mapping = {}
-        if hasattr(self.async_client, "close"):
-            await self.async_client.close()
-        if hasattr(self.client, "close"):
-            self.client.close()
+        try:
+            if hasattr(self.async_client, "close"):
+                await self.async_client.close()
+        except RuntimeError as e:
+            # Event loop may already be closed, which is fine
+            if "Event loop is closed" not in str(e):
+                raise
+        try:
+            if hasattr(self.client, "close"):
+                self.client.close()
+        except RuntimeError as e:
+            # Event loop may already be closed, which is fine
+            if "Event loop is closed" not in str(e):
+                raise
 
     def __repr__(self) -> str:
         return f"AzureOpenAILLMClient(deployment={self.azure_deployment}, model={self.model}, endpoint={self.azure_endpoint})"

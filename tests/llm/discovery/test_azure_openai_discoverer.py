@@ -206,9 +206,10 @@ class TestAzureOpenAIDiscoverDeployments:
     @pytest.mark.asyncio
     async def test_discover_available_models_no_endpoint(self):
         """Test _discover_available_models with no endpoint"""
-        discoverer = AzureOpenAIModelDiscoverer(api_key="test-key")
-        models = await discoverer._discover_available_models()
-        assert models == []
+        with patch.dict('os.environ', {}, clear=True):
+            discoverer = AzureOpenAIModelDiscoverer(api_key="test-key")
+            models = await discoverer._discover_available_models()
+            assert models == []
 
     @pytest.mark.asyncio
     async def test_discover_available_models_no_auth(self):
@@ -550,9 +551,10 @@ class TestAzureOpenAIDeploymentTesting:
     @pytest.mark.asyncio
     async def test_test_deployment_availability_no_endpoint(self):
         """Test deployment availability check with no endpoint"""
-        discoverer = AzureOpenAIModelDiscoverer(api_key="test-key")
-        result = await discoverer.test_deployment_availability("gpt-4")
-        assert result is False
+        with patch.dict('os.environ', {}, clear=True):
+            discoverer = AzureOpenAIModelDiscoverer(api_key="test-key")
+            result = await discoverer.test_deployment_availability("gpt-4")
+            assert result is False
 
     @pytest.mark.asyncio
     async def test_test_deployment_availability_import_error(self):

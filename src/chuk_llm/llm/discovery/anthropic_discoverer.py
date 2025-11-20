@@ -31,9 +31,7 @@ class AnthropicModelDiscoverer(BaseModelDiscoverer):
             }
 
             async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(
-                    f"{self.api_base}/models", headers=headers
-                )
+                response = await client.get(f"{self.api_base}/models", headers=headers)
                 response.raise_for_status()
                 data = response.json()
 
@@ -114,9 +112,13 @@ class AnthropicModelDiscoverer(BaseModelDiscoverer):
                 {
                     "model_family": "sonnet",
                     "tier": "balanced",
-                    "supports_vision": "3-5" in model_lower or "3.5" in model_lower or "3.7" in model_lower,
+                    "supports_vision": "3-5" in model_lower
+                    or "3.5" in model_lower
+                    or "3.7" in model_lower,
                     "estimated_context_length": 200000,
-                    "max_output_tokens": 8192 if "3.5" in model_lower or "3.7" in model_lower else 4096,
+                    "max_output_tokens": (
+                        8192 if "3.5" in model_lower or "3.7" in model_lower else 4096
+                    ),
                 }
             )
         elif "haiku" in model_lower:

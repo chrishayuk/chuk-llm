@@ -13,7 +13,7 @@ import os
 import time
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dotenv import load_dotenv
 from google import genai
@@ -25,6 +25,9 @@ from chuk_llm.llm.core.base import BaseLLMClient
 
 # mixin
 from .mixin import ImageGeneratorMixin
+
+if TYPE_CHECKING:
+    from chuk_llm.core.models import Message, Tool
 
 log = logging.getLogger(__name__)
 
@@ -63,8 +66,8 @@ class ImageGeneratorClient(ImageGeneratorMixin, BaseLLMClient):
 
     async def create_completion(
         self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        messages: list[Message],
+        tools: list[Tool] | None = None,
         *,
         stream: bool = False,
         **kwargs,
