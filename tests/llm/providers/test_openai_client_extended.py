@@ -353,7 +353,7 @@ class TestOpenAIContextMemory:
             ]
         )
 
-        client.async_client.chat.completions.create = AsyncMock(
+        client.client.chat.completions.create = AsyncMock(
             return_value=mock_stream
         )
 
@@ -464,7 +464,7 @@ class TestOpenAIContextMemory:
             else:
                 return MockChatCompletion("Your favorite color is blue.")
 
-        client.async_client.chat.completions.create = mock_create
+        client.client.chat.completions.create = mock_create
 
         # Test without context
         result1 = await client._regular_completion(messages_no_context)
@@ -571,7 +571,7 @@ class TestOpenAIAdvancedTools:
             MockToolCall(function_name="get_news", arguments='{"location": "NYC"}'),
         ]
         mock_response = MockChatCompletion("", mock_tool_calls)
-        client.async_client.chat.completions.create = AsyncMock(
+        client.client.chat.completions.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -619,7 +619,7 @@ class TestOpenAIAdvancedTools:
             function_name="complex_search", arguments=json.dumps(complex_args)
         )
         mock_response = MockChatCompletion("", [mock_tool_call])
-        client.async_client.chat.completions.create = AsyncMock(
+        client.client.chat.completions.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -650,7 +650,7 @@ class TestOpenAIProviderSpecificBehaviors:
             captured_kwargs.update(kwargs)
             return MockChatCompletion("Response")
 
-        client.async_client.chat.completions.create = mock_create
+        client.client.chat.completions.create = mock_create
 
         await client.create_completion(
             messages,
@@ -678,7 +678,7 @@ class TestOpenAIProviderSpecificBehaviors:
             captured_kwargs.update(kwargs)
             return MockChatCompletion("DeepSeek response")
 
-        deepseek_client.async_client.chat.completions.create = mock_create
+        deepseek_client.client.chat.completions.create = mock_create
 
         await deepseek_client.create_completion(
             messages,
@@ -736,7 +736,7 @@ class TestOpenAIErrorRecovery:
                 raise Exception("Rate limit exceeded")
             return MockChatCompletion("Success after retry")
 
-        client.async_client.chat.completions.create = mock_create
+        client.client.chat.completions.create = mock_create
 
         # Should eventually succeed after retries
         result = await client.create_completion(messages, stream=False)
@@ -756,7 +756,7 @@ class TestOpenAIErrorRecovery:
                 raise Exception("Connection timeout")
             return MockChatCompletion("Recovered from network error")
 
-        client.async_client.chat.completions.create = mock_create
+        client.client.chat.completions.create = mock_create
 
         result = await client.create_completion(messages, stream=False)
         assert (
@@ -775,7 +775,7 @@ class TestOpenAIErrorRecovery:
                 raise Exception("Tools not available")
             return MockChatCompletion("Handled without tools")
 
-        client.async_client.chat.completions.create = mock_create
+        client.client.chat.completions.create = mock_create
 
         # Should handle tool failure gracefully
         result = await client.create_completion(messages, tools=tools, stream=False)
@@ -799,7 +799,7 @@ class TestOpenAIErrorRecovery:
         async def mock_create(**kwargs):
             return mock_stream()
 
-        client.async_client.chat.completions.create = mock_create
+        client.client.chat.completions.create = mock_create
 
         chunks = []
         async for chunk in client.create_completion(messages, stream=True):
@@ -849,7 +849,7 @@ class TestOpenAIParameterValidationEdgeCases:
 
             mock_create = create_mock_create(captured_kwargs)
 
-            client.async_client.chat.completions.create = mock_create
+            client.client.chat.completions.create = mock_create
 
             await client.create_completion(messages, stream=False, **params)
 
@@ -886,7 +886,7 @@ class TestOpenAIParameterValidationEdgeCases:
             captured_kwargs.update(kwargs)
             return MockChatCompletion("OK")
 
-        client.async_client.chat.completions.create = mock_create
+        client.client.chat.completions.create = mock_create
 
         # Test with string numbers that should be coerced
         await client.create_completion(
@@ -927,7 +927,7 @@ class TestOpenAIParameterValidationEdgeCases:
             captured_kwargs.update(kwargs)
             return MockChatCompletion("OK")
 
-        client.async_client.chat.completions.create = mock_create
+        client.client.chat.completions.create = mock_create
 
         await client.create_completion(
             messages, stream=False, temperature=None, max_tokens=None, stop=None
@@ -959,7 +959,7 @@ class TestOpenAIPerformanceOptimization:
         messages.append({"role": "user", "content": "Final question"})
 
         mock_response = MockChatCompletion("Final answer")
-        client.async_client.chat.completions.create = AsyncMock(
+        client.client.chat.completions.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -977,7 +977,7 @@ class TestOpenAIPerformanceOptimization:
         chunks = [MockStreamChunk(f"chunk{i}") for i in range(100)]
         mock_stream = MockAsyncStream(chunks)
 
-        client.async_client.chat.completions.create = AsyncMock(
+        client.client.chat.completions.create = AsyncMock(
             return_value=mock_stream
         )
 
@@ -997,7 +997,7 @@ class TestOpenAIPerformanceOptimization:
             mock_stream = MockAsyncStream(
                 [MockStreamChunk("Response"), MockStreamChunk(" complete")]
             )
-            client.async_client.chat.completions.create = AsyncMock(
+            client.client.chat.completions.create = AsyncMock(
                 return_value=mock_stream
             )
 
@@ -1032,7 +1032,7 @@ class TestOpenAISpecialMessageTypes:
         ]
 
         mock_response = MockChatCompletion("Handled function message")
-        client.async_client.chat.completions.create = AsyncMock(
+        client.client.chat.completions.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -1055,7 +1055,7 @@ class TestOpenAISpecialMessageTypes:
             captured_kwargs.update(kwargs)
             return MockChatCompletion("Response with names")
 
-        client.async_client.chat.completions.create = mock_create
+        client.client.chat.completions.create = mock_create
 
         await client.create_completion(messages, stream=False)
 
@@ -1082,7 +1082,7 @@ class TestOpenAISpecialMessageTypes:
         ]
 
         mock_response = MockChatCompletion("Tool was used")
-        client.async_client.chat.completions.create = AsyncMock(
+        client.client.chat.completions.create = AsyncMock(
             return_value=mock_response
         )
 
@@ -1115,7 +1115,7 @@ class TestOpenAIResponseFormats:
             captured_kwargs.update(kwargs)
             return MockChatCompletion('{"result": "json_response"}')
 
-        client.async_client.chat.completions.create = mock_create
+        client.client.chat.completions.create = mock_create
 
         result = await client.create_completion(
             messages, stream=False, response_format={"type": "json_object"}
@@ -1140,7 +1140,7 @@ class TestOpenAIResponseFormats:
             captured_kwargs.update(kwargs)
             return MockChatCompletion("Regular response")
 
-        client.async_client.chat.completions.create = mock_create
+        client.client.chat.completions.create = mock_create
 
         result = await client.create_completion(
             messages, stream=False, response_format={"type": "json_object"}

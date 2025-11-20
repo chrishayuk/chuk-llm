@@ -282,6 +282,62 @@ async def demo_vision(client, provider: str, model: str):
 
 
 # =============================================================================
+# Demo 4b: Vision with URL
+# =============================================================================
+
+async def demo_vision_url(client, provider: str, model: str):
+    """Vision with public URL - providers handle URL fetching automatically"""
+    print(f"\n{'='*70}")
+    print("Demo 4b: Vision with Public URL")
+    print(f"{'='*70}")
+
+    config = get_config()
+    if not config.supports_feature(provider, Feature.VISION, model):
+        print(f"⚠️  Model {model} doesn't support vision")
+        return None
+
+    # Use a stable, public domain image - Unsplash logo (public API)
+    # This is a direct image link that allows programmatic access
+    image_url = "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400&h=300&fit=crop"
+
+    print(f"Provider: {provider}")
+    print(f"Model: {model}")
+    print(f"User: What is in this image? Describe it briefly.")
+    print(f"Image URL: {image_url}")
+    print("\n⏳ Analyzing image from URL...")
+
+    messages = [
+        Message(
+            role=MessageRole.USER,
+            content=[
+                TextContent(
+                    type=ContentType.TEXT,
+                    text="What is in this image? Describe it briefly."
+                ),
+                ImageUrlContent(
+                    type=ContentType.IMAGE_URL,
+                    image_url={"url": image_url}
+                ),
+            ],
+        )
+    ]
+
+    try:
+        response = await client.create_completion(messages, max_tokens=150)
+
+        print(f"\n✅ Response:")
+        print(f"{response['response']}")
+
+        return response
+
+    except Exception as e:
+        print(f"\n❌ Error processing image URL: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+# =============================================================================
 # Demo 5: JSON Mode
 # =============================================================================
 
@@ -473,7 +529,21 @@ Output ONLY these fields, no additional properties."""
 
     print(f"\n✅ Structured JSON Response:")
     try:
-        parsed = json.loads(response['response'])
+        # Extract JSON from response, handling markdown code fences
+        response_text = response['response'].strip()
+
+        # Remove markdown code fences if present
+        if response_text.startswith("```"):
+            # Find the start and end of the JSON content
+            lines = response_text.split('\n')
+            # Remove first line (```json or ```)
+            lines = lines[1:]
+            # Remove last line if it's just ```
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            response_text = '\n'.join(lines)
+
+        parsed = json.loads(response_text)
         print(json.dumps(parsed, indent=2))
 
         # Validate against schema (basic check)
@@ -586,6 +656,13 @@ async def demo_model_discovery(client, provider: str, model: str):
                 api_key=os.getenv("WATSONX_API_KEY"),
                 project_id=os.getenv("WATSONX_PROJECT_ID")
             )
+        elif provider == "gemini":
+            from chuk_llm.llm.discovery.gemini_discoverer import GeminiModelDiscoverer
+            import os
+            discoverer = GeminiModelDiscoverer(
+                provider_name="gemini",
+                api_key=os.getenv("GOOGLE_API_KEY")
+            )
         elif provider in ["deepseek", "groq", "openrouter", "perplexity"]:
             # OpenAI-compatible providers can use OpenAI discoverer
             from chuk_llm.llm.discovery.openai_discoverer import OpenAIModelDiscoverer
@@ -612,7 +689,7 @@ async def demo_model_discovery(client, provider: str, model: str):
             )
         else:
             print(f"⚠️  Model discovery not available for {provider}")
-            print(f"   Supported providers: openai, anthropic, ollama, azure_openai, mistral, watsonx, deepseek, groq, openrouter, perplexity")
+            print(f"   Supported providers: openai, anthropic, ollama, azure_openai, mistral, watsonx, gemini, deepseek, groq, openrouter, perplexity")
             return None
 
         print(f"⏳ Discovering models from {provider}...")
@@ -698,6 +775,7 @@ async def run_all_demos(client, provider: str, model: str, skip_tools=False, ski
 
     if not skip_vision:
         demos.append(("Vision", demo_vision(client, provider, model)))
+        demos.append(("Vision with URL", demo_vision_url(client, provider, model)))
 
     demos.extend([
         ("JSON Mode", demo_json_mode(client, provider, model)),

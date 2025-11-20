@@ -1,8 +1,11 @@
 # tests/providers/test_mixins.py
+import asyncio
+import base64
 import uuid
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -1086,3 +1089,1016 @@ async def test_stream_debug_logging(mixin, mock_logger):
 
     # Should have logged some debug information
     assert len(debug_calls) > 0
+
+
+# ---------------------------------------------------------------------------
+# Image URL downloading and processing tests (lines 63-93, 111-150)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_download_and_encode_image_jpeg_content_type(mixin):
+    """Test downloading and encoding JPEG image from content-type"""
+    test_image_data = b"fake_jpeg_data"
+    mock_response = MagicMock()
+    mock_response.content = test_image_data
+    mock_response.headers = {"content-type": "image/jpeg"}
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=mock_response
+        )
+
+        encoded_data, image_format = await mixin._download_and_encode_image(
+            "http://example.com/image.jpg"
+        )
+
+        assert image_format == "jpeg"
+        assert encoded_data == base64.b64encode(test_image_data).decode("utf-8")
+        mock_response.raise_for_status.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_download_and_encode_image_png_content_type(mixin):
+    """Test downloading and encoding PNG image from content-type"""
+    test_image_data = b"fake_png_data"
+    mock_response = MagicMock()
+    mock_response.content = test_image_data
+    mock_response.headers = {"content-type": "image/png"}
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=mock_response
+        )
+
+        encoded_data, image_format = await mixin._download_and_encode_image(
+            "http://example.com/image.png"
+        )
+
+        assert image_format == "png"
+        assert encoded_data == base64.b64encode(test_image_data).decode("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_download_and_encode_image_webp_content_type(mixin):
+    """Test downloading and encoding WebP image from content-type"""
+    test_image_data = b"fake_webp_data"
+    mock_response = MagicMock()
+    mock_response.content = test_image_data
+    mock_response.headers = {"content-type": "image/webp"}
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=mock_response
+        )
+
+        encoded_data, image_format = await mixin._download_and_encode_image(
+            "http://example.com/image.webp"
+        )
+
+        assert image_format == "webp"
+
+
+@pytest.mark.asyncio
+async def test_download_and_encode_image_gif_content_type(mixin):
+    """Test downloading and encoding GIF image from content-type"""
+    test_image_data = b"fake_gif_data"
+    mock_response = MagicMock()
+    mock_response.content = test_image_data
+    mock_response.headers = {"content-type": "image/gif"}
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=mock_response
+        )
+
+        encoded_data, image_format = await mixin._download_and_encode_image(
+            "http://example.com/image.gif"
+        )
+
+        assert image_format == "gif"
+
+
+@pytest.mark.asyncio
+async def test_download_and_encode_image_jpg_content_type(mixin):
+    """Test downloading and encoding image with jpg in content-type"""
+    test_image_data = b"fake_jpg_data"
+    mock_response = MagicMock()
+    mock_response.content = test_image_data
+    mock_response.headers = {"content-type": "image/jpg"}
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=mock_response
+        )
+
+        encoded_data, image_format = await mixin._download_and_encode_image(
+            "http://example.com/image.jpg"
+        )
+
+        assert image_format == "jpeg"
+
+
+@pytest.mark.asyncio
+async def test_download_and_encode_image_url_extension_jpeg(mixin):
+    """Test image format detection from URL extension for JPEG"""
+    test_image_data = b"fake_data"
+    mock_response = MagicMock()
+    mock_response.content = test_image_data
+    mock_response.headers = {"content-type": "application/octet-stream"}
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=mock_response
+        )
+
+        # Test .jpeg extension
+        _, image_format = await mixin._download_and_encode_image(
+            "http://example.com/image.jpeg"
+        )
+        assert image_format == "jpeg"
+
+        # Test .jpg extension
+        _, image_format = await mixin._download_and_encode_image(
+            "http://example.com/photo.jpg"
+        )
+        assert image_format == "jpeg"
+
+
+@pytest.mark.asyncio
+async def test_download_and_encode_image_url_extension_png(mixin):
+    """Test image format detection from URL extension for PNG"""
+    test_image_data = b"fake_data"
+    mock_response = MagicMock()
+    mock_response.content = test_image_data
+    mock_response.headers = {"content-type": "application/octet-stream"}
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=mock_response
+        )
+
+        _, image_format = await mixin._download_and_encode_image(
+            "http://example.com/image.png"
+        )
+        assert image_format == "png"
+
+
+@pytest.mark.asyncio
+async def test_download_and_encode_image_url_extension_webp(mixin):
+    """Test image format detection from URL extension for WebP"""
+    test_image_data = b"fake_data"
+    mock_response = MagicMock()
+    mock_response.content = test_image_data
+    mock_response.headers = {"content-type": "application/octet-stream"}
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=mock_response
+        )
+
+        _, image_format = await mixin._download_and_encode_image(
+            "http://example.com/image.webp"
+        )
+        assert image_format == "webp"
+
+
+@pytest.mark.asyncio
+async def test_download_and_encode_image_url_extension_gif(mixin):
+    """Test image format detection from URL extension for GIF"""
+    test_image_data = b"fake_data"
+    mock_response = MagicMock()
+    mock_response.content = test_image_data
+    mock_response.headers = {"content-type": "application/octet-stream"}
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=mock_response
+        )
+
+        _, image_format = await mixin._download_and_encode_image(
+            "http://example.com/image.gif"
+        )
+        assert image_format == "gif"
+
+
+@pytest.mark.asyncio
+async def test_download_and_encode_image_default_format(mixin):
+    """Test image format defaults to JPEG when unknown"""
+    test_image_data = b"fake_data"
+    mock_response = MagicMock()
+    mock_response.content = test_image_data
+    mock_response.headers = {"content-type": "application/octet-stream"}
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=mock_response
+        )
+
+        _, image_format = await mixin._download_and_encode_image(
+            "http://example.com/unknown.xyz"
+        )
+        assert image_format == "jpeg"
+
+
+@pytest.mark.asyncio
+async def test_download_and_encode_image_http_error(mixin):
+    """Test handling HTTP errors when downloading images"""
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock(
+        side_effect=httpx.HTTPStatusError(
+            "404", request=MagicMock(), response=MagicMock()
+        )
+    )
+
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=mock_response
+        )
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await mixin._download_and_encode_image("http://example.com/missing.jpg")
+
+
+@pytest.mark.asyncio
+async def test_process_image_urls_supports_direct_urls(mixin):
+    """Test that image processing is skipped when provider supports direct URLs (line 111-112)"""
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Look at this"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "http://example.com/image.jpg"},
+                },
+            ],
+        }
+    ]
+
+    result = await mixin._process_image_urls_in_messages(
+        messages, supports_direct_urls=True
+    )
+
+    # Should return unchanged
+    assert result == messages
+
+
+@pytest.mark.asyncio
+async def test_process_image_urls_text_only_messages(mixin):
+    """Test processing messages with only text content"""
+    messages = [{"role": "user", "content": "Just text"}]
+
+    result = await mixin._process_image_urls_in_messages(messages)
+
+    # Should return unchanged
+    assert result == messages
+
+
+@pytest.mark.asyncio
+async def test_process_image_urls_non_list_content(mixin):
+    """Test processing messages with non-list content (lines 148-149)"""
+    messages = [
+        {"role": "user", "content": "String content"},
+        {"role": "assistant", "content": "Another string"},
+    ]
+
+    result = await mixin._process_image_urls_in_messages(messages)
+
+    # Should return unchanged
+    assert result == messages
+    assert len(result) == 2
+
+
+@pytest.mark.asyncio
+async def test_process_image_urls_http_url(mixin):
+    """Test processing HTTP image URLs (lines 127-141)"""
+    test_image_data = b"test_image"
+    mock_response = MagicMock()
+    mock_response.content = test_image_data
+    mock_response.headers = {"content-type": "image/png"}
+    mock_response.raise_for_status = MagicMock()
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Image:"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "http://example.com/image.png"},
+                },
+            ],
+        }
+    ]
+
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=mock_response
+        )
+
+        result = await mixin._process_image_urls_in_messages(messages)
+
+        # Should convert to base64 data URI
+        assert len(result) == 1
+        content = result[0]["content"]
+        assert len(content) == 2
+        assert content[1]["type"] == "image_url"
+        assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+@pytest.mark.asyncio
+async def test_process_image_urls_https_url(mixin):
+    """Test processing HTTPS image URLs"""
+    test_image_data = b"test_image"
+    mock_response = MagicMock()
+    mock_response.content = test_image_data
+    mock_response.headers = {"content-type": "image/jpeg"}
+    mock_response.raise_for_status = MagicMock()
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "https://secure.example.com/image.jpg"},
+                }
+            ],
+        }
+    ]
+
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=mock_response
+        )
+
+        result = await mixin._process_image_urls_in_messages(messages)
+
+        # Should convert to base64 data URI
+        content = result[0]["content"]
+        assert content[0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+
+
+@pytest.mark.asyncio
+async def test_process_image_urls_already_base64(mixin):
+    """Test that base64 URLs are not re-downloaded"""
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="},
+                }
+            ],
+        }
+    ]
+
+    result = await mixin._process_image_urls_in_messages(messages)
+
+    # Should remain unchanged
+    assert result[0]["content"][0]["image_url"]["url"].startswith(
+        "data:image/png;base64,"
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_image_urls_download_failure(mixin, mock_logger):
+    """Test handling download failures gracefully (lines 138-140)"""
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "http://example.com/broken.jpg"},
+                }
+            ],
+        }
+    ]
+
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            side_effect=httpx.ConnectError("Connection failed")
+        )
+
+        result = await mixin._process_image_urls_in_messages(messages)
+
+        # Should keep original URL on error
+        assert result[0]["content"][0]["image_url"]["url"] == "http://example.com/broken.jpg"
+        # Should log error
+        mock_logger.error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_process_image_urls_mixed_content(mixin):
+    """Test processing messages with mixed content types (lines 142-144)"""
+    test_image_data = b"test_image"
+    mock_response = MagicMock()
+    mock_response.content = test_image_data
+    mock_response.headers = {"content-type": "image/png"}
+    mock_response.raise_for_status = MagicMock()
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Look at this:"},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "http://example.com/image.png"},
+                },
+                {"type": "text", "text": "What is it?"},
+            ],
+        }
+    ]
+
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=mock_response
+        )
+
+        result = await mixin._process_image_urls_in_messages(messages)
+
+        # Should process only image URL, keep text unchanged
+        content = result[0]["content"]
+        assert len(content) == 3
+        assert content[0]["type"] == "text"
+        assert content[1]["type"] == "image_url"
+        assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+        assert content[2]["type"] == "text"
+
+
+# ---------------------------------------------------------------------------
+# Content extraction fallback tests (lines 188-215, 242)
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_message_dict_content_access_error(mixin, mock_logger):
+    """Test dict content access with errors (lines 188-189)"""
+
+    # Create a dict subclass that passes isinstance(msg, dict) but raises on access
+    class BadDict(dict):
+        def __getitem__(self, key):
+            raise RuntimeError("Dict access error")
+
+    msg = BadDict({"content": "test"})
+    result = mixin._normalise_message(msg)
+
+    # Should handle error gracefully
+    assert result["response"] == ""
+    assert result["tool_calls"] == []
+    # Should log debug message about dict access failure
+    mock_logger.debug.assert_called()
+
+
+def test_normalize_message_dict_content_success(mixin):
+    """Test successful dict content access (line 184)"""
+    # Create a dict-like object that supports "in" check and __getitem__
+    msg = {"content": "Dict content via dict access", "role": "assistant"}
+
+    result = mixin._normalise_message(msg)
+
+    # Should successfully extract content via dict access
+    assert result["response"] == "Dict content via dict access"
+    assert result["tool_calls"] == []
+
+
+def test_normalize_message_wrapper_access_error(mixin, mock_logger):
+    """Test message wrapper access with errors (lines 199-200)"""
+
+    # Create object that passes hasattr checks but raises on access
+    class BadWrapper:
+        def __init__(self):
+            # Create a real message object so hasattr checks pass
+            self.message = SimpleNamespace(content=None)
+
+        def __getattribute__(self, name):
+            if name == "message":
+                # Return object that has content attr
+                inner = SimpleNamespace()
+                inner.content = property(lambda self: (_ for _ in ()).throw(RuntimeError("Content access failed")))
+                return inner
+            return object.__getattribute__(self, name)
+
+    msg = BadWrapper()
+
+    # Simpler approach: mock a wrapper that raises during content access
+    class SimpleWrapper:
+        class InnerMessage:
+            @property
+            def content(self):
+                raise RuntimeError("Content access failed")
+
+        def __init__(self):
+            self.message = self.InnerMessage()
+
+    msg = SimpleWrapper()
+    result = mixin._normalise_message(msg)
+
+    # Should handle error gracefully
+    assert result["response"] == ""
+    # Should log debug message about wrapper access failure
+    mock_logger.debug.assert_called()
+
+
+def test_normalize_message_wrapper_success(mixin):
+    """Test successful message wrapper access (line 195)"""
+    # Create a wrapper with message.content
+    inner_message = MockMessage(content="Wrapped message content")
+    msg = SimpleNamespace(message=inner_message)
+
+    result = mixin._normalise_message(msg)
+
+    # Should successfully extract content via wrapper
+    assert result["response"] == "Wrapped message content"
+    assert result["tool_calls"] == []
+
+
+def test_normalize_message_alternative_field_access_error(mixin, mock_logger):
+    """Test alternative field access with errors (lines 214-215)"""
+
+    class BadAltFields:
+        @property
+        def text(self):
+            raise RuntimeError("Text access failed")
+
+        @property
+        def message_content(self):
+            raise ValueError("Message content failed")
+
+        @property
+        def response_text(self):
+            raise TypeError("Response text failed")
+
+    msg = BadAltFields()
+    result = mixin._normalise_message(msg)
+
+    # Should handle all errors gracefully
+    assert result["response"] == ""
+    # Debug logs should be called for each failed attempt
+    mock_logger.debug.assert_called()
+
+
+def test_normalize_message_dict_tool_calls(mixin):
+    """Test extracting tool calls from dict format (line 242)"""
+    mock_tool_call = MockToolCall(
+        id="call_dict_tool",
+        function=MockFunction(name="dict_function", arguments='{"param": "value"}'),
+    )
+
+    # Pure dict format with tool calls
+    msg = {"content": "Test content", "tool_calls": [mock_tool_call]}
+
+    result = mixin._normalise_message(msg)
+
+    assert len(result["tool_calls"]) == 1
+    assert result["tool_calls"][0]["id"] == "call_dict_tool"
+    assert result["tool_calls"][0]["function"]["name"] == "dict_function"
+
+
+# ---------------------------------------------------------------------------
+# Tool call error handling tests (lines 293-295)
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_message_tool_call_processing_error(mixin, mock_logger):
+    """Test error handling when processing individual tool calls (lines 293-295)"""
+
+    class BadToolCall:
+        @property
+        def id(self):
+            return "call_bad"
+
+        @property
+        def function(self):
+            raise RuntimeError("Function access failed")
+
+    msg = MockMessage(tool_calls=[BadToolCall(), MockToolCall()])
+
+    result = mixin._normalise_message(msg)
+
+    # Should skip the bad tool call but process the good one
+    assert len(result["tool_calls"]) == 1
+    # Should log warning about the failed tool call
+    mock_logger.warning.assert_called()
+
+
+def test_normalize_message_tool_call_exception_in_loop(mixin, mock_logger):
+    """Test that tool call processing continues after exception"""
+
+    class ExceptionToolCall:
+        def __getattribute__(self, name):
+            raise ValueError("Attribute error")
+
+    good_tool_call = MockToolCall(
+        function=MockFunction(name="good_func", arguments='{"key": "val"}')
+    )
+
+    msg = MockMessage(tool_calls=[ExceptionToolCall(), good_tool_call])
+
+    result = mixin._normalise_message(msg)
+
+    # Should process the good tool call despite the bad one
+    assert len(result["tool_calls"]) == 1
+    assert result["tool_calls"][0]["function"]["name"] == "good_func"
+    mock_logger.warning.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# Blocking stream tests (lines 332-362)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stream_from_blocking_basic_flow(mixin):
+    """Test blocking stream wrapper basic functionality (lines 332-362)"""
+
+    def blocking_stream_generator(**kwargs):
+        """Mock blocking streaming SDK call"""
+        chunks = [
+            MockChunk([MockChoice(delta=MockDelta("Hello"))]),
+            MockChunk([MockChoice(delta=MockDelta(" world"))]),
+            MockChunk([MockChoice(delta=MockDelta("!"))]),
+        ]
+        for chunk in chunks:
+            yield chunk
+
+    results = []
+    async for result in mixin._stream_from_blocking(blocking_stream_generator):
+        results.append(result)
+
+    assert len(results) == 3
+    assert results[0]["response"] == "Hello"
+    assert results[1]["response"] == " world"
+    assert results[2]["response"] == "!"
+
+
+@pytest.mark.asyncio
+async def test_stream_from_blocking_with_tool_calls(mixin):
+    """Test blocking stream with tool calls"""
+    tool_call = MockToolCall(function=MockFunction(name="stream_func"))
+
+    def blocking_stream_with_tools(**kwargs):
+        yield MockChunk([MockChoice(delta=MockDelta("Using tool"))])
+        delta_with_tool = MockDelta("", tool_calls=[tool_call])
+        yield MockChunk([MockChoice(delta=delta_with_tool)])
+        yield MockChunk([MockChoice(delta=MockDelta("Done"))])
+
+    results = []
+    async for result in mixin._stream_from_blocking(blocking_stream_with_tools):
+        results.append(result)
+
+    assert len(results) == 3
+    assert results[0]["response"] == "Using tool"
+    assert results[1]["tool_calls"] == [tool_call]
+    assert results[2]["response"] == "Done"
+
+
+@pytest.mark.asyncio
+async def test_stream_from_blocking_chunk_processing_error(mixin, mock_logger):
+    """Test blocking stream error handling for individual chunks (lines 346-348)"""
+
+    def blocking_stream_with_bad_chunk(**kwargs):
+        yield MockChunk([MockChoice(delta=MockDelta("Good"))])
+        # Bad chunk that will cause processing error
+        bad_chunk = SimpleNamespace(choices=[SimpleNamespace()])
+        yield bad_chunk
+        yield MockChunk([MockChoice(delta=MockDelta("Also good"))])
+
+    results = []
+    async for result in mixin._stream_from_blocking(blocking_stream_with_bad_chunk):
+        results.append(result)
+
+    # Should yield results, including error indicator
+    assert len(results) >= 2
+    assert results[0]["response"] == "Good"
+    # One of the results should indicate an error
+    assert any(result.get("error") is True for result in results)
+    mock_logger.error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_stream_from_blocking_worker_exception(mixin, mock_logger):
+    """Test blocking stream worker exception handling (lines 355-357)"""
+
+    def failing_blocking_stream(**kwargs):
+        yield MockChunk([MockChoice(delta=MockDelta("Before error"))])
+        raise RuntimeError("Stream worker failed")
+
+    results = []
+    async for result in mixin._stream_from_blocking(failing_blocking_stream):
+        results.append(result)
+
+    # Should get the first chunk and then stream should end
+    assert len(results) >= 1
+    assert results[0]["response"] == "Before error"
+    # Error should be logged
+    mock_logger.error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_stream_from_blocking_empty_stream(mixin):
+    """Test blocking stream with empty generator"""
+
+    def empty_blocking_stream(**kwargs):
+        return
+        yield  # unreachable
+
+    results = []
+    async for result in mixin._stream_from_blocking(empty_blocking_stream):
+        results.append(result)
+
+    # Should complete without error
+    assert len(results) == 0
+
+
+@pytest.mark.asyncio
+async def test_stream_from_blocking_kwargs_passed(mixin):
+    """Test that kwargs are passed to blocking stream function"""
+    received_kwargs = {}
+
+    def blocking_stream_with_kwargs(**kwargs):
+        received_kwargs.update(kwargs)
+        yield MockChunk([MockChoice(delta=MockDelta("Test"))])
+
+    results = []
+    async for result in mixin._stream_from_blocking(
+        blocking_stream_with_kwargs, custom_param="test_value"
+    ):
+        results.append(result)
+
+    # Verify stream=True was added by the wrapper and custom param passed
+    assert "stream" in received_kwargs
+    assert received_kwargs["stream"] is True
+    assert received_kwargs["custom_param"] == "test_value"
+
+
+# ---------------------------------------------------------------------------
+# Enhanced async stream error handling tests (lines 433-437, 453-456, 494-503)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stream_from_async_delta_tool_call_error(mixin, mock_logger):
+    """Test error handling in delta tool call processing (lines 433-437)"""
+
+    class BadToolCall:
+        @property
+        def id(self):
+            raise RuntimeError("ID access failed")
+
+        @property
+        def function(self):
+            return MockFunction(name="test")
+
+    bad_delta = MockDelta("", tool_calls=[BadToolCall()])
+    chunks = [MockChunk([MockChoice(delta=bad_delta)])]
+
+    async def mock_stream():
+        for chunk in chunks:
+            yield chunk
+
+    results = []
+    async for result in mixin._stream_from_async(mock_stream()):
+        results.append(result)
+
+    # Should handle error gracefully
+    assert len(results) == 1
+    # Tool call should be skipped
+    assert result["tool_calls"] == []
+    mock_logger.debug.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_stream_from_async_message_with_tool_calls(mixin):
+    """Test full message format with tool calls in stream (lines 452-456)"""
+    tool_call = MockToolCall(
+        function=MockFunction(name="msg_tool", arguments='{"key": "val"}')
+    )
+    message = MockMessage(content="Message with tool", tool_calls=[tool_call])
+    chunks = [MockChunk([MockChoice(message=message)])]
+
+    async def mock_stream():
+        for chunk in chunks:
+            yield chunk
+
+    results = []
+    async for result in mixin._stream_from_async(mock_stream()):
+        results.append(result)
+
+    assert len(results) == 1
+    assert results[0]["response"] == "Message with tool"
+    assert len(results[0]["tool_calls"]) == 1
+    assert results[0]["tool_calls"][0]["function"]["name"] == "msg_tool"
+
+
+@pytest.mark.asyncio
+async def test_stream_from_async_chunk_error_with_details(mixin, mock_logger):
+    """Test detailed chunk error handling (lines 494-503)"""
+
+    class BadChunk:
+        @property
+        def choices(self):
+            raise ValueError("Choices access failed")
+
+    chunks = [
+        MockChunk([MockChoice(delta=MockDelta("Good"))]),
+        BadChunk(),
+        MockChunk([MockChoice(delta=MockDelta("Also good"))]),
+    ]
+
+    async def mock_stream():
+        for chunk in chunks:
+            yield chunk
+
+    results = []
+    async for result in mixin._stream_from_async(mock_stream()):
+        results.append(result)
+
+    # Should have all three results
+    assert len(results) == 3
+    assert results[0]["response"] == "Good"
+    # Middle chunk should be error
+    assert results[1].get("error") is True
+    assert "error_message" in results[1]
+    assert results[2]["response"] == "Also good"
+    # Should log error for bad chunk
+    mock_logger.error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_stream_from_async_continue_after_chunk_error(mixin):
+    """Test that streaming continues after individual chunk errors"""
+
+    class ExceptionChunk:
+        def __getattribute__(self, name):
+            if name != "__class__":
+                raise RuntimeError("Chunk access failed")
+            return object.__getattribute__(self, name)
+
+    chunks = [
+        MockChunk([MockChoice(delta=MockDelta("One"))]),
+        ExceptionChunk(),
+        MockChunk([MockChoice(delta=MockDelta("Three"))]),
+    ]
+
+    async def mock_stream():
+        for chunk in chunks:
+            yield chunk
+
+    results = []
+    async for result in mixin._stream_from_async(mock_stream()):
+        results.append(result)
+
+    # Should get all results despite error in middle
+    assert len(results) == 3
+    assert results[0]["response"] == "One"
+    assert results[1].get("error") is True  # Error chunk
+    assert results[2]["response"] == "Three"
+
+
+@pytest.mark.asyncio
+async def test_stream_from_async_no_content_warning(mixin, mock_logger):
+    """Test warning when stream has chunks but no content (lines 511-514)"""
+    # Create chunks that have structure but no actual content
+    empty_chunks = [
+        MockChunk([MockChoice(delta=MockDelta(None))]),
+        MockChunk([MockChoice(delta=MockDelta(None))]),
+        MockChunk([MockChoice(delta=MockDelta(None))]),
+    ]
+
+    async def mock_stream():
+        for chunk in empty_chunks:
+            yield chunk
+
+    results = []
+    async for result in mixin._stream_from_async(mock_stream()):
+        results.append(result)
+
+    assert len(results) == 3
+    # Should warn about no content
+    mock_logger.warning.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_stream_from_async_fatal_error(mixin, mock_logger):
+    """Test fatal error handling in stream (lines 516-524)"""
+
+    async def fatal_error_stream():
+        raise RuntimeError("Fatal stream error")
+        yield  # unreachable
+
+    results = []
+    async for result in mixin._stream_from_async(fatal_error_stream()):
+        results.append(result)
+
+    # Should get error result
+    assert len(results) == 1
+    assert results[0].get("error") is True
+    assert "Fatal stream error" in results[0]["response"]
+    assert "error_message" in results[0]
+    mock_logger.error.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# Debug helper error case tests (lines 539, 549-550)
+# ---------------------------------------------------------------------------
+
+
+def test_debug_message_structure_attribute_access_error(mixin, mock_logger):
+    """Test debug helper with attribute access errors (lines 549-550)"""
+
+    class BadAttributeMessage:
+        @property
+        def content(self):
+            raise RuntimeError("Content access error")
+
+        @property
+        def tool_calls(self):
+            raise ValueError("Tool calls error")
+
+        @property
+        def message(self):
+            raise TypeError("Message error")
+
+        @property
+        def choices(self):
+            raise KeyError("Choices error")
+
+        @property
+        def delta(self):
+            raise AttributeError("Delta error")
+
+    msg = BadAttributeMessage()
+    mixin.debug_message_structure(msg, "error_test")
+
+    # Should log errors for each failed attribute access
+    mock_logger.debug.assert_called()
+    debug_calls = mock_logger.debug.call_args_list
+
+    # Should have logged errors for attribute access
+    error_logs = [
+        str(call) for call in debug_calls if "Error accessing" in str(call)
+    ]
+    # Should have multiple error logs
+    assert len(error_logs) > 0
+
+
+def test_debug_message_structure_no_dict_attribute(mixin, mock_logger):
+    """Test debug helper with object having no __dict__ (line 539)"""
+
+    class NoDictMessage:
+        __slots__ = ["content"]
+
+        def __init__(self):
+            self.content = "test"
+
+    msg = NoDictMessage()
+    mixin.debug_message_structure(msg, "no_dict_test")
+
+    # Should handle lack of __dict__ gracefully
+    mock_logger.debug.assert_called()
+    debug_calls = mock_logger.debug.call_args_list
+
+    # Should log dir() instead of __dict__
+    dir_logs = [str(call) for call in debug_calls if "Dir:" in str(call)]
+    assert len(dir_logs) > 0
+
+
+def test_debug_message_structure_partial_attributes(mixin, mock_logger):
+    """Test debug helper with some attributes accessible and some not"""
+
+    class PartialMessage:
+        @property
+        def content(self):
+            return "accessible content"
+
+        @property
+        def tool_calls(self):
+            raise RuntimeError("tool_calls not accessible")
+
+        @property
+        def message(self):
+            return "accessible message"
+
+    msg = PartialMessage()
+    mixin.debug_message_structure(msg, "partial_test")
+
+    mock_logger.debug.assert_called()
+    debug_calls = [str(call) for call in mock_logger.debug.call_args_list]
+
+    # Should log both successful and failed accesses
+    assert any("content" in call for call in debug_calls)
+    assert any("Error accessing" in call for call in debug_calls)

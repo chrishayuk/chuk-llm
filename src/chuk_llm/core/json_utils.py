@@ -32,20 +32,25 @@ except ImportError:
     _ujson_available = False
 
 
-def dumps(obj: Any, **kwargs: Any) -> str:
-    """
-    Serialize object to JSON string using fastest available library.
+# Pre-compile the dumps function to eliminate runtime checks
+if _orjson_available:
 
-    Args:
-        obj: Object to serialize
-        **kwargs: Library-specific options (ignored for orjson)
+    def dumps(obj: Any, **kwargs: Any) -> str:
+        """
+        Serialize object to JSON string using orjson (fastest).
 
-    Returns:
-        JSON string
-    """
-    if _orjson_available:
-        # orjson returns bytes, convert to str
-        # orjson.dumps is ~2-3x faster than stdlib json
+        Args:
+            obj: Object to serialize
+            **kwargs: Options (indent, sort_keys)
+
+        Returns:
+            JSON string
+        """
+        # Fast path: no options
+        if not kwargs:
+            return orjson.dumps(obj).decode("utf-8")
+
+        # Slow path: with options
         option = 0
         if kwargs.get("indent"):
             option |= orjson.OPT_INDENT_2
@@ -53,88 +58,183 @@ def dumps(obj: Any, **kwargs: Any) -> str:
             option |= orjson.OPT_SORT_KEYS
         return orjson.dumps(obj, option=option).decode("utf-8")
 
-    elif _ujson_available:
-        # ujson is ~1.5-2x faster than stdlib
+elif _ujson_available:
+
+    def dumps(obj: Any, **kwargs: Any) -> str:
+        """
+        Serialize object to JSON string using ujson (fast).
+
+        Args:
+            obj: Object to serialize
+            **kwargs: Library-specific options
+
+        Returns:
+            JSON string
+        """
         return ujson.dumps(obj, **kwargs)
 
-    else:
-        # Stdlib fallback
+else:
+
+    def dumps(obj: Any, **kwargs: Any) -> str:
+        """
+        Serialize object to JSON string using stdlib json (fallback).
+
+        Args:
+            obj: Object to serialize
+            **kwargs: Library-specific options
+
+        Returns:
+            JSON string
+        """
         return _stdlib_json.dumps(obj, **kwargs)
 
 
-def loads(s: str | bytes) -> Any:
-    """
-    Deserialize JSON string to Python object using fastest available library.
+# Pre-compile the loads function to eliminate runtime checks
+if _orjson_available:
 
-    Args:
-        s: JSON string or bytes
+    def loads(s: str | bytes) -> Any:
+        """
+        Deserialize JSON to Python object using orjson (fastest).
 
-    Returns:
-        Deserialized Python object
-    """
-    if _orjson_available:
-        # orjson.loads is ~2-3x faster than stdlib json
-        if isinstance(s, str):
-            s = s.encode("utf-8")
-        return orjson.loads(s)
+        Args:
+            s: JSON string or bytes
 
-    elif _ujson_available:
-        # ujson is ~1.5-2x faster than stdlib
+        Returns:
+            Deserialized Python object
+        """
+        # Fast path: already bytes
+        if isinstance(s, bytes):
+            return orjson.loads(s)
+        # Slow path: need to encode
+        return orjson.loads(s.encode("utf-8"))
+
+elif _ujson_available:
+
+    def loads(s: str | bytes) -> Any:
+        """
+        Deserialize JSON to Python object using ujson (fast).
+
+        Args:
+            s: JSON string or bytes
+
+        Returns:
+            Deserialized Python object
+        """
         return ujson.loads(s)
 
-    else:
-        # Stdlib fallback
+else:
+
+    def loads(s: str | bytes) -> Any:
+        """
+        Deserialize JSON to Python object using stdlib json (fallback).
+
+        Args:
+            s: JSON string or bytes
+
+        Returns:
+            Deserialized Python object
+        """
         if isinstance(s, bytes):
             s = s.decode("utf-8")
         return _stdlib_json.loads(s)
 
 
-def dump(obj: Any, fp: Any, **kwargs: Any) -> None:
-    """
-    Serialize object to JSON file using fastest available library.
+# Pre-compile the dump function to eliminate runtime checks
+if _orjson_available:
 
-    Args:
-        obj: Object to serialize
-        fp: File-like object
-        **kwargs: Library-specific options
-    """
-    if _orjson_available:
-        # orjson doesn't have dump(), use dumps() + write
+    def dump(obj: Any, fp: Any, **kwargs: Any) -> None:
+        """
+        Serialize object to JSON file using orjson (fastest).
+
+        Args:
+            obj: Object to serialize
+            fp: File-like object
+            **kwargs: Options (indent, sort_keys)
+        """
         option = 0
         if kwargs.get("indent"):
             option |= orjson.OPT_INDENT_2
         if kwargs.get("sort_keys"):
             option |= orjson.OPT_SORT_KEYS
-        fp.write(orjson.dumps(obj, option=option))
+        data = orjson.dumps(obj, option=option)
+        # Handle both text and binary file objects
+        try:
+            fp.write(data)
+        except TypeError:
+            fp.write(data.decode("utf-8"))
 
-    elif _ujson_available:
+elif _ujson_available:
+
+    def dump(obj: Any, fp: Any, **kwargs: Any) -> None:
+        """
+        Serialize object to JSON file using ujson (fast).
+
+        Args:
+            obj: Object to serialize
+            fp: File-like object
+            **kwargs: Library-specific options
+        """
         fp.write(ujson.dumps(obj, **kwargs))
 
-    else:
+else:
+
+    def dump(obj: Any, fp: Any, **kwargs: Any) -> None:
+        """
+        Serialize object to JSON file using stdlib json (fallback).
+
+        Args:
+            obj: Object to serialize
+            fp: File-like object
+            **kwargs: Library-specific options
+        """
         _stdlib_json.dump(obj, fp, **kwargs)
 
 
-def load(fp: Any) -> Any:
-    """
-    Deserialize JSON file to Python object using fastest available library.
+# Pre-compile the load function to eliminate runtime checks
+if _orjson_available:
 
-    Args:
-        fp: File-like object
+    def load(fp: Any) -> Any:
+        """
+        Deserialize JSON file to Python object using orjson (fastest).
 
-    Returns:
-        Deserialized Python object
-    """
-    content = fp.read()
+        Args:
+            fp: File-like object
 
-    if _orjson_available:
+        Returns:
+            Deserialized Python object
+        """
+        content = fp.read()
         if isinstance(content, str):
             content = content.encode("utf-8")
         return orjson.loads(content)
 
-    elif _ujson_available:
-        return ujson.loads(content)
+elif _ujson_available:
 
-    else:
+    def load(fp: Any) -> Any:
+        """
+        Deserialize JSON file to Python object using ujson (fast).
+
+        Args:
+            fp: File-like object
+
+        Returns:
+            Deserialized Python object
+        """
+        return ujson.loads(fp.read())
+
+else:
+
+    def load(fp: Any) -> Any:
+        """
+        Deserialize JSON file to Python object using stdlib json (fallback).
+
+        Args:
+            fp: File-like object
+
+        Returns:
+            Deserialized Python object
+        """
+        content = fp.read()
         if isinstance(content, bytes):
             content = content.decode("utf-8")
         return _stdlib_json.loads(content)

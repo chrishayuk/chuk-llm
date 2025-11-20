@@ -75,15 +75,8 @@ class OpenAILLMClient(
         self.api_base = api_base
         self.detected_provider = detected_provider
 
-        # Use AsyncOpenAI for real streaming support
-        self.async_client = openai.AsyncOpenAI(api_key=api_key, base_url=api_base)
-
-        # Keep sync client for backwards compatibility if needed
-        self.client = (
-            openai.OpenAI(api_key=api_key, base_url=api_base)
-            if api_base
-            else openai.OpenAI(api_key=api_key)
-        )
+        # Use AsyncOpenAI - we are async-native
+        self.client = openai.AsyncOpenAI(api_key=api_key, base_url=api_base)
 
         log.debug(
             f"OpenAI client initialized: provider={self.detected_provider}, model={self.model}"
@@ -1058,7 +1051,7 @@ class OpenAILLMClient(
                             f"[{self.detected_provider}] Reasoning model adjustments: {', '.join(param_changes)}"
                         )
 
-                response_stream = await self.async_client.chat.completions.create(  # type: ignore[call-overload]
+                response_stream = await self.client.chat.completions.create(  # type: ignore[call-overload]
                     model=self.model,
                     messages=prepared_messages,
                     **({"tools": tools} if tools else {}),
@@ -1158,7 +1151,7 @@ class OpenAILLMClient(
                         f"[{self.detected_provider}] Reasoning model adjustments: {', '.join(param_changes)}"
                     )
 
-            resp = await self.async_client.chat.completions.create(  # type: ignore[call-overload]
+            resp = await self.client.chat.completions.create(  # type: ignore[call-overload]
                 model=self.model,
                 messages=prepared_messages,
                 **({"tools": tools} if tools else {}),
@@ -1228,7 +1221,5 @@ class OpenAILLMClient(
         if hasattr(self, "_current_name_mapping"):
             self._current_name_mapping = {}
 
-        if hasattr(self.async_client, "close"):
-            await self.async_client.close()
         if hasattr(self.client, "close"):
-            self.client.close()
+            await self.client.close()

@@ -83,7 +83,7 @@ def _constructor_kwargs(cls: type, config: dict[str, Any]) -> dict[str, Any]:
     return args
 
 
-def get_client(
+def _create_client_internal(
     provider: str,
     model: str | None = None,
     api_key: str | None = None,
@@ -91,9 +91,7 @@ def get_client(
     **kwargs,
 ) -> BaseLLMClient:
     """
-    Enhanced client factory with transparent discovery support.
-
-    FIXED: Skips model validation for Azure OpenAI to support custom deployments.
+    Internal client creation logic (no caching).
 
     Args:
         provider: Provider name (from YAML config)
@@ -235,6 +233,71 @@ def get_client(
             ) from e
         else:
             raise ValueError(f"Failed to create {provider} client: {e}") from e
+
+
+def get_client(
+    provider: str,
+    model: str | None = None,
+    api_key: str | None = None,
+    api_base: str | None = None,
+    use_cache: bool = True,
+    **kwargs,
+) -> BaseLLMClient:
+    """
+    Enhanced client factory with transparent discovery support and automatic caching.
+
+    FIXED: Skips model validation for Azure OpenAI to support custom deployments.
+
+    Client Caching:
+        By default, clients are automatically cached and reused when the same
+        provider/model/config is requested. This saves ~12ms per duplicate client
+        creation. Caching can be disabled via:
+        - use_cache=False parameter
+        - CHUK_LLM_CACHE_CLIENTS=0 environment variable
+
+    Args:
+        provider: Provider name (from YAML config)
+        model: Model override (uses provider default if not specified)
+        api_key: API key override (uses environment if not specified)
+        api_base: API base URL override (uses provider default if not specified)
+        use_cache: Whether to use client registry caching (default: True)
+        **kwargs: Additional client arguments
+
+    Returns:
+        Configured LLM client (cached if use_cache=True)
+
+    Examples:
+        >>> # Automatic caching (saves 12ms per duplicate)
+        >>> client1 = get_client("openai", model="gpt-4o")
+        >>> client2 = get_client("openai", model="gpt-4o")  # Returns same instance
+        >>> assert client1 is client2
+
+        >>> # Disable caching
+        >>> client = get_client("openai", model="gpt-4o", use_cache=False)
+    """
+    # Check if caching is enabled (environment variable or parameter)
+    cache_enabled = use_cache and os.getenv("CHUK_LLM_CACHE_CLIENTS", "1") == "1"
+
+    if cache_enabled:
+        # Use registry for automatic client caching
+        from chuk_llm.client_registry import get_cached_client
+
+        return get_cached_client(
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            api_base=api_base,
+            **kwargs,
+        )
+
+    # Non-cached path - create client directly
+    return _create_client_internal(
+        provider=provider,
+        model=model,
+        api_key=api_key,
+        api_base=api_base,
+        **kwargs,
+    )
 
 
 def validate_request_compatibility(

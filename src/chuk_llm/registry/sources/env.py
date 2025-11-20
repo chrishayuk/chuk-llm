@@ -21,19 +21,19 @@ class EnvProviderSource(BaseModelSource):
     for each available provider.
     """
 
-    # Map of provider name -> (env_var, default_model, family)
+    # Map of provider name -> (env_var, default_model, family, fallback_env_var)
     PROVIDER_DEFAULTS = {
-        "openai": ("OPENAI_API_KEY", "gpt-4o-mini", "gpt-4o"),
-        "anthropic": ("ANTHROPIC_API_KEY", "claude-3-5-sonnet-20241022", "claude-3"),
-        "groq": ("GROQ_API_KEY", "llama-3.3-70b-versatile", "llama-3"),
-        "deepseek": ("DEEPSEEK_API_KEY", "deepseek-chat", "deepseek"),
-        "together": ("TOGETHER_API_KEY", "meta-llama/Llama-3.3-70B-Instruct-Turbo", "llama-3"),
-        "perplexity": ("PERPLEXITY_API_KEY", "llama-3.1-sonar-small-128k-online", "llama-3"),
-        "mistral": ("MISTRAL_API_KEY", "mistral-small-latest", "mistral"),
-        "gemini": ("GEMINI_API_KEY", "gemini-2.0-flash-exp", "gemini"),
-        "watsonx": ("WATSONX_API_KEY", "ibm/granite-3-8b-instruct", "granite"),
-        "azure_openai": ("AZURE_OPENAI_API_KEY", "gpt-4o", "gpt-4o"),
-        "advantage": ("ADVANTAGE_API_KEY", "meta-llama/llama-3-3-70b-instruct", "llama-3"),
+        "openai": ("OPENAI_API_KEY", "gpt-4o-mini", "gpt-4o", None),
+        "anthropic": ("ANTHROPIC_API_KEY", "claude-3-5-sonnet-20241022", "claude-3", None),
+        "groq": ("GROQ_API_KEY", "llama-3.3-70b-versatile", "llama-3", None),
+        "deepseek": ("DEEPSEEK_API_KEY", "deepseek-chat", "deepseek", None),
+        "together": ("TOGETHER_API_KEY", "meta-llama/Llama-3.3-70B-Instruct-Turbo", "llama-3", None),
+        "perplexity": ("PERPLEXITY_API_KEY", "llama-3.1-sonar-small-128k-online", "llama-3", None),
+        "mistral": ("MISTRAL_API_KEY", "mistral-small-latest", "mistral", None),
+        "gemini": ("GEMINI_API_KEY", "gemini-2.0-flash", "gemini", "GOOGLE_API_KEY"),
+        "watsonx": ("WATSONX_API_KEY", "ibm/granite-3-8b-instruct", "granite", None),
+        "azure_openai": ("AZURE_OPENAI_API_KEY", "gpt-4o", "gpt-4o", None),
+        "advantage": ("ADVANTAGE_API_KEY", "meta-llama/llama-3-3-70b-instruct", "llama-3", None),
     }
 
     def __init__(self, include_ollama: bool = True):
@@ -54,8 +54,10 @@ class EnvProviderSource(BaseModelSource):
         """
         specs = []
 
-        for provider, (env_var, default_model, family) in self.PROVIDER_DEFAULTS.items():
-            if os.getenv(env_var):
+        for provider, (env_var, default_model, family, fallback_env_var) in self.PROVIDER_DEFAULTS.items():
+            # Check primary and fallback environment variables
+            has_api_key = os.getenv(env_var) or (fallback_env_var and os.getenv(fallback_env_var))
+            if has_api_key:
                 specs.append(
                     ModelSpec(
                         provider=provider,

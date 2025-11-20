@@ -336,8 +336,19 @@ class TestDiscovererFactory:
 
     def setup_method(self):
         """Reset factory state before each test"""
+        # Save original state
+        self._original_discoverers = DiscovererFactory._discoverers.copy()
+        self._original_imported = DiscovererFactory._imported
+
+        # Reset for test
         DiscovererFactory._discoverers = {}
         DiscovererFactory._imported = False
+
+    def teardown_method(self):
+        """Restore factory state after each test"""
+        # Restore original state to avoid affecting other tests
+        DiscovererFactory._discoverers = self._original_discoverers
+        DiscovererFactory._imported = self._original_imported
 
     def test_register_discoverer(self):
         """Test registering a discoverer"""
@@ -445,8 +456,19 @@ class TestIntegration:
 
     def setup_method(self):
         """Reset factory state"""
+        # Save original state
+        self._original_discoverers = DiscovererFactory._discoverers.copy()
+        self._original_imported = DiscovererFactory._imported
+
+        # Reset for test
         DiscovererFactory._discoverers = {}
         DiscovererFactory._imported = False
+
+    def teardown_method(self):
+        """Restore factory state after each test"""
+        # Restore original state to avoid affecting other tests
+        DiscovererFactory._discoverers = self._original_discoverers
+        DiscovererFactory._imported = self._original_imported
 
     @pytest.mark.asyncio
     async def test_full_discovery_workflow(self):

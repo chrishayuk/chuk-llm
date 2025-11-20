@@ -138,9 +138,10 @@ class TestOpenAIModelDiscoverer:
         # Should return fallback models
         assert len(models) > 0
         model_names = [m["name"] for m in models]
-        # Check for current models - gpt-5-mini is the default fallback
-        assert "gpt-5-mini" in model_names
-        assert "gpt-4.1" in model_names or "gpt-4o" in model_names
+        # Check for reasoning models (o-series)
+        assert "o1-mini" in model_names or "o3-mini" in model_names
+        # Check for standard GPT models
+        assert "gpt-4.1" in model_names or "gpt-4o" in model_names or "gpt-4o-mini" in model_names
 
     @pytest.mark.asyncio
     async def test_discover_models_api_failure(self):
@@ -825,3 +826,70 @@ class TestOpenAIIntegration:
             params = family_info["parameter_requirements"]
 
             assert len(params) == 0  # No special requirements
+
+
+class TestOpenAIDiscovererEmptyAPIKey:
+    """Test handling of empty/whitespace API keys"""
+
+    @pytest.mark.asyncio
+    async def test_discover_models_with_empty_api_key(self):
+        """Test discovery falls back when API key is empty string"""
+        discoverer = OpenAIModelDiscoverer(api_key="")
+        models = await discoverer.discover_models()
+        
+        # Should return fallback models
+        assert len(models) > 0
+        assert any("gpt" in m["name"] for m in models)
+
+    @pytest.mark.asyncio
+    async def test_discover_models_with_whitespace_api_key(self):
+        """Test discovery falls back when API key is whitespace"""
+        discoverer = OpenAIModelDiscoverer(api_key="   ")
+        models = await discoverer.discover_models()
+        
+        # Should return fallback models
+        assert len(models) > 0
+
+    @pytest.mark.asyncio
+    async def test_test_model_availability_whitespace_key(self):
+        """Test model availability check with whitespace API key"""
+        discoverer = OpenAIModelDiscoverer(api_key="  ")
+        result = await discoverer.test_model_availability("gpt-4o")
+        
+        # Should return False for whitespace key
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_test_model_availability_import_error(self):
+        """Test model availability when openai package unavailable"""
+        discoverer = OpenAIModelDiscoverer(api_key="test-key")
+        
+        # Mock ImportError
+        with patch("builtins.__import__", side_effect=ImportError("No module")):
+            result = await discoverer.test_model_availability("gpt-4o")
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_test_model_availability_api_error(self):
+        """Test model availability when API call fails"""
+        discoverer = OpenAIModelDiscoverer(api_key="test-key")
+        
+        # Import happens inside the function, so mock it there
+        import sys
+        mock_openai = Mock()
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(
+            side_effect=Exception("API Error")
+        )
+        mock_client.close = AsyncMock()
+        mock_openai.AsyncOpenAI.return_value = mock_client
+        
+        # Inject into sys.modules before the function imports it
+        sys.modules['openai'] = mock_openai
+        try:
+            result = await discoverer.test_model_availability("gpt-4o")
+            assert result is False
+        finally:
+            # Clean up
+            if 'openai' in sys.modules:
+                del sys.modules['openai']

@@ -50,70 +50,110 @@ def test_module_imports():
 
 def test_factory_initialization():
     """Test that the factory initialization works properly"""
-    # Mock the factory and its methods
-    mock_factory = Mock()
-    mock_factory._auto_import_discoverers = Mock()
+    # Save original modules
+    original_modules = {}
+    modules_to_save = [
+        "chuk_llm.llm.discovery",
+        "chuk_llm.llm.discovery.base",
+        "chuk_llm.llm.discovery.engine",
+        "chuk_llm.llm.discovery.manager",
+        "chuk_llm.llm.discovery.ollama_discoverer",
+        "chuk_llm.llm.discovery.openai_discoverer",
+        "chuk_llm.llm.discovery.general_discoverers",
+    ]
+    for mod_name in modules_to_save:
+        if mod_name in sys.modules:
+            original_modules[mod_name] = sys.modules[mod_name]
 
-    # Mock the base module
-    mock_base = Mock()
-    mock_base.DiscovererFactory = mock_factory
+    try:
+        # Mock the factory and its methods
+        mock_factory = Mock()
+        mock_factory._auto_import_discoverers = Mock()
 
-    mock_modules = {
-        "chuk_llm.llm.discovery.base": mock_base,
-        "chuk_llm.llm.discovery.engine": Mock(),
-        "chuk_llm.llm.discovery.manager": Mock(),
-        "chuk_llm.llm.discovery.ollama_discoverer": Mock(),
-        "chuk_llm.llm.discovery.openai_discoverer": Mock(),
-        "chuk_llm.llm.discovery.general_discoverers": Mock(),
-    }
+        # Mock the base module
+        mock_base = Mock()
+        mock_base.DiscovererFactory = mock_factory
 
-    # Clear any existing module
-    if "chuk_llm.llm.discovery" in sys.modules:
-        del sys.modules["chuk_llm.llm.discovery"]
-    
-    with patch.dict("sys.modules", mock_modules):
-        # Import should trigger factory initialization
-        import chuk_llm.llm.discovery
+        mock_modules = {
+            "chuk_llm.llm.discovery.base": mock_base,
+            "chuk_llm.llm.discovery.engine": Mock(),
+            "chuk_llm.llm.discovery.manager": Mock(),
+            "chuk_llm.llm.discovery.ollama_discoverer": Mock(),
+            "chuk_llm.llm.discovery.openai_discoverer": Mock(),
+            "chuk_llm.llm.discovery.general_discoverers": Mock(),
+        }
 
-        # Verify that auto_import_discoverers was called
-        mock_factory._auto_import_discoverers.assert_called_once()
+        # Clear any existing module
+        if "chuk_llm.llm.discovery" in sys.modules:
+            del sys.modules["chuk_llm.llm.discovery"]
+
+        with patch.dict("sys.modules", mock_modules):
+            # Import should trigger factory initialization
+            import chuk_llm.llm.discovery
+
+            # Verify that auto_import_discoverers was called
+            mock_factory._auto_import_discoverers.assert_called_once()
+    finally:
+        # Restore original modules
+        for mod_name, mod in original_modules.items():
+            sys.modules[mod_name] = mod
 
 
 def test_factory_initialization_failure_handling():
     """Test that factory initialization failures are handled gracefully"""
-    # Mock factory to raise exception during initialization
-    mock_factory = Mock()
-    mock_factory._auto_import_discoverers.side_effect = Exception("Import failed")
+    # Save original modules
+    original_modules = {}
+    modules_to_save = [
+        "chuk_llm.llm.discovery",
+        "chuk_llm.llm.discovery.base",
+        "chuk_llm.llm.discovery.engine",
+        "chuk_llm.llm.discovery.manager",
+        "chuk_llm.llm.discovery.ollama_discoverer",
+        "chuk_llm.llm.discovery.openai_discoverer",
+        "chuk_llm.llm.discovery.general_discoverers",
+    ]
+    for mod_name in modules_to_save:
+        if mod_name in sys.modules:
+            original_modules[mod_name] = sys.modules[mod_name]
 
-    mock_base = Mock()
-    mock_base.DiscovererFactory = mock_factory
+    try:
+        # Mock factory to raise exception during initialization
+        mock_factory = Mock()
+        mock_factory._auto_import_discoverers.side_effect = Exception("Import failed")
 
-    mock_modules = {
-        "chuk_llm.llm.discovery.base": mock_base,
-        "chuk_llm.llm.discovery.engine": Mock(),
-        "chuk_llm.llm.discovery.manager": Mock(),
-        "chuk_llm.llm.discovery.ollama_discoverer": Mock(),
-        "chuk_llm.llm.discovery.openai_discoverer": Mock(),
-        "chuk_llm.llm.discovery.general_discoverers": Mock(),
-    }
+        mock_base = Mock()
+        mock_base.DiscovererFactory = mock_factory
 
-    # Clear any existing module
-    if "chuk_llm.llm.discovery" in sys.modules:
-        del sys.modules["chuk_llm.llm.discovery"]
-    
-    with patch.dict("sys.modules", mock_modules):
-        with patch("logging.getLogger") as mock_logger:
-            mock_log = Mock()
-            mock_logger.return_value = mock_log
+        mock_modules = {
+            "chuk_llm.llm.discovery.base": mock_base,
+            "chuk_llm.llm.discovery.engine": Mock(),
+            "chuk_llm.llm.discovery.manager": Mock(),
+            "chuk_llm.llm.discovery.ollama_discoverer": Mock(),
+            "chuk_llm.llm.discovery.openai_discoverer": Mock(),
+            "chuk_llm.llm.discovery.general_discoverers": Mock(),
+        }
 
-            # Import should not raise exception even if initialization fails
-            import chuk_llm.llm.discovery
+        # Clear any existing module
+        if "chuk_llm.llm.discovery" in sys.modules:
+            del sys.modules["chuk_llm.llm.discovery"]
 
-            # Should log a warning about the failure
-            mock_log.warning.assert_called_once()
-            assert "Failed to initialize discovery factory" in str(
-                mock_log.warning.call_args
-            )
+        with patch.dict("sys.modules", mock_modules):
+            with patch("logging.getLogger") as mock_logger:
+                mock_log = Mock()
+                mock_logger.return_value = mock_log
+
+                # Import should not raise exception even if initialization fails
+                import chuk_llm.llm.discovery
+
+                # Should log a warning about the failure
+                mock_log.warning.assert_called_once()
+                assert "Failed to initialize discovery factory" in str(
+                    mock_log.warning.call_args
+                )
+    finally:
+        # Restore original modules
+        for mod_name, mod in original_modules.items():
+            sys.modules[mod_name] = mod
 
 
 def test_module_structure():

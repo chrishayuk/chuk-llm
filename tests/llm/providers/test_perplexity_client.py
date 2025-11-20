@@ -272,6 +272,45 @@ class TestPerplexityStreamingCompletion:
             assert "json_schema" in called_kwargs["response_format"]
             assert len(chunks) == 1
 
+    @pytest.mark.asyncio
+    async def test_streaming_completion_removes_none_response_format(self):
+        """Test that None response_format is removed from kwargs (line 156)"""
+        client = PerplexityLLMClient(api_key="test-key")
+
+        # Override translation to return None
+        original_translate = client._translate_response_format
+        client._translate_response_format = lambda x: None
+
+        called_kwargs = {}
+
+        async def mock_parent_stream(self, messages, tools=None, name_mapping=None, **kwargs):
+            nonlocal called_kwargs
+            called_kwargs = kwargs
+            yield {"response": "chunk"}
+
+        try:
+            with patch.object(
+                PerplexityLLMClient.__bases__[0],
+                "_stream_completion_async",
+                new=mock_parent_stream,
+            ):
+                messages = [{"role": "user", "content": "Test"}]
+
+                chunks = []
+                async for chunk in client._stream_completion_async(
+                    messages,
+                    tools=None,
+                    name_mapping=None,
+                    response_format={"type": "json_object"},
+                ):
+                    chunks.append(chunk)
+
+                # Verify response_format was removed (line 156)
+                assert "response_format" not in called_kwargs
+                assert len(chunks) == 1
+        finally:
+            client._translate_response_format = original_translate
+
 
 class TestPerplexityFeatureSupport:
     """Test feature support detection"""

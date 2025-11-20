@@ -396,6 +396,7 @@ deepseek:
     default: 3000
 gemini:
   api_key_env: GEMINI_API_KEY
+  api_key_fallback_env: GOOGLE_API_KEY
   client_class: chuk_llm.llm.providers.gemini_client.GeminiLLMClient
   default_model: gemini-2.5-flash
   # Base URL defaults to Google's API, override with GEMINI_API_BASE

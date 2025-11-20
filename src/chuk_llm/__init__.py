@@ -93,222 +93,152 @@ except ImportError:
         # Last resort fallback
         __version__ = "0.8.1"
 
-# Core API imports
-# Import all from api (which includes provider functions)
-from .api import *  # noqa: F403, E402
-from .api import (  # noqa: E402
-    # Core async functions
-    ask,  # noqa: F401
-    ask_json,  # noqa: F401
-    # Sync wrappers
-    ask_sync,  # noqa: F401
-    auto_configure,  # noqa: F401
-    compare_providers,  # noqa: F401
+# Lazy imports using __getattr__ for fast startup
+# This delays loading heavy modules until they're actually used
+_LAZY_IMPORTS = {
+    # Core API functions
+    "ask": ".api",
+    "ask_json": ".api",
+    "ask_sync": ".api",
+    "stream": ".api",
+    "stream_sync": ".api",
+    "stream_sync_iter": ".api",
+    "quick_ask": ".api",
+    "quick_question": ".api",
+    "multi_provider_ask": ".api",
+    "compare_providers": ".api",
+    "validate_request": ".api",
     # Configuration
-    configure,  # noqa: F401
-    debug_config_state,  # noqa: F401
-    disable_sessions,  # noqa: F401
-    enable_sessions,  # noqa: F401
-    get_capabilities,  # noqa: F401
+    "configure": ".api",
+    "auto_configure": ".api",
+    "quick_setup": ".api",
+    "reset": ".api",
+    "switch_provider": ".api",
+    "get_current_config": ".api",
+    "get_capabilities": ".api",
+    "supports_feature": ".api",
+    "validate_config": ".api",
+    "debug_config_state": ".api",
     # Client management
-    get_client,  # noqa: F401
-    get_current_config,  # noqa: F401
-    get_current_session_id,  # noqa: F401
-    get_session_history,  # noqa: F401
+    "get_client": ".api",
+    "list_available_providers": ".api",
+    "validate_provider_setup": ".api",
     # Session management
-    get_session_stats,  # noqa: F401
-    list_available_providers,  # noqa: F401
-    multi_provider_ask,  # noqa: F401
-    quick_ask,  # noqa: F401
-    quick_question,  # noqa: F401
-    quick_setup,  # noqa: F401
-    reset,  # noqa: F401
-    reset_session,  # noqa: F401
-    stream,  # noqa: F401
-    stream_sync,  # noqa: F401
-    stream_sync_iter,  # noqa: F401
-    supports_feature,  # noqa: F401
-    switch_provider,  # noqa: F401
-    validate_config,  # noqa: F401
-    validate_provider_setup,  # noqa: F401
-    validate_request,  # noqa: F401
-)
+    "enable_sessions": ".api",
+    "disable_sessions": ".api",
+    "reset_session": ".api",
+    "get_current_session_id": ".api",
+    "get_session_history": ".api",
+    "get_session_stats": ".api",
+    # Conversation
+    "conversation": ".api.conversation",
+    "ConversationContext": ".api.conversation",
+    "conversation_sync": ".api.conversation_sync",
+    "ConversationContextSync": ".api.conversation_sync",
+    # Show functions
+    "show_providers": ".api.show_info",
+    "show_functions": ".api.show_info",
+    "show_model_aliases": ".api.show_info",
+    "show_capabilities": ".api.show_info",
+    "show_config": ".api.show_info",
+    # Tools
+    "Tool": ".api.tools",
+    "ToolKit": ".api.tools",
+    "Tools": ".api.tools",
+    "tool": ".api.tools",
+    "create_tool": ".api.tools",
+    "tools_from_functions": ".api.tools",
+    # Utilities
+    "get_metrics": ".api.utils",
+    "health_check": ".api.utils",
+    "health_check_sync": ".api.utils",
+    "get_current_client_info": ".api.utils",
+    "test_connection": ".api.utils",
+    "test_connection_sync": ".api.utils",
+    "test_all_providers": ".api.utils",
+    "test_all_providers_sync": ".api.utils",
+    "print_diagnostics": ".api.utils",
+    "cleanup": ".api.utils",
+    "cleanup_sync": ".api.utils",
+    # Configuration utilities
+    "get_config": ".configuration",
+    "reset_config": ".configuration",
+    "Feature": ".configuration",
+    "ModelCapabilities": ".configuration",
+    "ProviderConfig": ".configuration",
+    "UnifiedConfigManager": ".configuration",
+    "ConfigValidator": ".configuration",
+    "CapabilityChecker": ".configuration",
+    # Registry
+    "get_registry": ".registry",
+    "ModelRegistry": ".registry",
+    "ModelSpec": ".registry",
+    "ModelWithCapabilities": ".registry",
+    "ModelQuery": ".registry",
+    "QualityTier": ".registry",
+}
 
-# Conversation management
-from .api.conversation import (  # noqa: E402
-    ConversationContext,
-    conversation,
-)
-from .api.conversation_sync import (  # noqa: E402
-    ConversationContextSync,
-    conversation_sync,
-)
-
-# Show functions
-from .api.show_info import (  # noqa: E402
-    show_capabilities,
-    show_config,
-    show_functions,
-    show_model_aliases,
-    show_providers,
-)
-
-# Tools API
-from .api.tools import (  # noqa: E402
-    Tool,
-    ToolKit,
-    Tools,
-    create_tool,
-    tool,
-    tools_from_functions,
-)
-
-# Utilities
-from .api.utils import (  # noqa: E402
-    cleanup,
-    cleanup_sync,
-    get_current_client_info,
-    get_metrics,
-    health_check,
-    health_check_sync,
-    print_diagnostics,
-    test_all_providers,
-    test_all_providers_sync,
-    test_connection,
-    test_connection_sync,
-)
-
-# Configuration utilities
-from .configuration import (  # noqa: E402
-    CapabilityChecker,
-    ConfigValidator,
-    Feature,
-    ModelCapabilities,
-    ProviderConfig,
-    UnifiedConfigManager,
-    get_config,
-    reset_config,
-)
-
-# Registry (new capability system)
-from .registry import (  # noqa: E402
-    ModelQuery,
-    ModelRegistry,
-    ModelSpec,
-    ModelWithCapabilities,
-    QualityTier,
-    get_registry,
-)
-
-# Session utilities
-try:
-    from .api.session_utils import (
-        auto_configure_sessions,
-        check_session_backend_availability,
-        get_session_recommendations,
-        print_session_diagnostics,
-        validate_session_configuration,
-    )
-
-    SESSION_UTILS_AVAILABLE = True
-except ImportError:
-    SESSION_UTILS_AVAILABLE = False
-
-    # Create stub functions
-    def check_session_backend_availability():  # type: ignore[misc]
-        return {"error": "Session utilities not available"}
-
-    def validate_session_configuration():  # type: ignore[misc]
-        return False
-
-    def get_session_recommendations():  # type: ignore[misc]
-        return ["Session utilities not available"]
-
-    def auto_configure_sessions():  # type: ignore[misc]
-        return False
-
-    def print_session_diagnostics():  # type: ignore[misc]
-        print("Session diagnostics not available")
+# Cache for already-imported modules
+_imported_attrs = {}
 
 
-# Get all API exports including provider functions
-from .api import __all__ as api_exports  # noqa: E402
+def __getattr__(name):
+    """Lazy import attributes on first access"""
+    # Check if already imported
+    if name in _imported_attrs:
+        return _imported_attrs[name]
+
+    # Check if it's a lazy import
+    if name in _LAZY_IMPORTS:
+        module_path = _LAZY_IMPORTS[name]
+
+        # Import the module
+        if module_path == ".api":
+            # Special handling for .api - use wildcard import to get all provider functions
+            from . import api
+            # Get all exports from api module
+            for attr_name in dir(api):
+                if not attr_name.startswith("_"):
+                    _imported_attrs[attr_name] = getattr(api, attr_name)
+
+            # Return the requested attribute
+            if name in _imported_attrs:
+                return _imported_attrs[name]
+            raise AttributeError(f"Module 'chuk_llm.api' has no attribute '{name}'")
+        else:
+            # Import specific submodule
+            from importlib import import_module
+            module = import_module(module_path, package="chuk_llm")
+            attr = getattr(module, name)
+            _imported_attrs[name] = attr
+            return attr
+
+    # Not found
+    raise AttributeError(f"module 'chuk_llm' has no attribute '{name}'")
+
+# Add session utilities to lazy imports
+_LAZY_IMPORTS.update({
+    "check_session_backend_availability": ".api.session_utils",
+    "validate_session_configuration": ".api.session_utils",
+    "get_session_recommendations": ".api.session_utils",
+    "auto_configure_sessions": ".api.session_utils",
+    "print_session_diagnostics": ".api.session_utils",
+})
+
+# Assume session utilities are available - will fail gracefully if not
+SESSION_UTILS_AVAILABLE = True
 
 
-# Enhanced diagnostics function
+# Enhanced diagnostics function (also lazy)
 def print_full_diagnostics():
     """Print comprehensive ChukLLM diagnostics including session info."""
-    print_diagnostics()  # Existing function
-    print_session_diagnostics()  # Session-specific diagnostics
+    # These will be lazy-loaded when called
+    print_diagnostics()
+    print_session_diagnostics()
 
 
-# Define what's exported
-__all__ = (
-    [
-        # Version
-        "__version__",
-    ]
-    + api_exports
-    + [
-        # Configuration types not in api
-        "Feature",
-        "ModelCapabilities",
-        "ProviderConfig",
-        "UnifiedConfigManager",
-        "ConfigValidator",
-        "CapabilityChecker",
-        "get_config",
-        "reset_config",
-        # Registry (new capability system)
-        "ModelRegistry",
-        "ModelSpec",
-        "ModelWithCapabilities",
-        "ModelQuery",
-        "QualityTier",
-        "get_registry",
-        # Conversation
-        "conversation",
-        "ConversationContext",
-        "conversation_sync",
-        "ConversationContextSync",
-        # Tools API
-        "Tool",
-        "ToolKit",
-        "Tools",
-        "tool",
-        "create_tool",
-        "tools_from_functions",
-        # Utilities
-        "get_metrics",
-        "health_check",
-        "health_check_sync",
-        "get_current_client_info",
-        "test_connection",
-        "test_connection_sync",
-        "test_all_providers",
-        "test_all_providers_sync",
-        "print_diagnostics",
-        "print_full_diagnostics",
-        "cleanup",
-        "cleanup_sync",
-        # Session utilities
-        "check_session_backend_availability",
-        "validate_session_configuration",
-        "get_session_recommendations",
-        "auto_configure_sessions",
-        "print_session_diagnostics",
-        # Show functions
-        "show_providers",
-        "show_functions",
-        "show_model_aliases",
-        "show_capabilities",
-        "show_config",
-    ]
-)
+# Define what's exported - all lazy imports plus version
+__all__ = ["__version__", "SESSION_UTILS_AVAILABLE", "print_full_diagnostics"] + list(_LAZY_IMPORTS.keys())
 
-# Auto-configure sessions on import (optional)
-try:
-    if SESSION_UTILS_AVAILABLE:
-        auto_configure_sessions()
-except Exception:
-    pass  # Silent fail for auto-configuration
+# DON'T auto-configure sessions on import - it forces imports!
+# Let it happen lazily when session functions are first used

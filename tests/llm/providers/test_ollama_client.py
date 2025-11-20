@@ -1975,3 +1975,613 @@ def test_complex_tool_call_preservation(client):
     assert args["filters"]["location"] == ["Paris", "London"]
     assert args["filters"]["date_range"]["start"] == "2024-01-01"
     assert args["options"]["include_forecast"] is True
+
+
+# ---------------------------------------------------------------------------
+# Additional coverage tests for missing lines
+# ---------------------------------------------------------------------------
+
+
+def test_client_initialization_without_chat_attribute(mock_configuration):
+    """Test client initialization when ollama doesn't have chat attribute."""
+    with patch("ollama.chat", create=False):
+        # Remove chat attribute temporarily
+        import ollama
+        if hasattr(ollama, "chat"):
+            delattr(ollama, "chat")
+
+        with pytest.raises(ValueError, match="does not expose 'chat'"):
+            OllamaLLMClient(model="qwen3")
+
+
+def test_client_initialization_old_ollama_fallback(mock_configuration):
+    """Test client initialization with old ollama version (no host parameter)."""
+    # Mock old-style clients that don't accept host parameter
+    class OldMockAsyncClient:
+        def __init__(self):
+            pass
+
+    class OldMockClient:
+        def __init__(self):
+            pass
+
+        def show(self, model: str):
+            return MockOllamaShowResponse([])
+
+    with patch("ollama.AsyncClient", OldMockAsyncClient):
+        with patch("ollama.Client", OldMockClient):
+            # Should fall back to old initialization
+            client = OllamaLLMClient(model="qwen3", api_base="http://custom:11434")
+
+            assert client.async_client is not None
+            assert client.sync_client is not None
+
+
+def test_client_initialization_old_ollama_with_set_host(mock_configuration):
+    """Test client initialization with old ollama that has set_host method."""
+    # Mock old-style clients
+    class OldMockAsyncClient:
+        def __init__(self):
+            pass
+
+    class OldMockClient:
+        def __init__(self):
+            pass
+
+        def show(self, model: str):
+            return MockOllamaShowResponse([])
+
+    with patch("ollama.AsyncClient", OldMockAsyncClient):
+        with patch("ollama.Client", OldMockClient):
+            # Create a mock module with set_host attribute
+            with patch("ollama.set_host", create=True) as mock_set_host:
+                client = OllamaLLMClient(model="qwen3", api_base="http://custom:11434")
+
+                # Should call set_host
+                mock_set_host.assert_called_once_with("http://custom:11434")
+
+
+def test_get_model_info_with_error(mock_configuration, monkeypatch):
+    """Test get_model_info when there's an error in base info."""
+    client = OllamaLLMClient(model="qwen3")
+
+    # Mock get_model_info to return error
+    def mock_base_info():
+        return {"error": "Configuration not found"}
+
+    monkeypatch.setattr(
+        "chuk_llm.llm.providers._config_mixin.ConfigAwareProviderMixin.get_model_info",
+        lambda self: mock_base_info()
+    )
+
+    info = client.get_model_info()
+
+    # Should not add ollama_specific when there's an error
+    assert "error" in info
+    assert "ollama_specific" not in info
+
+
+def test_detect_model_family_code(client):
+    """Test model family detection for code models."""
+    client.model = "starcoder"
+    assert client._detect_model_family() == "code"
+
+    client.model = "deepseek-coder"
+    assert client._detect_model_family() == "code"
+
+
+def test_prepare_messages_tool_args_as_list(client):
+    """Test tool argument handling when args is a list (edge case)."""
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "test_tool",
+                        "arguments": [1, 2, 3],  # List instead of dict
+                    }
+                }
+            ],
+        }
+    ]
+
+    prepared = client._prepare_ollama_messages(messages)
+
+    # Should handle by leaving as-is (neither dict nor string)
+    assert len(prepared) == 1
+    assert prepared[0]["role"] == "assistant"
+
+
+def test_prepare_messages_with_pydantic_image_content(client):
+    """Test message preparation with Pydantic-style image content."""
+    from chuk_llm.core.enums import ContentType
+
+    # Mock Pydantic content objects
+    class MockTextContent:
+        def __init__(self, text):
+            self.type = ContentType.TEXT
+            self.text = text
+
+    class MockImageUrlContent:
+        def __init__(self, url):
+            self.type = ContentType.IMAGE_URL
+            self.image_url = {"url": url}
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                MockTextContent("Look at this"),
+                MockImageUrlContent("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="),
+            ],
+        }
+    ]
+
+    client.supports_feature = lambda feature: feature == "vision"
+
+    prepared = client._prepare_ollama_messages(messages)
+
+    assert len(prepared) == 1
+    assert "images" in prepared[0]
+
+
+def test_prepare_messages_unknown_role(client):
+    """Test message preparation with unknown role."""
+    messages = [
+        {"role": "custom_role", "content": "Custom content"}
+    ]
+
+    prepared = client._prepare_ollama_messages(messages)
+
+    assert len(prepared) == 1
+    assert prepared[0]["role"] == "custom_role"
+    assert prepared[0]["content"] == "Custom content"
+
+
+def test_create_sync_tools_not_supported(client):
+    """Test _create_sync when tools are provided but not supported."""
+    messages = [{"role": "user", "content": "Hello"}]
+    tools = [{"function": {"name": "test_tool"}}]
+
+    # Mock no tool support
+    client.supports_feature = lambda feature: feature != "tools"
+
+    mock_response = MockOllamaResponse("Hello")
+    client.sync_client.chat = MagicMock(return_value=mock_response)
+
+    result = client._create_sync(messages, tools)
+
+    # Should succeed but not pass tools
+    assert result["response"] == "Hello"
+    call_kwargs = client.sync_client.chat.call_args.kwargs
+    assert "tools" not in call_kwargs
+
+
+def test_create_sync_with_think_parameter(client):
+    """Test _create_sync with think parameter for reasoning models."""
+    messages = [{"role": "user", "content": "Solve this"}]
+
+    mock_response = MockOllamaResponse("Solution")
+
+    # Mock sync_client.chat to accept think parameter
+    def mock_chat(model, messages, stream, think=None, **kwargs):
+        return mock_response
+
+    client.sync_client.chat = mock_chat
+
+    # Test with boolean think
+    result = client._create_sync(messages, think=True)
+    assert result["response"] == "Solution"
+
+    # Test with string think
+    result = client._create_sync(messages, think="high")
+    assert result["response"] == "Solution"
+
+
+def test_create_sync_with_think_parameter_not_supported(client):
+    """Test _create_sync when think parameter is not supported by sync client."""
+    messages = [{"role": "user", "content": "Solve this"}]
+
+    mock_response = MockOllamaResponse("Solution")
+
+    # Mock sync_client.chat that doesn't accept think parameter
+    def mock_chat(model, messages, stream, **kwargs):
+        if "think" in kwargs:
+            raise TypeError("Unexpected keyword argument 'think'")
+        return mock_response
+
+    client.sync_client.chat = mock_chat
+
+    # Should handle gracefully by not passing think
+    result = client._create_sync(messages, think="medium")
+    assert result["response"] == "Solution"
+
+
+def test_build_ollama_options_with_special_parameters(client, caplog):
+    """Test that special parameters are logged but not included in options."""
+    import logging
+    caplog.set_level(logging.DEBUG)
+
+    kwargs = {
+        "temperature": 0.7,
+        "think": "medium",
+        "stream": True,
+        "tools": [],
+        "messages": [],
+        "model": "qwen3",
+    }
+
+    options = client._build_ollama_options(kwargs)
+
+    # Special parameters should not be in options
+    assert "think" not in options
+    assert "stream" not in options
+    assert "tools" not in options
+    assert "messages" not in options
+    assert "model" not in options
+
+    # Regular parameter should be in options
+    assert "temperature" in options
+
+
+def test_parse_response_tool_args_as_other_type(client):
+    """Test parsing response when tool arguments are neither dict nor string."""
+    mock_tool_call = types.SimpleNamespace(
+        id="call_123",
+        function=types.SimpleNamespace(
+            name="test_tool",
+            arguments=12345  # Integer instead of dict/string
+        ),
+    )
+
+    mock_response = MockOllamaResponse(content="", tool_calls=[mock_tool_call])
+    client.supports_feature = lambda feature: feature == "tools"
+
+    result = client._parse_response(mock_response)
+
+    # Should convert to string
+    assert result["tool_calls"][0]["function"]["arguments"] == "12345"
+
+
+@pytest.mark.asyncio
+async def test_create_completion_context_validation_failure(client, caplog):
+    """Test create_completion when context validation fails."""
+    import logging
+    caplog.set_level(logging.DEBUG)
+
+    messages = [
+        {"role": "user", "content": "Hello"},
+        {"role": "user", "content": "Hello again"},  # Duplicate user messages
+    ]
+
+    async def mock_completion(messages, tools, **kwargs):
+        return {"response": "Hello!", "tool_calls": []}
+
+    client._regular_completion = mock_completion
+
+    await client.create_completion(messages, stream=False)
+
+    # Should log debug about duplicate roles
+    assert "Duplicate consecutive user messages detected" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_stream_completion_tools_not_supported(client):
+    """Test streaming when tools are provided but not supported."""
+    messages = [{"role": "user", "content": "Hello"}]
+    tools = [{"function": {"name": "test_tool"}}]
+
+    # Mock no tool support
+    client.supports_feature = lambda feature: feature != "tools"
+
+    async def mock_stream():
+        yield MockOllamaStreamChunk("Hello")
+
+    async def mock_chat(**kwargs):
+        # Verify tools were not passed
+        assert "tools" not in kwargs
+        return mock_stream()
+
+    client.async_client.chat = mock_chat
+
+    chunks = []
+    async for chunk in client._stream_completion_async(messages, tools):
+        chunks.append(chunk)
+
+    assert len(chunks) == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_completion_with_think_parameter(client):
+    """Test streaming with think parameter."""
+    messages = [{"role": "user", "content": "Solve this"}]
+
+    async def mock_stream():
+        yield MockOllamaStreamChunk("Solution")
+
+    async def mock_chat(**kwargs):
+        # Verify think parameter was passed
+        assert "think" in kwargs
+        assert kwargs["think"] == "high"
+        return mock_stream()
+
+    client.async_client.chat = mock_chat
+
+    chunks = []
+    async for chunk in client._stream_completion_async(messages, think="high"):
+        chunks.append(chunk)
+
+    assert len(chunks) == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_completion_with_think_boolean(client):
+    """Test streaming with boolean think parameter."""
+    messages = [{"role": "user", "content": "Solve this"}]
+
+    async def mock_stream():
+        yield MockOllamaStreamChunk("Solution")
+
+    async def mock_chat(**kwargs):
+        # Boolean should be converted to "medium"
+        assert "think" in kwargs
+        assert kwargs["think"] == "medium"
+        return mock_stream()
+
+    client.async_client.chat = mock_chat
+
+    chunks = []
+    async for chunk in client._stream_completion_async(messages, think=True):
+        chunks.append(chunk)
+
+    assert len(chunks) == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_completion_tool_extraction_various_attributes(client):
+    """Test tool call extraction with various attribute names."""
+    messages = [{"role": "user", "content": "Use tools"}]
+
+    # Mock tool call with different attribute names
+    class ToolCallWithCapitalAttrs:
+        def __init__(self):
+            self.Id = "call_caps"
+            self.Function = types.SimpleNamespace()
+            self.Function.Name = "tool_caps"
+            self.Function.Arguments = {"arg": "value"}
+
+    async def mock_stream():
+        yield MockOllamaStreamChunk("", tool_calls=[ToolCallWithCapitalAttrs()])
+
+    async def mock_chat(**kwargs):
+        return mock_stream()
+
+    client.async_client.chat = mock_chat
+    client.supports_feature = lambda feature: feature == "tools"
+
+    chunks = []
+    async for chunk in client._stream_completion_async(messages):
+        chunks.append(chunk)
+
+    assert len(chunks) == 1
+    assert len(chunks[0]["tool_calls"]) == 1
+    assert chunks[0]["tool_calls"][0]["function"]["name"] == "tool_caps"
+
+
+@pytest.mark.asyncio
+async def test_stream_completion_tool_at_chunk_level(client):
+    """Test tool calls at chunk level (not in message)."""
+    messages = [{"role": "user", "content": "Use tools"}]
+
+    # Create mock where tool_calls is at chunk level
+    class MockChunkWithToolCalls:
+        def __init__(self):
+            self.message = MockOllamaMessage("")
+            self.tool_calls = [
+                types.SimpleNamespace(
+                    id="chunk_call",
+                    function=types.SimpleNamespace(
+                        name="chunk_tool",
+                        arguments={}
+                    )
+                )
+            ]
+
+    async def mock_stream():
+        yield MockChunkWithToolCalls()
+
+    async def mock_chat(**kwargs):
+        return mock_stream()
+
+    client.async_client.chat = mock_chat
+    client.supports_feature = lambda feature: feature == "tools"
+
+    chunks = []
+    async for chunk in client._stream_completion_async(messages):
+        chunks.append(chunk)
+
+    assert len(chunks) == 1
+    assert len(chunks[0]["tool_calls"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_completion_final_chunk_with_tools(client):
+    """Test final chunk (done=True) with tool calls."""
+    messages = [{"role": "user", "content": "Use tools"}]
+
+    # Create mock final chunk with done=True
+    class MockFinalChunk:
+        def __init__(self):
+            self.message = MockOllamaMessage("Done", tool_calls=[
+                types.SimpleNamespace(
+                    id="final_call",
+                    function=types.SimpleNamespace(
+                        name="final_tool",
+                        arguments={}
+                    )
+                )
+            ])
+            self.done = True
+            self.tool_calls = None  # Tool calls only in message
+
+    async def mock_stream():
+        yield MockOllamaStreamChunk("Starting")
+        yield MockFinalChunk()
+
+    async def mock_chat(**kwargs):
+        return mock_stream()
+
+    client.async_client.chat = mock_chat
+    client.supports_feature = lambda feature: feature == "tools"
+
+    chunks = []
+    async for chunk in client._stream_completion_async(messages):
+        chunks.append(chunk)
+
+    assert len(chunks) == 2
+    # Final chunk should have tool calls
+    assert len(chunks[1]["tool_calls"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_completion_empty_chunks_and_asyncio_sleep(client):
+    """Test empty chunk handling and asyncio sleep for large chunk counts."""
+    messages = [{"role": "user", "content": "Hello"}]
+
+    async def mock_stream():
+        # Yield many chunks to trigger asyncio.sleep
+        for i in range(25):
+            if i % 5 == 0:
+                yield MockOllamaStreamChunk(f"chunk{i}")
+            else:
+                # Empty chunks
+                yield MockOllamaStreamChunk("")
+
+    async def mock_chat(**kwargs):
+        return mock_stream()
+
+    client.async_client.chat = mock_chat
+
+    chunks = []
+    async for chunk in client._stream_completion_async(messages):
+        chunks.append(chunk)
+
+    # Should only get non-empty chunks
+    assert len(chunks) == 5
+
+
+@pytest.mark.asyncio
+async def test_stream_completion_deduplication(client):
+    """Test that duplicate tool calls are deduplicated."""
+    messages = [{"role": "user", "content": "Use tools"}]
+
+    # Same tool call appears twice
+    mock_tool_call = types.SimpleNamespace(
+        id="dup_call",
+        function=types.SimpleNamespace(
+            name="dup_tool",
+            arguments={"arg": "value"}
+        )
+    )
+
+    class MockChunkWithDuplicates:
+        def __init__(self):
+            self.message = MockOllamaMessage("", tool_calls=[mock_tool_call])
+            self.tool_calls = [mock_tool_call]  # Same tool call in both places
+
+    async def mock_stream():
+        yield MockChunkWithDuplicates()
+
+    async def mock_chat(**kwargs):
+        return mock_stream()
+
+    client.async_client.chat = mock_chat
+    client.supports_feature = lambda feature: feature == "tools"
+
+    chunks = []
+    async for chunk in client._stream_completion_async(messages):
+        chunks.append(chunk)
+
+    # Should only have one tool call (deduplicated)
+    assert len(chunks) == 1
+    assert len(chunks[0]["tool_calls"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_completion_tool_without_function_name(client):
+    """Test tool call extraction when function name is missing."""
+    messages = [{"role": "user", "content": "Use tools"}]
+
+    # Tool call without function name
+    class ToolCallNoName:
+        def __init__(self):
+            self.id = "no_name_call"
+            self.function = types.SimpleNamespace()
+            # No name attribute
+            self.function.arguments = {}
+
+    async def mock_stream():
+        yield MockOllamaStreamChunk("", tool_calls=[ToolCallNoName()])
+
+    async def mock_chat(**kwargs):
+        return mock_stream()
+
+    client.async_client.chat = mock_chat
+    client.supports_feature = lambda feature: feature == "tools"
+
+    chunks = []
+    async for chunk in client._stream_completion_async(messages):
+        chunks.append(chunk)
+
+    # Should not add tool call without name
+    assert len(chunks) == 0  # No content, no valid tool calls
+
+
+def test_validate_request_with_vision_content(client):
+    """Test request validation with vision content detection."""
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Look"},
+                {"type": "image", "image_url": {"url": "http://example.com/img.jpg"}},
+            ],
+        }
+    ]
+
+    # Mock no vision support
+    client.supports_feature = lambda feature: feature != "vision"
+
+    validated_messages, validated_tools, validated_stream, validated_kwargs = (
+        client._validate_request_with_config(messages, None, False)
+    )
+
+    # Should still pass through (warning logged)
+    assert validated_messages == messages
+
+
+def test_prepare_messages_with_pydantic_image_url_object(client):
+    """Test image handling with Pydantic object that has image_url as string (not dict)."""
+    from chuk_llm.core.enums import ContentType
+
+    class MockImageContent:
+        def __init__(self):
+            self.type = ContentType.IMAGE_URL
+            # When not a dict, image_url should be a string
+            self.image_url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
+    messages = [
+        {
+            "role": "user",
+            "content": [MockImageContent()],
+        }
+    ]
+
+    client.supports_feature = lambda feature: feature == "vision"
+
+    prepared = client._prepare_ollama_messages(messages)
+
+    assert len(prepared) == 1
+    assert "images" in prepared[0]

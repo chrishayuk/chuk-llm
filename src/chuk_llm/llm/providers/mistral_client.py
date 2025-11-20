@@ -36,6 +36,7 @@ except ImportError as e:
 # Base imports
 from chuk_llm.llm.core.base import BaseLLMClient
 from chuk_llm.llm.providers._config_mixin import ConfigAwareProviderMixin
+from chuk_llm.llm.providers._mixins import OpenAIStyleMixin
 from chuk_llm.llm.providers._tool_compatibility import ToolCompatibilityMixin
 
 log = logging.getLogger(__name__)
@@ -146,10 +147,10 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
 
         return info
 
-    def _convert_messages_to_mistral_format(
+    async def _convert_messages_to_mistral_format(
         self, messages: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """Convert ChatML messages to Mistral format with configuration-aware vision handling"""
+        """Convert ChatML messages to Mistral format with configuration-aware vision handling and URL downloading"""
         mistral_messages = []
 
         for msg in messages:
@@ -217,6 +218,18 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                                 elif item.get("type") == "image_url":
                                     image_url = item.get("image_url", {})
                                     url = image_url.get("url", "") if isinstance(image_url, dict) else str(image_url)
+
+                                    # Download HTTP(S) URLs and convert to base64
+                                    if url.startswith(("http://", "https://")):
+                                        try:
+                                            log.debug(f"Downloading image from URL for Mistral: {url[:100]}...")
+                                            encoded_data, image_format = await OpenAIStyleMixin._download_and_encode_image(url)
+                                            url = f"data:image/{image_format};base64,{encoded_data}"
+                                            log.debug("Image downloaded and encoded successfully")
+                                        except Exception as e:
+                                            log.error(f"Failed to download image from {url}: {e}")
+                                            # Keep original URL and let Mistral handle the error
+
                                     mistral_content.append(
                                         {"type": "image_url", "image_url": url}
                                     )
@@ -229,6 +242,18 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                                 elif hasattr(item, "type") and item.type == ContentType.IMAGE_URL:
                                     image_url_data = item.image_url
                                     url = image_url_data.get("url") if isinstance(image_url_data, dict) else image_url_data
+
+                                    # Download HTTP(S) URLs and convert to base64
+                                    if url.startswith(("http://", "https://")):
+                                        try:
+                                            log.debug(f"Downloading image from URL for Mistral: {url[:100]}...")
+                                            encoded_data, image_format = await OpenAIStyleMixin._download_and_encode_image(url)
+                                            url = f"data:image/{image_format};base64,{encoded_data}"
+                                            log.debug("Image downloaded and encoded successfully")
+                                        except Exception as e:
+                                            log.error(f"Failed to download image from {url}: {e}")
+                                            # Keep original URL and let Mistral handle the error
+
                                     mistral_content.append(
                                         {"type": "image_url", "image_url": url}
                                     )
@@ -483,12 +508,12 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
             )
 
         # Convert messages to Mistral format (with configuration-aware processing)
-        mistral_messages = self._convert_messages_to_mistral_format(validated_messages)
+        # Note: This needs to be async for image downloading, so we'll handle it in the async methods
 
         # Build request parameters
         request_params = {
             "model": self.model,
-            "messages": mistral_messages,
+            "messages": validated_messages,  # Will be converted in async methods
             **validated_kwargs,
         }
 
@@ -521,6 +546,11 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
         """
         try:
             log.debug(f"Starting Mistral streaming for model: {self.model}")
+
+            # Convert messages to Mistral format (with async image downloading)
+            request_params["messages"] = await self._convert_messages_to_mistral_format(
+                request_params["messages"]
+            )
 
             # Use Mistral's streaming endpoint
             stream = self.client.chat.stream(**request_params)
@@ -709,6 +739,11 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
         """Non-streaming completion using async execution with tool name restoration."""
         try:
             log.debug(f"Starting Mistral completion for model: {self.model}")
+
+            # Convert messages to Mistral format (with async image downloading)
+            request_params["messages"] = await self._convert_messages_to_mistral_format(
+                request_params["messages"]
+            )
 
             def _sync_completion():
                 return self.client.chat.complete(**request_params)

@@ -16,10 +16,10 @@ class TestOpenAIClientInit:
     def test_init_with_defaults(self):
         """Test initialization with default parameters."""
         client = OpenAILLMClient(model="gpt-4o-mini")
-        
+
         assert client.model == "gpt-4o-mini"
         assert client.detected_provider == "openai"
-        assert client.async_client is not None
+        assert client.client is not None  # Now using async-native client
 
     def test_init_with_custom_api_base(self):
         """Test initialization with custom API base."""
