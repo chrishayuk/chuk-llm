@@ -1,6 +1,7 @@
 """Model discovery sources."""
 
 from chuk_llm.registry.sources.anthropic import AnthropicModelSource
+from chuk_llm.registry.sources.azure_openai import AzureOpenAIModelSource
 from chuk_llm.registry.sources.base import BaseModelSource, ModelSource
 from chuk_llm.registry.sources.deepseek import DeepSeekModelSource
 from chuk_llm.registry.sources.env import EnvProviderSource
@@ -23,6 +24,7 @@ __all__ = [
     "OpenAICompatibleSource",
     # Provider-specific sources
     "OpenAIModelSource",
+    "AzureOpenAIModelSource",
     "AnthropicModelSource",
     "GeminiModelSource",
     "DeepSeekModelSource",

@@ -1560,16 +1560,10 @@ class WatsonXLLMClient(
         validated_stream = stream
         validated_kwargs = kwargs.copy()
 
-        # Check streaming support
-        if stream and not self.supports_feature("streaming"):
-            log.warning(
-                f"Streaming requested but {self.model} doesn't support streaming according to configuration"
-            )
-            validated_stream = False
-
-        # Permissive approach: Let WatsonX API handle tool support
-        # Don't block based on capability checks - dynamic models should work
-        # Permissive approach: Pass all content to API (vision, audio, multimodal, etc.)
+        # Permissive approach: Don't block streaming or tools
+        # Let WatsonX API handle unsupported cases - models can be added dynamically
+        # and we shouldn't prevent attempts based on capability checks
+        # Pass all content to API (vision, audio, multimodal, etc.)
 
         # Validate parameters using configuration
         validated_kwargs = self.validate_parameters(**validated_kwargs)

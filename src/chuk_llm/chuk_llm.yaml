@@ -51,7 +51,7 @@ ollama:
   models: ["*"]
 
 watsonx:
-  client_class: "chuk_llm.llm.providers.watsonx_client:WatsonxLLMClient"
+  client_class: "chuk_llm.llm.providers.watsonx_client:WatsonXLLMClient"
   api_key_env: "WATSONX_API_KEY"
   default_model: "ibm/granite-3-3-8b-instruct"
   models: ["*"]

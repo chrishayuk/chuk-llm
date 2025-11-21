@@ -48,6 +48,7 @@ from chuk_llm.registry.resolvers import (
 )
 from chuk_llm.registry.sources import (
     AnthropicModelSource,
+    AzureOpenAIModelSource,
     DeepSeekModelSource,
     EnvProviderSource,
     GeminiModelSource,
@@ -104,6 +105,7 @@ async def get_registry(
             # Use provider-specific sources for dynamic discovery
             sources = [
                 OpenAIModelSource(),
+                AzureOpenAIModelSource(),
                 AnthropicModelSource(),
                 GeminiModelSource(),
                 DeepSeekModelSource(),
@@ -150,6 +152,7 @@ __all__ = [
     "EnvProviderSource",
     "OpenAICompatibleSource",
     "OpenAIModelSource",
+    "AzureOpenAIModelSource",
     "AnthropicModelSource",
     "GeminiModelSource",
     "DeepSeekModelSource",

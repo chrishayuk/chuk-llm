@@ -471,37 +471,17 @@ class AzureOpenAILLMClient(
         validated_stream = stream
         validated_kwargs = kwargs.copy()
 
-        # Check streaming support (use smart defaults if needed)
-        if stream and not self.supports_feature("streaming"):
-            log.warning(
-                f"Streaming requested but deployment '{self.azure_deployment}' doesn't support streaming"
+        # Permissive approach: Don't block streaming
+        # Let Azure OpenAI API handle unsupported cases - deployments can be added dynamically
+        # and we shouldn't prevent attempts based on capability checks
+
+        # Permissive approach: Pass all parameters to API (tools, vision, audio, JSON mode, etc.)
+        # Let Azure OpenAI API handle unsupported cases - deployments can be added dynamically
+        # Log when using smart defaults for unknown deployments
+        if tools and not self._has_explicit_deployment_config(self.azure_deployment):
+            log.info(
+                f"Using smart default: assuming deployment '{self.azure_deployment}' supports tools"
             )
-            # FIXED: Actually disable streaming when not supported
-            validated_stream = False
-
-        # Check tool support (use smart defaults for unknown deployments)
-        if tools:
-            if not self.supports_feature("tools"):
-                log.warning(
-                    f"Tools provided but deployment '{self.azure_deployment}' doesn't support tools"
-                )
-                validated_tools = None
-            elif not self._has_explicit_deployment_config(self.azure_deployment):
-                # Log when using smart defaults for tool support
-                log.info(
-                    f"Using smart default: assuming deployment '{self.azure_deployment}' supports tools"
-                )
-
-        # Permissive approach: Pass all content to API (vision, audio, etc.)
-        # Let Azure OpenAI API handle unsupported cases
-
-        # Check JSON mode
-        if kwargs.get("response_format", {}).get("type") == "json_object":
-            if not self.supports_feature("json_mode"):
-                log.warning(
-                    f"JSON mode requested but deployment '{self.azure_deployment}' doesn't support JSON mode"
-                )
-                validated_kwargs.pop("response_format", None)
 
         # Get smart parameters for this deployment
         smart_params = self._get_smart_default_parameters(self.azure_deployment)
