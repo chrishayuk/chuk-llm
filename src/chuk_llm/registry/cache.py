@@ -82,9 +82,7 @@ class RegistryCache:
         """Generate cache key for a model."""
         return f"{provider}:{model_name}"
 
-    def get_capabilities(
-        self, spec: ModelSpec
-    ) -> ModelCapabilities | None:
+    def get_capabilities(self, spec: ModelSpec) -> ModelCapabilities | None:
         """
         Get cached capabilities for a model.
 
@@ -143,9 +141,7 @@ class RegistryCache:
 
         self._save_cache()
 
-    def get_model(
-        self, provider: str, model_name: str
-    ) -> ModelWithCapabilities | None:
+    def get_model(self, provider: str, model_name: str) -> ModelWithCapabilities | None:
         """
         Get cached model with capabilities.
 
@@ -198,9 +194,7 @@ class RegistryCache:
         Args:
             provider: Provider name to clear
         """
-        keys_to_remove = [
-            key for key in self._cache.keys() if key.startswith(f"{provider}:")
-        ]
+        keys_to_remove = [key for key in self._cache if key.startswith(f"{provider}:")]
 
         for key in keys_to_remove:
             del self._cache[key]

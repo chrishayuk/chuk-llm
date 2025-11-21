@@ -17,10 +17,18 @@ Usage:
     chuk-llm functions
 """
 
-import argparse
-import re
-import sys
-from typing import Any
+# Suppress Pydantic v2 validator warning from session_manager before any imports
+import warnings
+
+warnings.filterwarnings(
+    "ignore", category=UserWarning, module="chuk_ai_session_manager.*"
+)
+
+# Standard library imports - must come after warning filters to suppress session_manager warnings  # noqa: E402
+import argparse  # noqa: E402
+import re  # noqa: E402
+import sys  # noqa: E402
+from typing import Any  # noqa: E402
 
 try:
     from rich.console import Console
@@ -1088,13 +1096,18 @@ def main() -> None:
 
     cli = ChukLLMCLI(verbose=verbose)
 
-    # 🎯 AUTO-DISCOVERY: Check if this is a convenience function and trigger discovery if needed
-    parsed_convenience = parse_convenience_function(normalized_command)
-    if parsed_convenience:
-        provider, model, is_sync, is_stream = parsed_convenience
+    # 🎯 Check if function exists first (handles family aliases like ask_claude, ask_granite)
+    function_exists = has_function(normalized_command)
 
-        # Check if function exists, if not trigger discovery silently
-        if not has_function(normalized_command):
+    # 🎯 AUTO-DISCOVERY: Parse as provider_model pattern and trigger discovery if needed
+    parsed_convenience = None
+    if not function_exists:
+        # Only try parsing if function doesn't exist yet
+        parsed_convenience = parse_convenience_function(normalized_command)
+        if parsed_convenience:
+            provider, model, is_sync, is_stream = parsed_convenience
+
+            # Trigger discovery silently
             trigger_discovery_for_provider(provider, quiet=True)
 
             # Check again after discovery
@@ -1106,9 +1119,12 @@ def main() -> None:
                 )
                 sys.exit(1)
 
+            # Function now exists after discovery
+            function_exists = True
+
     try:
-        # 🎯 Handle convenience functions first (ask_provider_model pattern)
-        if parsed_convenience:
+        # 🎯 Handle all convenience functions (both provider_model and family aliases)
+        if function_exists:
             # Parse arguments for convenience functions
             parser = argparse.ArgumentParser(description=f"Use {command} function")
             parser.add_argument("prompt", help="The question to ask")
@@ -1140,46 +1156,6 @@ def main() -> None:
                     normalized_command, parsed_args.prompt, **kwargs
                 )
                 return
-            except SystemExit:
-                # argparse calls sys.exit on error, catch and show usage
-                print(
-                    f'Usage: chuk-llm {command} "your question here" [--system-prompt "..."]'
-                )
-                sys.exit(1)
-
-        # Handle ask_alias commands (ask_granite, ask_claude, etc.)
-        elif normalized_command.startswith("ask_"):
-            # Parse arguments for ask_alias commands
-            parser = argparse.ArgumentParser(description=f"Use {command} alias")
-            parser.add_argument("prompt", help="The question to ask")
-            parser.add_argument(
-                "--system-prompt",
-                "-s",
-                help="System prompt to set the AI's behavior/personality",
-            )
-            parser.add_argument(
-                "--max-tokens", type=int, help="Maximum tokens in response"
-            )
-            parser.add_argument(
-                "--temperature", type=float, help="Temperature for sampling"
-            )
-
-            try:
-                parsed_args = parser.parse_args(args[1:])
-
-                alias = normalized_command[4:]  # Remove 'ask_' prefix
-
-                # Build kwargs from parsed args
-                kwargs = {}
-                if parsed_args.system_prompt:
-                    kwargs["system_prompt"] = parsed_args.system_prompt
-                if parsed_args.max_tokens:
-                    kwargs["max_tokens"] = parsed_args.max_tokens
-                if parsed_args.temperature:
-                    kwargs["temperature"] = parsed_args.temperature
-
-                # Note: We don't need to print the response since streaming handles it
-                cli.handle_ask_alias(alias, parsed_args.prompt, **kwargs)
             except SystemExit:
                 # argparse calls sys.exit on error, catch and show usage
                 print(

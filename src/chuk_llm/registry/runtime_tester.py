@@ -88,27 +88,35 @@ class RuntimeCapabilityTester:
         # Import here to avoid circular dependencies
         if self.provider == Provider.OPENAI.value:
             from chuk_llm.llm.providers.openai_client import OpenAILLMClient
+
             return OpenAILLMClient(model=model_name)
         elif self.provider == Provider.ANTHROPIC.value:
             from chuk_llm.llm.providers.anthropic_client import AnthropicLLMClient
+
             return AnthropicLLMClient(model=model_name)
         elif self.provider == Provider.GEMINI.value:
             from chuk_llm.llm.providers.gemini_client import GeminiLLMClient
+
             return GeminiLLMClient(model=model_name)
         elif self.provider == Provider.GROQ.value:
             from chuk_llm.llm.providers.groq_client import GroqAILLMClient
+
             return GroqAILLMClient(model=model_name)
         elif self.provider == Provider.MISTRAL.value:
             from chuk_llm.llm.providers.mistral_client import MistralLLMClient
+
             return MistralLLMClient(model=model_name)
         elif self.provider == Provider.DEEPSEEK.value:
             from chuk_llm.llm.providers.openai_client import OpenAILLMClient
+
             return OpenAILLMClient(model=model_name)
         elif self.provider == Provider.PERPLEXITY.value:
             from chuk_llm.llm.providers.perplexity_client import PerplexityLLMClient
+
             return PerplexityLLMClient(model=model_name)
         elif self.provider == Provider.OPENROUTER.value:
             from chuk_llm.llm.llm.providers.openrouter_client import OpenRouterLLMClient
+
             return OpenRouterLLMClient(model=model_name)
         else:
             raise ValueError(f"Unknown provider: {self.provider}")

@@ -78,6 +78,9 @@ async def main():
         "--skip-vision", action="store_true", help="Skip vision demo"
     )
     parser.add_argument(
+        "--skip-audio", action="store_true", default=True, help="Skip audio demo (default: True)"
+    )
+    parser.add_argument(
         "--demo",
         type=int,
         choices=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
@@ -95,7 +98,9 @@ async def main():
 
     client = get_client("mistral", model=args.model)
 
-    # Run specific demo or all demos
+    # Audio model (skipped by default - voxtral requires special setup)
+    audio_model = args.model
+
     if args.demo:
         demo_map = {
             1: ("Basic Completion", demo_basic_completion(client, "mistral", args.model)),
@@ -107,7 +112,7 @@ async def main():
             7: ("Structured Outputs", demo_structured_outputs(client, "mistral", args.model)),
             8: ("Conversation", demo_conversation(client, "mistral", args.model)),
             9: ("Model Discovery", demo_model_discovery(client, "mistral", args.model)),
-            10: ("Audio Input", demo_audio_input(client, "mistral", args.model)),
+            10: ("Audio Input", demo_audio_input(client, "mistral", audio_model)),
             11: ("Parameters", demo_parameters(client, "mistral", args.model)),
             12: ("Model Comparison", demo_model_comparison("mistral", ["mistral-small-latest", "mistral-medium-latest"])),
             13: ("Dynamic Model Call", demo_dynamic_model_call("mistral")),
@@ -128,7 +133,9 @@ async def main():
             "mistral",
             args.model,
             skip_tools=args.skip_tools,
-            skip_vision=args.skip_vision
+            skip_vision=args.skip_vision,
+            skip_audio=args.skip_audio,
+            audio_model=audio_model
         )
 
     print("\n" + "=" * 70)

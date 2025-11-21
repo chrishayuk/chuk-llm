@@ -328,7 +328,11 @@ When solving problems:
         # Format based on provider preferences
         if self.provider == Provider.ANTHROPIC.value:
             return self._format_tools_anthropic(tool_list)
-        elif self.provider in [Provider.OPENAI.value, Provider.GROQ.value, Provider.DEEPSEEK.value]:
+        elif self.provider in [
+            Provider.OPENAI.value,
+            Provider.GROQ.value,
+            Provider.DEEPSEEK.value,
+        ]:
             return self._format_tools_openai(tool_list)
         else:
             return self._format_tools_generic(tool_list)
@@ -385,7 +389,11 @@ When solving problems:
 - Provide all arguments in the correct format
 - Use proper JSON for complex parameters"""
 
-        elif self.provider in [Provider.OPENAI.value, Provider.GROQ.value, Provider.DEEPSEEK.value]:
+        elif self.provider in [
+            Provider.OPENAI.value,
+            Provider.GROQ.value,
+            Provider.DEEPSEEK.value,
+        ]:
             return """Function calling format:
 String and scalar parameters should be specified as is, while lists and objects should use JSON format.
 Ensure all required parameters are provided with correct types."""

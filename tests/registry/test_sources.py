@@ -32,7 +32,8 @@ class TestAnthropicModelSource:
 
         assert len(models) > 0
         assert all(m.provider == Provider.ANTHROPIC.value for m in models)
-        assert any("claude-3-5-sonnet" in m.name for m in models)
+        # Check for Claude models (now includes Claude 4.x and sonnet models)
+        assert any("claude" in m.name and "sonnet" in m.name for m in models)
 
     @pytest.mark.asyncio
     async def test_discover_without_api_key(self):
@@ -469,35 +470,22 @@ class TestPerplexityModelSource:
 
     @pytest.mark.asyncio
     async def test_discover_successful(self):
-        """Test successful model discovery via API."""
+        """Test model discovery returns known static models."""
         source = PerplexityModelSource(api_key="test-key")
 
-        mock_response_data = {
-            "data": [
-                {"id": "llama-3.1-sonar-small-128k-online"},
-                {"id": "llama-3.1-sonar-large-128k-chat"},
-                {"id": ""},  # Empty ID should be skipped
-            ]
-        }
+        # Perplexity now uses a static list of known models
+        # since they don't provide a /models endpoint
+        models = await source.discover()
 
-        async def mock_get(*args, **kwargs):
-            """Mock async get method."""
-            mock_resp = MagicMock()
-            mock_resp.json = MagicMock(return_value=mock_response_data)
-            mock_resp.raise_for_status = MagicMock()
-            return mock_resp
+        # Should return all known Perplexity models
+        assert len(models) == 8
+        assert all(m.provider == Provider.PERPLEXITY.value for m in models)
 
-        with patch("httpx.AsyncClient") as MockClient:
-            mock_client = MagicMock()
-            mock_client.get = mock_get
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            MockClient.return_value = mock_client
-
-            models = await source.discover()
-
-            assert len(models) == 2
-            assert all(m.provider == Provider.PERPLEXITY.value for m in models)
+        # Check some specific models exist
+        model_names = [m.name for m in models]
+        assert "sonar" in model_names
+        assert "sonar-pro" in model_names
+        assert "sonar-reasoning" in model_names
 
     @pytest.mark.asyncio
     async def test_discover_api_error_fallback(self):
@@ -525,12 +513,15 @@ class TestPerplexityModelSource:
 
     @pytest.mark.asyncio
     async def test_discover_without_api_key(self):
-        """Test discovery returns empty without API key."""
+        """Test discovery returns known models even without API key."""
+        # Perplexity uses static models, so API key is not required for discovery
         with patch.dict("os.environ", {}, clear=True):
             source = PerplexityModelSource(api_key=None)
             models = await source.discover()
 
-            assert models == []
+            # Should still return the static list of known models
+            assert len(models) == 8
+            assert all(m.provider == Provider.PERPLEXITY.value for m in models)
 
     @pytest.mark.asyncio
     async def test_get_known_models(self):
@@ -574,7 +565,9 @@ class TestWatsonxModelSource:
 
         granite_models = [m for m in models if "granite" in m.name]
         assert len(granite_models) > 0
-        assert any(m.family == "granite" for m in granite_models)
+        # Check for the new family naming (granite-2, granite-3, granite-4, granite-code, etc.)
+        granite_families = {m.family for m in granite_models}
+        assert any("granite" in family for family in granite_families if family)
         assert any(m.family == "granite-code" for m in granite_models)
 
     @pytest.mark.asyncio

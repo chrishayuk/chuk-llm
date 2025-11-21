@@ -1,893 +1,515 @@
 # chuk_llm/configuration/unified_config.py
 """
-Clean Unified Configuration System with FIXED Discovery Integration
-================================================================
+Simplified Configuration Manager using Pydantic + Registry
+==========================================================
 
-Key changes:
-1. Fixed _ensure_model_available to work with discovered models
-2. Added proper model resolution logic
-3. Enhanced provider model lookup
+Clean, focused configuration system that:
+- Uses Pydantic for validation (no manual checks)
+- Uses Registry for model discovery (no manual parsing)
+- Simple YAML loading (no complex inheritance)
+- Easy to test and maintain
 """
 
+import asyncio
 import logging
 import os
-import re
 import time
 from pathlib import Path
-from types import ModuleType
-from typing import Any, Optional
+from typing import Any
 
+from .models import Feature, ProviderConfig
+
+logger = logging.getLogger(__name__)
+
+# Optional dependencies
 try:
-    import yaml  # type: ignore[import-untyped]
+    import yaml
+
+    _YAML_AVAILABLE = True
 except ImportError:
-    yaml: ModuleType | None = None  # type: ignore[no-redef]
+    yaml = None  # type: ignore[assignment]
+    _YAML_AVAILABLE = False
 
 try:
     from dotenv import load_dotenv
 
-    _dotenv_available = True
+    _DOTENV_AVAILABLE = True
 except ImportError:
-    _dotenv_available = False
-
-# Modern package resource handling
-try:
-    from importlib.resources import files  # type: ignore[attr-defined]
-
-    _importlib_resources_available = True
-except ImportError:
-    try:
-        from importlib_resources import files  # type: ignore[import-untyped,no-redef]
-
-        _importlib_resources_available = True
-    except ImportError:
-        _importlib_resources_available = False
-
-# Fallback package resource handling
-try:
-    import pkg_resources
-
-    _pkg_resources_available = True
-except ImportError:
-    _pkg_resources_available = False
-
-from .models import Feature, ModelCapabilities, ProviderConfig
-from .registry_integration import RegistryIntegrationMixin
-from .validator import ConfigValidator
-
-logger = logging.getLogger(__name__)
+    _DOTENV_AVAILABLE = False
 
 
-class UnifiedConfigManager(RegistryIntegrationMixin):
+class UnifiedConfigManager:
     """
-    Unified configuration manager with registry-based discovery.
+    Simplified configuration manager with registry integration.
 
-    Uses the new registry system for model discovery.
-    All configuration comes from YAML, nothing hardcoded.
+    Responsibilities:
+    1. Load YAML configuration files
+    2. Validate with Pydantic models
+    3. Provide access to provider configs
+    4. Integrate with Registry for model discovery
     """
 
-    def __init__(self, config_path: str | None = None) -> None:
-        super().__init__()  # Initialize discovery mixin
+    def __init__(self, config_path: str | None = None):
+        """
+        Initialize configuration manager.
 
+        Args:
+            config_path: Optional path to config file. If not provided,
+                        searches standard locations.
+        """
         self.config_path = config_path
         self.providers: dict[str, ProviderConfig] = {}
-        self.global_aliases: dict[str, str] = {}
         self.global_settings: dict[str, Any] = {}
-        self._loaded = False
+        self.global_aliases: dict[str, str] = {}
 
-        # Load environment variables first
+        # Track which providers are builtin (from YAML) vs dynamically registered
+        self._builtin_providers: set[str] = set()
+
+        # Registry cache for discovered models
+        self._registry_cache: dict[str, set[str]] = {}
+        self._registry_cache_time: dict[str, float] = {}
+        self._cache_ttl = 300  # 5 minutes
+
+        # Load environment variables
         self._load_environment()
 
+        # Load configuration
+        self._load_config()
+
     def _load_environment(self) -> None:
-        """Load environment variables from .env file"""
-        if not _dotenv_available:
-            logger.debug("python-dotenv not available, skipping .env file loading")
+        """Load environment variables from .env file."""
+        if not _DOTENV_AVAILABLE:
+            logger.debug("python-dotenv not available, skipping .env loading")
             return
 
-        # Look for .env files in common locations
         env_candidates = [
-            ".env",
-            ".env.local",
-            os.path.expanduser("~/.chuk_llm/.env"),
-            Path(__file__).parent.parent.parent / ".env",  # Project root
+            Path(".env"),
+            Path(".env.local"),
+            Path.home() / ".chuk_llm" / ".env",
         ]
 
-        for env_file in env_candidates:
-            env_path = Path(str(env_file)).expanduser().resolve()  # type: ignore[arg-type]
+        for env_path in env_candidates:
             if env_path.exists():
                 logger.info(f"Loading environment from {env_path}")
-                load_dotenv(
-                    env_path, override=False
-                )  # Don't override existing env vars
-                break
-        else:
-            logger.debug("No .env file found in standard locations")
+                load_dotenv(env_path, override=False)
+                return
 
-    def _find_config_files(self) -> tuple[Path | None, Path | None]:
-        """Find configuration files - returns (user_config, package_config)"""
-        user_config = None
-        package_config = None
+        logger.debug("No .env file found")
 
-        # 1. Look for user configuration files (these override/replace)
+    def _find_config_file(self) -> Path | None:
+        """Find configuration file."""
+        # 1. Explicit path provided
         if self.config_path:
             path = Path(self.config_path)
             if path.exists():
-                user_config = path
+                return path
+            logger.warning(f"Config path specified but not found: {self.config_path}")
 
-        if not user_config:
-            user_candidates = [
-                # Environment variable with location
-                os.getenv("CHUK_LLM_CONFIG"),
-                # Working directory of consuming project
-                "chuk_llm.yaml",  # REPLACES package config completely
-                "providers.yaml",  # EXTENDS package config (inherits + overrides)
-                "llm_config.yaml",  # EXTENDS package config
-                "config/chuk_llm.yaml",
-                Path.home() / ".chuk_llm" / "config.yaml",
-            ]
+        # 2. Environment variable
+        env_path = os.getenv("CHUK_LLM_CONFIG")
+        if env_path:
+            path = Path(env_path)
+            if path.exists():
+                return path
 
-            for candidate in user_candidates:
-                if candidate:
-                    path = Path(candidate).expanduser().resolve()
-                    if path.exists():
-                        logger.info(f"Found user config file: {path}")
-                        user_config = path
-                        break
+        # 3. Standard locations (in order of precedence)
+        candidates = [
+            Path("chuk_llm.yaml"),
+            Path("providers.yaml"),
+            Path("config/chuk_llm.yaml"),
+            Path.home() / ".chuk_llm" / "config.yaml",
+        ]
 
-        # 2. Always try to get package config as baseline
-        package_config = self._get_package_config_path()
+        for candidate in candidates:
+            if candidate.exists():
+                logger.info(f"Using config file: {candidate}")
+                return candidate
+
+        # 4. Try package default
+        package_config = self._get_package_config()
         if package_config:
-            package_config_path: Path | None = (
-                Path(str(package_config)) if package_config else None
-            )
-            package_config = package_config_path  # type: ignore[assignment]
+            logger.info("Using package default configuration")
+            return package_config
 
-        return user_config, package_config  # type: ignore[return-value]
+        logger.debug("No configuration file found, using defaults")
+        return None
 
-    def _load_yaml_files(self) -> dict[str, Any]:
-        """Load YAML configuration with inheritance logic"""
-        if not yaml:
-            logger.warning("PyYAML not available, using built-in defaults only")
-            return {}
-
-        user_config_file, package_config_file = self._find_config_files()
-
-        config = {}
-
-        # 1. Start with package config as baseline (if available)
-        if package_config_file and package_config_file.exists():
-            try:
-                package_config = self._load_single_yaml(package_config_file)
-                if package_config:
-                    config.update(package_config)
-                    logger.info(f"Loaded package config from {package_config_file}")
-            except Exception as e:
-                logger.error(
-                    f"Failed to load package config from {package_config_file}: {e}"
-                )
-
-        # 2. Handle user config based on filename
-        if user_config_file:
-            try:
-                user_config = self._load_single_yaml(user_config_file)
-                if user_config:
-                    filename = user_config_file.name
-
-                    if filename == "chuk_llm.yaml":
-                        # COMPLETE REPLACEMENT - ignore package config
-                        logger.info(
-                            "chuk_llm.yaml found - replacing package config completely"
-                        )
-                        config = user_config
-                    else:
-                        # INHERITANCE MODE - merge with package config
-                        logger.info(f"{filename} found - extending package config")
-                        config = self._merge_configs(config, user_config)
-
-                    logger.info(f"Loaded user config from {user_config_file}")
-            except Exception as e:
-                logger.error(f"Failed to load user config from {user_config_file}: {e}")
-
-        if not config:
-            logger.info("No configuration files found, using built-in defaults")
-
-        return config
-
-    def _load_single_yaml(self, config_file: Path) -> dict[str, Any]:
-        """Load a single YAML file"""
-        # Handle package resource files specially
-        if self._is_package_resource_path(config_file):
-            return self._load_package_yaml()
-
-        # Regular file loading
-        with open(config_file, encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
-
-    def _merge_configs(
-        self, base_config: dict[str, Any], user_config: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Merge user config into base config with intelligent merging"""
-        merged = base_config.copy()
-
-        for key, value in user_config.items():
-            if key.startswith("__"):
-                # Global sections - merge intelligently
-                if (
-                    key in merged
-                    and isinstance(merged[key], dict)
-                    and isinstance(value, dict)
-                ):
-                    # Merge global sections (like __global__, __global_aliases__)
-                    merged[key].update(value)
-                else:
-                    # Replace if not both dicts
-                    merged[key] = value
-            else:
-                # Provider sections
-                if (
-                    key in merged
-                    and isinstance(merged[key], dict)
-                    and isinstance(value, dict)
-                ):
-                    # Merge provider config - user overrides base
-                    provider_config = merged[key].copy()
-
-                    # Handle special cases for lists that should be extended vs replaced
-                    for sub_key, sub_value in value.items():
-                        if (
-                            sub_key == "models"
-                            and isinstance(sub_value, list)
-                            and isinstance(provider_config.get(sub_key), list)
-                        ):
-                            # EXTEND models list (unique values only)
-                            existing_models = set(provider_config[sub_key])
-                            new_models = [
-                                m for m in sub_value if m not in existing_models
-                            ]
-                            provider_config[sub_key].extend(new_models)
-                        elif (
-                            sub_key == "model_aliases"
-                            and isinstance(sub_value, dict)
-                            and isinstance(provider_config.get(sub_key), dict)
-                        ):
-                            # MERGE model aliases
-                            provider_config[sub_key].update(sub_value)
-                        elif (
-                            sub_key == "features"
-                            and isinstance(sub_value, list)
-                            and isinstance(provider_config.get(sub_key), list)
-                        ):
-                            # EXTEND features list (unique values only)
-                            existing_features = set(provider_config[sub_key])
-                            new_features = [
-                                f for f in sub_value if f not in existing_features
-                            ]
-                            provider_config[sub_key].extend(new_features)
-                        elif (
-                            sub_key == "rate_limits"
-                            and isinstance(sub_value, dict)
-                            and isinstance(provider_config.get(sub_key), dict)
-                        ):
-                            # MERGE rate limits
-                            provider_config[sub_key].update(sub_value)
-                        elif (
-                            sub_key == "extra"
-                            and isinstance(sub_value, dict)
-                            and isinstance(provider_config.get(sub_key), dict)
-                        ):
-                            # DEEP MERGE extra config
-                            provider_config[sub_key] = self._deep_merge_dict(
-                                provider_config[sub_key], sub_value
-                            )
-                        else:
-                            # REPLACE for other fields
-                            provider_config[sub_key] = sub_value
-
-                    merged[key] = provider_config
-                else:
-                    # Replace entire provider config if not both dicts
-                    merged[key] = value
-
-        return merged
-
-    def _deep_merge_dict(
-        self, base: dict[str, Any], override: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Deep merge two dictionaries"""
-        result = base.copy()
-
-        for key, value in override.items():
-            if (
-                key in result
-                and isinstance(result[key], dict)
-                and isinstance(value, dict)
-            ):
-                result[key] = self._deep_merge_dict(result[key], value)
-            else:
-                result[key] = value
-
-        return result
-
-    def _get_package_config_path(self) -> str | None:
-        """Get the path to the packaged chuk_llm.yaml file"""
-        # Try modern importlib.resources first
-        if _importlib_resources_available:
-            try:
-                package_files = files("chuk_llm")
-                config_file = package_files / "chuk_llm.yaml"
-                if config_file.is_file():
-                    # Return a temporary path for importlib.resources
-                    return str(config_file)
-            except Exception as e:
-                logger.debug(f"importlib.resources method failed: {e}")
-
-        # Fallback to pkg_resources
-        if _pkg_resources_available:
-            try:
-                if pkg_resources.resource_exists("chuk_llm", "chuk_llm.yaml"):
-                    return pkg_resources.resource_filename("chuk_llm", "chuk_llm.yaml")
-            except Exception as e:
-                logger.debug(f"pkg_resources method failed: {e}")
+    def _get_package_config(self) -> Path | None:
+        """Get package default config file."""
+        # Try to find chuk_llm.yaml in the package
+        try:
+            package_dir = Path(__file__).parent.parent
+            config_file = package_dir / "chuk_llm.yaml"
+            if config_file.exists():
+                return config_file
+        except Exception as e:
+            logger.debug(f"Could not locate package config: {e}")
 
         return None
 
-    def _is_package_resource_path(self, config_file: Path) -> bool:
-        """Check if this is a package resource path that needs special handling"""
-        config_str = str(config_file)
-        # Check for importlib.resources paths (they often contain special markers)
-        return not config_file.exists() and (
-            "chuk_llm" in config_str or "importlib" in config_str
-        )
+    def _load_config(self) -> None:
+        """Load configuration from YAML file."""
+        config_file = self._find_config_file()
 
-    def _load_package_yaml(self) -> dict[str, Any]:
-        """Load YAML from package resources"""
-        # Try modern importlib.resources first
-        if _importlib_resources_available:
+        if not config_file:
+            logger.info("No config file found, providers will be empty")
+            return
+
+        if not _YAML_AVAILABLE:
+            logger.warning("PyYAML not available, cannot load config file")
+            return
+
+        try:
+            with open(config_file) as f:
+                data = yaml.safe_load(f)
+
+            if not data:
+                logger.warning(f"Empty config file: {config_file}")
+                return
+
+            self._process_config_data(data)
+            logger.info(f"Loaded configuration with {len(self.providers)} providers")
+
+        except Exception as e:
+            logger.error(f"Failed to load config from {config_file}: {e}")
+            raise
+
+    def _process_config_data(self, data: dict[str, Any]) -> None:
+        """
+        Process configuration data using Pydantic validation.
+
+        This is where Pydantic does all the heavy lifting!
+        """
+        # Global settings (if present)
+        if "__global__" in data or "global" in data:
+            global_data = data.get("__global__") or data.get("global", {})
+            self.global_settings.update(global_data)
+
+        # Global aliases
+        if "__global_aliases__" in data or "aliases" in data:
+            aliases_data = data.get("__global_aliases__") or data.get("aliases", {})
+            self.global_aliases.update(aliases_data)
+
+        # Process providers
+        for key, provider_data in data.items():
+            if key.startswith("__") or key in ("global", "aliases"):
+                continue
+
             try:
-                package_files = files("chuk_llm")
-                config_file = package_files / "chuk_llm.yaml"
-                if config_file.is_file():
-                    content = config_file.read_text(encoding="utf-8")
-                    config = yaml.safe_load(content) or {}
-                    logger.info(
-                        "Loaded configuration from package resources (importlib)"
+                # Ensure provider has a name
+                if "name" not in provider_data:
+                    provider_data["name"] = key
+
+                # Parse features from strings to Feature enum
+                if "features" in provider_data:
+                    provider_data["features"] = self._parse_features(
+                        provider_data["features"]
                     )
-                    return config
-            except Exception as e:
-                logger.debug(f"importlib.resources loading failed: {e}")
 
-        # Fallback to pkg_resources
-        if _pkg_resources_available:
-            try:
-                content = pkg_resources.resource_string(  # type: ignore[attr-defined]
-                    "chuk_llm", "chuk_llm.yaml"
-                ).decode("utf-8")
-                config = yaml.safe_load(content) or {}
-                logger.info(
-                    "Loaded configuration from package resources (pkg_resources)"
-                )
-                return config
-            except Exception as e:
-                logger.debug(f"pkg_resources loading failed: {e}")
+                # Parse model capabilities
+                if "model_capabilities" in provider_data:
+                    provider_data["model_capabilities"] = (
+                        self._parse_model_capabilities(
+                            provider_data["model_capabilities"]
+                        )
+                    )
 
-        return {}
+                # Let Pydantic validate and create the model
+                provider = ProviderConfig.model_validate(provider_data)
+                self.providers[key] = provider
+                # Mark as builtin (loaded from YAML)
+                self._builtin_providers.add(key)
+
+                logger.debug(f"Loaded provider: {key}")
+
+            except Exception as e:
+                logger.error(f"Failed to load provider {key}: {e}")
+                raise
 
     def _parse_features(self, features_data: Any) -> set[Feature]:
-        """Parse features from YAML data"""
+        """Parse features from various formats to Feature enum set."""
         if not features_data:
             return set()
 
+        features = set()
+
+        # Handle string (single feature)
         if isinstance(features_data, str):
-            features_data = [features_data]
+            try:
+                features.add(Feature.from_string(features_data))
+            except ValueError:
+                logger.warning(f"Unknown feature: {features_data}")
+            return features
 
-        result = set()
-        for feature in features_data:
-            if isinstance(feature, Feature):
-                result.add(feature)
-            else:
-                result.add(Feature.from_string(str(feature)))
+        # Handle list of features
+        if isinstance(features_data, list):
+            for item in features_data:
+                try:
+                    features.add(Feature.from_string(str(item)))
+                except ValueError:
+                    logger.warning(f"Unknown feature: {item}")
+            return features
 
-        return result
+        # Handle set
+        if isinstance(features_data, set):
+            for item in features_data:
+                try:
+                    features.add(Feature.from_string(str(item)))
+                except ValueError:
+                    logger.warning(f"Unknown feature: {item}")
+            return features
 
-    def _parse_model_capabilities(
-        self, models_data: list[dict]
-    ) -> list[ModelCapabilities]:
-        """Parse model-specific capabilities"""
-        if not models_data:
-            return []
+        return features
+
+    def _parse_model_capabilities(self, caps_data: list[dict[str, Any]]) -> list:
+        """Parse model capabilities using Pydantic."""
+        from .models import ModelCapabilities
 
         capabilities = []
-        for model_data in models_data:
-            cap = ModelCapabilities(
-                pattern=model_data.get("pattern", ".*"),
-                features=self._parse_features(model_data.get("features", [])),
-                max_context_length=model_data.get("max_context_length"),
-                max_output_tokens=model_data.get("max_output_tokens"),
-            )
-            capabilities.append(cap)
+        for cap_data in caps_data:
+            # Parse features in capability
+            if "features" in cap_data:
+                cap_data["features"] = self._parse_features(cap_data["features"])
+
+            # Let Pydantic validate
+            try:
+                cap = ModelCapabilities.model_validate(cap_data)
+                capabilities.append(cap)
+            except Exception as e:
+                logger.warning(f"Failed to parse model capability: {e}")
 
         return capabilities
 
-    def _load_yaml(self) -> dict[str, Any]:
-        """Load YAML configuration with inheritance support"""
-        return self._load_yaml_files()
-
-    def _process_config(self, config: dict):
-        """Process YAML configuration and merge with defaults"""
-        # Global settings
-        self.global_settings.update(config.get("__global__", {}))
-        self.global_aliases.update(config.get("__global_aliases__", {}))
-
-        # Process providers
-        for name, data in config.items():
-            if name.startswith("__"):
-                continue
-
-            # Start with existing provider or create new
-            if name in self.providers:
-                provider = self.providers[name]
-                logger.info(f"Merging configuration for existing provider: {name}")
-            else:
-                provider = ProviderConfig(name=name)
-                self.providers[name] = provider
-
-            # Update basic fields
-            if "client_class" in data:
-                provider.client_class = data["client_class"]
-            if "api_key_env" in data:
-                provider.api_key_env = data["api_key_env"]
-            if "api_key_fallback_env" in data:
-                provider.api_key_fallback_env = data["api_key_fallback_env"]
-            if "api_base" in data:
-                provider.api_base = data["api_base"]
-            if "default_model" in data:
-                provider.default_model = data["default_model"]
-
-            # Update collections
-            if "models" in data:
-                models_list = data["models"]
-                # If models is ["*"], load from registry
-                if models_list == ["*"]:
-                    logger.debug(f"Loading models for {name} from registry")
-                    # Try to load from registry cache
-                    try:
-                        import json
-                        from pathlib import Path
-                        cache_dir = Path.home() / ".cache" / "chuk-llm"
-                        registry_cache_path = cache_dir / "registry_cache.json"
-                        if registry_cache_path.exists():
-                            with open(registry_cache_path) as f:
-                                registry_data = json.load(f)
-
-                            # Registry cache is organized as {provider:model: {data}}
-                            # Group by provider
-                            provider_models = []
-                            for key, value in registry_data.items():
-                                if key.startswith(f"{name}:"):
-                                    model_name = value.get("model", key.split(":", 1)[1])
-                                    provider_models.append((model_name, value))
-
-                            if provider_models:
-                                provider.models = [m[0] for m in provider_models]
-
-                                # Also load model capabilities from registry
-                                from chuk_llm.configuration import Feature
-                                from chuk_llm.configuration.models import (
-                                    ModelCapabilities,
-                                )
-
-                                for model_name, model_data in provider_models:
-                                    caps_data = model_data.get("capabilities", {})
-
-                                    # Build feature set
-                                    features = set()
-                                    if caps_data.get("supports_streaming"):
-                                        features.add(Feature.STREAMING)
-                                    if caps_data.get("supports_tools"):
-                                        features.add(Feature.TOOLS)
-                                    if caps_data.get("supports_vision"):
-                                        features.add(Feature.VISION)
-                                    if caps_data.get("supports_json_mode"):
-                                        features.add(Feature.JSON_MODE)
-
-                                    caps = ModelCapabilities(
-                                        pattern=f"^{re.escape(model_name)}$",  # Exact match
-                                        features=features,
-                                        max_context_length=caps_data.get("max_context"),
-                                        max_output_tokens=caps_data.get("max_output_tokens"),
-                                    )
-                                    provider.model_capabilities.append(caps)
-
-                                logger.info(f"Loaded {len(provider.models)} models with capabilities for {name} from registry cache")
-                            else:
-                                logger.debug(f"No registry data found for {name}, keeping wildcard")
-                                provider.models = ["*"]
-                        else:
-                            logger.debug(f"No registry cache found, keeping wildcard for {name}")
-                            provider.models = ["*"]
-                    except Exception as e:
-                        logger.debug(f"Failed to load models from registry for {name}: {e}")
-                        provider.models = ["*"]
-                else:
-                    provider.models = models_list
-            if "model_aliases" in data:
-                provider.model_aliases.update(data["model_aliases"])
-
-            # Update capabilities
-            if "features" in data:
-                provider.features = self._parse_features(data["features"])
-            if "max_context_length" in data:
-                provider.max_context_length = data["max_context_length"]
-            if "max_output_tokens" in data:
-                provider.max_output_tokens = data["max_output_tokens"]
-            if "rate_limits" in data:
-                provider.rate_limits.update(data["rate_limits"])
-            if "model_capabilities" in data:
-                provider.model_capabilities = self._parse_model_capabilities(
-                    data["model_capabilities"]
-                )
-
-            # Inheritance
-            if "inherits" in data:
-                provider.inherits = data["inherits"]
-
-            # Process extra fields INSIDE the provider loop
-            known_fields = {
-                "client_class",
-                "api_key_env",
-                "api_key_fallback_env",
-                "api_base",
-                "default_model",
-                "models",
-                "model_aliases",
-                "features",
-                "max_context_length",
-                "max_output_tokens",
-                "rate_limits",
-                "model_capabilities",
-                "inherits",
-            }
-
-            # Extract extra fields for THIS provider
-            extra_fields = {k: v for k, v in data.items() if k not in known_fields}
-
-            # Deep merge extra fields for THIS provider
-            for key, value in extra_fields.items():
-                if (
-                    isinstance(value, dict)
-                    and key in provider.extra
-                    and isinstance(provider.extra[key], dict)
-                ):
-                    # Deep merge dictionaries (like dynamic_discovery)
-                    provider.extra[key].update(value)
-                else:
-                    # Replace for non-dict values
-                    provider.extra[key] = value
-
-            # Handle double nesting issue
-            if "extra" in provider.extra and isinstance(provider.extra["extra"], dict):
-                # Flatten double-nested extra fields
-                nested_extra = provider.extra["extra"]
-                del provider.extra["extra"]
-                provider.extra.update(nested_extra)
-                logger.debug(f"Fixed double nesting for provider {name}")
-
-            # Debug logging for discovery config
-            if "dynamic_discovery" in extra_fields:
-                logger.debug(
-                    f"Added discovery config to {name}: {extra_fields['dynamic_discovery']}"
-                )
-            elif "dynamic_discovery" in provider.extra:
-                logger.debug(
-                    f"Discovery config available for {name}: enabled={provider.extra['dynamic_discovery'].get('enabled')}"
-                )
-
-    def _resolve_inheritance(self):
-        """Resolve provider inheritance - inherit config but NOT models/aliases"""
-        for _ in range(10):  # Max 10 levels of inheritance
-            changes = False
-
-            for provider in self.providers.values():
-                if provider.inherits and provider.inherits in self.providers:
-                    parent = self.providers[provider.inherits]
-
-                    if not parent.inherits:  # Parent is resolved
-                        # Inherit TECHNICAL fields if not set
-                        if not provider.client_class:
-                            provider.client_class = parent.client_class
-                        if not provider.api_key_env:
-                            provider.api_key_env = parent.api_key_env
-                        if not provider.api_base:
-                            provider.api_base = parent.api_base
-
-                        # Inherit baseline features (this is good)
-                        provider.features.update(parent.features)
-
-                        # Inherit capabilities (this is good)
-                        if not provider.max_context_length:
-                            provider.max_context_length = parent.max_context_length
-                        if not provider.max_output_tokens:
-                            provider.max_output_tokens = parent.max_output_tokens
-
-                        # Inherit rate limits (this is good)
-                        parent_limits = parent.rate_limits.copy()
-                        parent_limits.update(provider.rate_limits)
-                        provider.rate_limits = parent_limits
-
-                        # Inherit model capabilities (this is good)
-                        parent_model_caps = parent.model_capabilities.copy()
-                        parent_model_caps.extend(provider.model_capabilities)
-                        provider.model_capabilities = parent_model_caps
-
-                        # Inherit extra fields (this is good)
-                        parent_extra = parent.extra.copy()
-                        parent_extra.update(provider.extra)
-                        provider.extra = parent_extra
-
-                        provider.inherits = None  # Mark as resolved
-                        changes = True
-
-            if not changes:
-                break
-
-    def load(self):
-        """Load configuration"""
-        if self._loaded:
-            return
-
-        config = self._load_yaml()
-        self._process_config(config)
-        self._resolve_inheritance()
-        self._loaded = True
+    # =============================================================================
+    # Public API
+    # =============================================================================
 
     def get_provider(self, name: str) -> ProviderConfig:
-        """Get provider configuration (with transparent discovery)"""
-        self.load()
+        """
+        Get provider configuration.
 
+        Args:
+            name: Provider name
+
+        Returns:
+            Provider configuration
+
+        Raises:
+            ValueError: If provider not found
+        """
         if name not in self.providers:
-            available = ", ".join(self.providers.keys())
+            available = ", ".join(sorted(self.providers.keys()))
             raise ValueError(f"Unknown provider: {name}. Available: {available}")
-
         return self.providers[name]
 
     def get_all_providers(self) -> list[str]:
-        """Get all provider names"""
-        self.load()
-        return list(self.providers.keys())
-
-    def get_api_key(self, provider_name: str) -> str | None:
-        """Get API key for provider"""
-        provider = self.get_provider(provider_name)
-
-        # Check for runtime API key first (from dynamic registration)
-        if provider.extra and "_runtime_api_key" in provider.extra:
-            return provider.extra["_runtime_api_key"]
-
-        if provider.api_key_env:
-            key = os.getenv(provider.api_key_env)
-            if key:
-                return key
-
-        if provider.api_key_fallback_env:
-            return os.getenv(provider.api_key_fallback_env)
-
-        return None
-
-    def get_api_base(self, provider_name: str) -> str | None:
-        """Get API base URL for provider, checking environment variables first"""
-        provider = self.get_provider(provider_name)
-
-        # Check for runtime API base first (from dynamic registration)
-        if provider.extra and "_runtime_api_base" in provider.extra:
-            return provider.extra["_runtime_api_base"]
-
-        # Check for environment variable override
-        if provider.extra and "api_base_env" in provider.extra:
-            env_base = os.getenv(provider.extra["api_base_env"])
-            if env_base:
-                logger.debug(
-                    f"Using API base from environment variable {provider.extra['api_base_env']}: {env_base}"
-                )
-                return env_base
-
-        # Standard environment variable patterns
-        # For provider "openai", check OPENAI_API_BASE, OPENAI_BASE_URL, etc.
-        provider_upper = provider_name.upper()
-        env_names = [
-            f"{provider_upper}_API_BASE",
-            f"{provider_upper}_BASE_URL",
-            f"{provider_upper}_API_URL",
-            f"{provider_upper}_ENDPOINT",
-        ]
-
-        for env_name in env_names:
-            env_value = os.getenv(env_name)
-            if env_value:
-                logger.debug(
-                    f"Using API base from environment variable {env_name}: {env_value}"
-                )
-                return env_value
-
-        # Return configured base URL
-        return provider.api_base
-
-    def supports_feature(
-        self,
-        provider_name: str,
-        feature: str | Feature,
-        model: str | None = None,
-    ) -> bool:
-        """Check if provider/model supports feature"""
-        provider = self.get_provider(provider_name)
-        return provider.supports_feature(feature, model)
+        """Get list of all configured provider names."""
+        return sorted(self.providers.keys())
 
     def get_global_aliases(self) -> dict[str, str]:
-        """Get global aliases configuration"""
-        self.load()
+        """Get global model aliases."""
         return self.global_aliases.copy()
 
-    def get_global_settings(self) -> dict[str, Any]:
-        """Get global settings configuration"""
-        self.load()
-        return self.global_settings.copy()
+    def supports_feature(
+        self, provider_name: str, feature: Feature, model: str | None = None
+    ) -> bool:
+        """
+        Check if provider/model supports a feature.
 
-    def set_global_setting(self, key: str, value: Any):
-        """Set a global setting"""
-        self.load()
-        self.global_settings[key] = value
+        Args:
+            provider_name: Provider name
+            feature: Feature to check
+            model: Optional model name
 
-    def add_global_alias(self, alias: str, target: str):
-        """Add a global alias"""
-        self.load()
-        self.global_aliases[alias] = target
+        Returns:
+            True if feature is supported
+        """
+        try:
+            provider = self.get_provider(provider_name)
+            return provider.supports_feature(feature, model)
+        except ValueError:
+            return False
 
-    # CRITICAL: Override the model resolution to use discovery
-    def is_model_available(self, provider_name: str, model_name: str) -> bool:
-        """Check if a model is available (static or discovered)"""
-        self.load()
-        return self._is_model_available(provider_name, model_name)
+    def get_api_key(self, provider_name: str) -> str | None:
+        """
+        Get API key for provider from environment.
 
-    def resolve_model(self, provider_name: str, model_name: str | None) -> str | None:
-        """Resolve a model name, using discovery if needed"""
-        self.load()
-        return self._ensure_model_available(provider_name, model_name)
+        Args:
+            provider_name: Provider name
 
-    def get_available_models(self, provider_name: str) -> set[str]:
-        """Get all available models for provider (static + discovered)"""
-        self.load()
-        return self.get_all_available_models(provider_name)
+        Returns:
+            API key or None if not found
+        """
+        try:
+            provider = self.get_provider(provider_name)
+            return provider.get_api_key()
+        except ValueError:
+            return None
 
-    def reload(self):
-        """Reload configuration"""
-        self._loaded = False
+    def get_api_base(self, provider_name: str) -> str | None:
+        """
+        Get API base URL for provider with proper priority order.
+
+        Priority (highest to lowest):
+        1. Runtime api_base (_runtime_api_base in extra)
+        2. Custom api_base_env environment variable
+        3. Standard environment patterns ({PROVIDER}_API_BASE, etc.)
+        4. Configured api_base value
+
+        Args:
+            provider_name: Provider name
+
+        Returns:
+            API base URL or None
+        """
+        try:
+            provider = self.get_provider(provider_name)
+
+            # Highest priority: Runtime API base
+            if "_runtime_api_base" in provider.extra:
+                return provider.extra["_runtime_api_base"]
+
+            # High priority: Custom api_base_env
+            if provider.api_base_env:
+                env_value = os.getenv(provider.api_base_env)
+                if env_value:
+                    return env_value
+
+            # Medium priority: Standard environment variable patterns
+            provider_upper = provider_name.upper()
+            standard_patterns = [
+                f"{provider_upper}_API_BASE",
+                f"{provider_upper}_BASE_URL",
+                f"{provider_upper}_API_URL",
+                f"{provider_upper}_ENDPOINT",
+            ]
+            for env_var in standard_patterns:
+                env_value = os.getenv(env_var)
+                if env_value:
+                    return env_value
+
+            # Lowest priority: Configured api_base
+            if provider.api_base:
+                return provider.api_base
+
+            return None
+        except ValueError:
+            return None
+
+    def reload(self) -> None:
+        """Reload configuration from disk."""
+        # Clear current state
         self.providers.clear()
-        self.global_aliases.clear()
         self.global_settings.clear()
-        super().reload()  # Clear discovery state
-        self.load()
+        self.global_aliases.clear()
 
-    # ─────────────── DYNAMIC PROVIDER REGISTRATION ──────────────
+        # Clear registry cache
+        self._registry_cache.clear()
+        self._registry_cache_time.clear()
+
+        # Reload config
+        self._load_config()
+
+    # =============================================================================
+    # Dynamic Provider Registration (for runtime provider addition)
+    # =============================================================================
 
     def register_provider(
         self,
         name: str,
-        api_base: str | None = None,
+        client_class: str | None = None,
         api_key: str | None = None,
         api_key_env: str | None = None,
-        api_base_env: str | None = None,
-        models: list[str] | None = None,
+        api_base: str | None = None,
         default_model: str | None = None,
-        client_class: str | None = None,
-        features: list[str] | None = None,
-        max_context_length: int | None = None,
-        max_output_tokens: int | None = None,
-        inherits_from: str | None = None,
+        models: list[str] | None = None,
+        features: list[str] | set[Feature] | None = None,
         **extra_kwargs,
     ) -> ProviderConfig:
         """
-        Register a new provider dynamically at runtime.
+        Register a provider dynamically at runtime.
 
         Args:
-            name: Unique provider name
-            api_base: Base URL for the API
-            api_key: API key (stored in memory)
+            name: Provider name
+            client_class: Client class path (defaults to OpenAI-compatible)
+            api_key: Direct API key (not recommended, use api_key_env)
             api_key_env: Environment variable name for API key
-            api_base_env: Environment variable name for base URL
+            api_base: Base URL for API
+            default_model: Default model name
             models: List of supported models
-            default_model: Default model to use
-            client_class: Client class path
-            features: List of features
-            max_context_length: Maximum context length
-            max_output_tokens: Maximum output tokens
-            inherits_from: Inherit from existing provider
-            **extra_kwargs: Additional configuration
+            features: List of supported features
+            **extra_kwargs: Additional provider-specific configuration
 
         Returns:
-            The created ProviderConfig
+            The created ProviderConfig object
         """
-        self.load()  # Ensure config is loaded
+        # Default client class to OpenAI-compatible
+        if not client_class:
+            client_class = "chuk_llm.llm.providers.openai_client:OpenAILLMClient"
 
-        # Check if provider already exists
-        if name in self.providers and not hasattr(self, "_dynamic_providers"):
-            self._dynamic_providers: set[str] = set()  # type: ignore[var-annotated]
-
-        # Start with base config or inherit from existing
-        if inherits_from and inherits_from in self.providers:
-            # Deep copy the inherited provider config
-            base_provider = self.providers[inherits_from]
-            provider = ProviderConfig(name=name)
-            provider.client_class = base_provider.client_class
-            provider.api_key_env = base_provider.api_key_env
-            provider.api_base = base_provider.api_base
-            provider.default_model = base_provider.default_model
-            provider.models = (
-                base_provider.models.copy() if base_provider.models else []
-            )
-            if hasattr(base_provider, "aliases"):  # type: ignore[attr-defined]
-                provider.aliases = (  # type: ignore[attr-defined]
-                    getattr(base_provider, "aliases", {}).copy()
-                    if hasattr(base_provider, "aliases")
-                    else {}  # type: ignore[attr-defined]
-                )
-            provider.rate_limits = (
-                base_provider.rate_limits.copy() if base_provider.rate_limits else {}
-            )
-            provider.extra = base_provider.extra.copy() if base_provider.extra else {}
-        else:
-            provider = ProviderConfig(name=name)
-
-        # Apply provided configuration
-        if api_base:
-            provider.api_base = api_base
-        if api_base_env:
-            # Store in extra config for environment variable checking
-            if not provider.extra:
-                provider.extra = {}
-            provider.extra["api_base_env"] = api_base_env
-        if api_key:
-            # Store API key in extra config (not persisted)
-            if not provider.extra:
-                provider.extra = {}
-            provider.extra["_runtime_api_key"] = api_key
-        if api_key_env:
-            provider.api_key_env = api_key_env
-        if models:
-            provider.models = models
-        if default_model:
-            provider.default_model = default_model
-        if client_class:
-            provider.client_class = client_class
-
-        # Handle features
+        # Parse features if provided
         if features:
-            if not provider.extra:
-                provider.extra = {}
-            provider.extra["features"] = features
+            if isinstance(features, list):
+                features = self._parse_features(features)
+            elif not isinstance(features, set):
+                features = {features}
+        else:
+            features = set()
 
-        # Handle context limits
-        if max_context_length:
-            if not provider.extra:
-                provider.extra = {}
-            provider.extra["max_context_length"] = max_context_length
-        if max_output_tokens:
-            if not provider.extra:
-                provider.extra = {}
-            provider.extra["max_output_tokens"] = max_output_tokens
+        # Separate known fields from extra kwargs
+        known_fields = {
+            "name",
+            "client_class",
+            "api_key_env",
+            "api_key_fallback_env",
+            "api_base",
+            "api_base_env",
+            "default_model",
+            "models",
+            "model_aliases",
+            "features",
+            "max_context_length",
+            "max_output_tokens",
+            "rate_limits",
+            "model_capabilities",
+            "inherits",
+        }
 
-        # Add any extra kwargs
-        if extra_kwargs:
-            if not provider.extra:
-                provider.extra = {}
-            provider.extra.update(extra_kwargs)
+        # Build provider data with known fields
+        provider_data = {
+            "name": name,
+            "client_class": client_class,
+            "api_key_env": api_key_env,
+            "api_base": api_base,
+            "default_model": default_model or "",
+            "models": models or ["*"],
+            "features": features,
+        }
 
-        # Register the provider
+        # Separate known kwargs from extra
+        extra_data = {}
+        for key, value in extra_kwargs.items():
+            if key in known_fields:
+                provider_data[key] = value
+            else:
+                extra_data[key] = value
+
+        # Store extra kwargs in the extra field
+        if extra_data:
+            provider_data["extra"] = extra_data  # type: ignore[assignment]
+
+        # Handle api_key specially - store in extra as _runtime_api_key
+        if api_key:
+            if "extra" not in provider_data:
+                provider_data["extra"] = {}  # type: ignore[assignment]
+            provider_data["extra"]["_runtime_api_key"] = api_key  # type: ignore[index,call-overload]
+
+        # Validate and create provider
+        provider = ProviderConfig.model_validate(provider_data)
         self.providers[name] = provider
 
-        # Track as dynamic provider
-        if not hasattr(self, "_dynamic_providers"):
-            self._dynamic_providers = set()
-        self._dynamic_providers.add(name)
-
         logger.info(f"Registered dynamic provider: {name}")
+
         return provider
 
     def update_provider(self, name: str, **kwargs) -> ProviderConfig:
@@ -899,281 +521,378 @@ class UnifiedConfigManager(RegistryIntegrationMixin):
             **kwargs: Fields to update
 
         Returns:
-            The updated ProviderConfig
-        """
-        self.load()
+            Updated ProviderConfig
 
+        Raises:
+            ValueError: If provider doesn't exist
+        """
         if name not in self.providers:
             raise ValueError(f"Provider '{name}' not found")
 
-        provider = self.providers[name]
+        # Get existing provider
+        existing = self.providers[name]
 
-        # Update fields
+        # Convert to dict and update
+        provider_dict = existing.model_dump()
+
+        # Handle features specially
+        if "features" in kwargs:
+            features = kwargs["features"]
+            if isinstance(features, list):
+                kwargs["features"] = self._parse_features(features)
+            elif not isinstance(features, set):
+                kwargs["features"] = {features}
+
+        # Separate known fields from those that should go in extra
+        known_fields = {
+            "name",
+            "client_class",
+            "api_key_env",
+            "api_key_fallback_env",
+            "api_base",
+            "api_base_env",
+            "default_model",
+            "models",
+            "model_aliases",
+            "features",
+            "max_context_length",
+            "max_output_tokens",
+            "rate_limits",
+            "model_capabilities",
+            "inherits",
+        }
+
+        # Fields that should go in extra dict (for legacy/special cases)
+        extra_fields = {"inherits_from"}
+
+        # Update known fields directly
         for key, value in kwargs.items():
-            if key == "api_key":
-                # Special handling for API key
-                if not provider.extra:
-                    provider.extra = {}
-                provider.extra["_runtime_api_key"] = value
-            elif key == "api_base_env":
-                # Special handling for API base environment variable
-                if not provider.extra:
-                    provider.extra = {}
-                provider.extra["api_base_env"] = value
-            elif hasattr(provider, key):
-                setattr(provider, key, value)
+            if key in known_fields:
+                provider_dict[key] = value
+            elif key in extra_fields:
+                # Put in extra dict
+                if "extra" not in provider_dict:
+                    provider_dict["extra"] = {}
+                provider_dict["extra"][key] = value
             else:
-                # Store in extra
-                if not provider.extra:
-                    provider.extra = {}
-                provider.extra[key] = value
+                # Other unknown fields - let Pydantic handle them
+                provider_dict[key] = value
+
+        # Validate and recreate
+        updated_provider = ProviderConfig.model_validate(provider_dict)
+        self.providers[name] = updated_provider
 
         logger.info(f"Updated provider: {name}")
-        return provider
+
+        return updated_provider
 
     def unregister_provider(self, name: str) -> bool:
         """
-        Remove a dynamically registered provider.
+        Unregister a dynamically registered provider.
 
         Args:
             name: Provider name to remove
 
         Returns:
-            True if removed, False otherwise
+            True if successfully unregistered
+
+        Raises:
+            ValueError: If provider doesn't exist or is a builtin provider
         """
-        self.load()
+        if name not in self.providers:
+            raise ValueError(f"Provider '{name}' not found")
 
-        # Only allow removing dynamic providers
-        if not hasattr(self, "_dynamic_providers"):
-            return False
+        # Cannot unregister builtin providers
+        if name in self._builtin_providers:
+            raise ValueError(f"Cannot unregister builtin provider '{name}'")
 
-        if name not in self._dynamic_providers:
-            logger.warning(f"Cannot remove non-dynamic provider '{name}'")
-            return False
+        del self.providers[name]
 
-        if name in self.providers:
-            del self.providers[name]
-            self._dynamic_providers.remove(name)
-            logger.info(f"Unregistered dynamic provider: {name}")
-            return True
+        # Clear from registry cache if present
+        if name in self._registry_cache:
+            del self._registry_cache[name]
+        if name in self._registry_cache_time:
+            del self._registry_cache_time[name]
 
-        return False
+        logger.info(f"Unregistered provider: {name}")
+
+        return True
 
     def list_dynamic_providers(self) -> list[str]:
         """
-        List all dynamically registered providers.
+        List dynamically registered providers (excludes builtin providers from YAML).
 
         Returns:
-            List of dynamic provider names
+            List of dynamically registered provider names (not from YAML config)
         """
-        if not hasattr(self, "_dynamic_providers"):
-            return []
-        return list(self._dynamic_providers)
+        return [name for name in self.providers if name not in self._builtin_providers]
+
+    def provider_exists(self, name: str) -> bool:
+        """
+        Check if a provider exists.
+
+        Args:
+            name: Provider name
+
+        Returns:
+            True if provider exists
+        """
+        return name in self.providers
+
+    def _ensure_model_available(self, provider_name: str, model: str) -> bool:
+        """
+        Check if a model is available for a provider.
+
+        Args:
+            provider_name: Provider name
+            model: Model name
+
+        Returns:
+            True if model is available
+        """
+        try:
+            provider = self.get_provider(provider_name)
+
+            # Check static models
+            if model in provider.models or "*" in provider.models:
+                return True
+
+            # Check discovered models
+            discovered = self.get_discovered_models(provider_name)
+            if model in discovered:
+                return True
+
+            return False
+        except ValueError:
+            return False
+
+    # =============================================================================
+    # Registry Integration for Model Discovery
+    # =============================================================================
+
+    async def _get_registry_models(
+        self, provider_name: str, force_refresh: bool = False
+    ) -> set[str]:
+        """
+        Get models from registry for a provider.
+
+        Args:
+            provider_name: Name of the provider
+            force_refresh: Force refresh of cache
+
+        Returns:
+            Set of model names
+        """
+        # Check cache first
+        if not force_refresh and provider_name in self._registry_cache:
+            cache_age = time.time() - self._registry_cache_time.get(provider_name, 0)
+            if cache_age < self._cache_ttl:
+                logger.debug(f"Using cached registry models for {provider_name}")
+                return self._registry_cache[provider_name]
+
+        try:
+            from chuk_llm.api.discovery import discover_models
+
+            # Discover models using registry
+            models_list = await discover_models(
+                provider_name, force_refresh=force_refresh
+            )
+
+            if models_list:
+                model_names = {m["name"] for m in models_list}
+                self._registry_cache[provider_name] = model_names
+                self._registry_cache_time[provider_name] = time.time()
+                logger.debug(
+                    f"Discovered {len(model_names)} models for {provider_name}"
+                )
+                return model_names
+
+            return set()
+
+        except Exception as e:
+            logger.debug(f"Registry discovery failed for {provider_name}: {e}")
+            return set()
+
+    def get_discovered_models(self, provider_name: str) -> set[str]:
+        """
+        Get discovered models for a provider (sync version).
+
+        Args:
+            provider_name: Name of the provider
+
+        Returns:
+            Set of discovered model names
+        """
+        # Try to get from cache first
+        if provider_name in self._registry_cache:
+            return self._registry_cache[provider_name].copy()
+
+        # Run async discovery in sync context
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(self._get_registry_models(provider_name))
+            finally:
+                loop.close()
+        except Exception as e:
+            logger.debug(f"Failed to get discovered models for {provider_name}: {e}")
+            return set()
+
+    def get_all_available_models(self, provider_name: str) -> set[str]:
+        """
+        Get all available models for a provider (static + discovered).
+
+        Args:
+            provider_name: Name of the provider
+
+        Returns:
+            Set of all model names
+        """
+        provider = self.providers.get(provider_name)
+        if not provider:
+            return set()
+
+        # Start with static models
+        all_models = set(provider.models)
+
+        # Add discovered models from registry
+        discovered = self.get_discovered_models(provider_name)
+        all_models.update(discovered)
+
+        return all_models
 
 
-# ──────────────────────────── Capability Checker ─────────────────────────────
+# =============================================================================
+# Capability Checker Helper
+# =============================================================================
+
+
 class CapabilityChecker:
-    """Query helpers for provider capabilities"""
+    """Helper class for checking provider/model capabilities."""
 
     @staticmethod
     def can_handle_request(
-        provider: str,
+        provider_name: str,
         model: str | None = None,
-        *,
-        has_tools: bool = False,
-        has_vision: bool = False,
-        needs_streaming: bool = False,
-        needs_json: bool = False,
+        features: list[Feature] | None = None,
     ) -> tuple[bool, list[str]]:
-        """Check if provider/model can handle request"""
+        """
+        Check if provider/model can handle a request.
+
+        Args:
+            provider_name: Provider name
+            model: Optional model name
+            features: Optional list of required features
+
+        Returns:
+            (can_handle, issues) tuple
+        """
+        config = get_config()
+        issues = []
+
         try:
-            config_manager = get_config()
-            provider_config = config_manager.get_provider(provider)
+            provider = config.get_provider(provider_name)
 
-            problems = []
-            if has_tools and not provider_config.supports_feature(Feature.TOOLS, model):
-                problems.append("tools not supported")
-            if has_vision and not provider_config.supports_feature(
-                Feature.VISION, model
-            ):
-                problems.append("vision not supported")
-            if needs_streaming and not provider_config.supports_feature(
-                Feature.STREAMING, model
-            ):
-                problems.append("streaming not supported")
-            if needs_json and not provider_config.supports_feature(
-                Feature.JSON_MODE, model
-            ):
-                problems.append("JSON mode not supported")
+            if features:
+                for feature in features:
+                    if not provider.supports_feature(feature, model):
+                        issues.append(
+                            f"{provider_name}/{model or 'default'} "
+                            f"doesn't support {feature.value}"
+                        )
 
-            return len(problems) == 0, problems
+        except ValueError as e:
+            issues.append(str(e))
 
-        except Exception as exc:
-            return False, [f"Provider not found: {exc}"]
+        return len(issues) == 0, issues
 
     @staticmethod
     def get_best_provider_for_features(
-        required_features: set[Feature],
-        model_name: str | None = None,
-        exclude: set[str] | None = None,
+        features: list[Feature], model: str | None = None
     ) -> str | None:
-        """Find best provider that supports required features"""
-        exclude = exclude or set()
-        config_manager = get_config()
+        """
+        Find best provider that supports all required features.
 
-        candidates = []
-        for provider_name in config_manager.get_all_providers():
-            if provider_name in exclude:
-                continue
+        Args:
+            features: Required features
+            model: Optional model constraint
 
-            provider = config_manager.get_provider(provider_name)
-            model_caps = provider.get_model_capabilities(model_name)
+        Returns:
+            Provider name or None if no match
+        """
+        config = get_config()
 
-            if required_features.issubset(model_caps.features):
-                rate_limit = provider.get_rate_limit() or 0
-                candidates.append((provider_name, rate_limit))
+        for provider_name in config.get_all_providers():
+            can_handle, _ = CapabilityChecker.can_handle_request(
+                provider_name, model, features
+            )
+            if can_handle:
+                return provider_name
 
-        return max(candidates, key=lambda x: x[1])[0] if candidates else None
+        return None
 
     @staticmethod
-    def get_model_info(provider: str, model: str) -> dict[str, Any]:
-        """Get comprehensive model information"""
+    def get_model_info(provider_name: str, model: str) -> dict[str, Any]:
+        """
+        Get information about a specific model.
+
+        Args:
+            provider_name: Provider name
+            model: Model name
+
+        Returns:
+            Dictionary with model information
+        """
+        config = get_config()
+
         try:
-            config_manager = get_config()
-            provider_config = config_manager.get_provider(provider)
-            model_caps = provider_config.get_model_capabilities(model)
+            provider = config.get_provider(provider_name)
+            capabilities = provider.get_model_capabilities(model)
 
             return {
-                "provider": provider,
+                "provider": provider_name,
                 "model": model,
-                "features": [f.value for f in model_caps.features],
-                "max_context_length": model_caps.max_context_length,
-                "max_output_tokens": model_caps.max_output_tokens,
-                "supports_streaming": Feature.STREAMING in model_caps.features,
-                "supports_tools": Feature.TOOLS in model_caps.features,
-                "supports_vision": Feature.VISION in model_caps.features,
-                "supports_json_mode": Feature.JSON_MODE in model_caps.features,
-                "rate_limits": provider_config.rate_limits,
-            }
-        except Exception as exc:
-            return {"error": f"Failed to get model info: {exc}"}
-
-
-class SingletonConfigManager(UnifiedConfigManager):
-    """
-    Singleton version of UnifiedConfigManager that persists runtime changes
-    """
-
-    _instance: Optional["SingletonConfigManager"] = None
-    _initialized = False
-
-    def __new__(cls, config_path: str | None = None) -> "SingletonConfigManager":
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-
-    def __init__(self, config_path: str | None = None) -> None:
-        # Only initialize once
-        if not self.__class__._initialized:
-            super().__init__(config_path)
-            self.__class__._initialized = True
-
-    def update_provider_models(
-        self, provider_name: str, models: list[str], persist: bool = True
-    ):
-        """Update provider models and persist the change"""
-        self.load()  # Ensure config is loaded
-
-        if provider_name not in self.providers:
-            raise ValueError(f"Provider {provider_name} not found")
-
-        # Update the models
-        old_count = len(self.providers[provider_name].models)
-        self.providers[provider_name].models = models
-        new_count = len(models)
-
-        logger.info(f"Updated {provider_name} models: {old_count} → {new_count}")
-
-        if persist:
-            # Mark as runtime-modified
-            if not hasattr(self, "_runtime_modifications"):
-                self._runtime_modifications = {}
-            self._runtime_modifications[provider_name] = {
-                "models": models,
-                "timestamp": time.time(),
+                "features": [f.value for f in capabilities.features],
+                "max_context_length": capabilities.max_context_length,
+                "max_output_tokens": capabilities.max_output_tokens,
             }
 
-    def get_provider(self, name: str) -> ProviderConfig:
-        """Get provider configuration (preserves runtime changes)"""
-        self.load()  # Ensure loaded
-
-        if name not in self.providers:
-            available = ", ".join(self.providers.keys())
-            raise ValueError(f"Unknown provider: {name}. Available: {available}")
-
-        return self.providers[name]
-
-    def reload(self):
-        """Reload configuration but preserve runtime modifications"""
-        # Save runtime modifications
-        runtime_mods = getattr(self, "_runtime_modifications", {})
-
-        # Call parent reload
-        super().reload()
-
-        # Restore runtime modifications
-        for provider_name, mod_data in runtime_mods.items():
-            if provider_name in self.providers:
-                self.providers[provider_name].models = mod_data["models"]
-                logger.info(f"Restored runtime modifications for {provider_name}")
-
-        # Restore the modifications tracker
-        self._runtime_modifications = runtime_mods
-
-    @classmethod
-    def reset_singleton(cls):
-        """Reset singleton instance (for testing)"""
-        cls._instance = None
-        cls._initialized = False
+        except ValueError as e:
+            return {"error": str(e)}
 
 
-# ──────────────────────────── REPLACE GLOBAL INSTANCE ─────────────────────────────
-# Use singleton instead of regular UnifiedConfigManager
-_unified_config = SingletonConfigManager()
+# =============================================================================
+# Global Singleton
+# =============================================================================
+
+_global_config: UnifiedConfigManager | None = None
 
 
-def get_config() -> SingletonConfigManager:
-    """Get global configuration manager (singleton)"""
-    return _unified_config
+def get_config(config_path: str | None = None) -> UnifiedConfigManager:
+    """
+    Get global configuration manager instance.
+
+    Args:
+        config_path: Optional path to config file (only used on first call)
+
+    Returns:
+        Global configuration manager
+    """
+    global _global_config
+
+    if _global_config is None or config_path:
+        _global_config = UnifiedConfigManager(config_path)
+
+    return _global_config
 
 
-def reset_config():
-    """Reset configuration"""
-    global _unified_config
-    SingletonConfigManager.reset_singleton()
-    _unified_config = SingletonConfigManager()
+def reset_config() -> None:
+    """Reset global configuration (mainly for testing)."""
+    global _global_config
+    _global_config = None
 
 
-def reset_unified_config():
-    """Reset unified configuration (alias for reset_config)"""
-    reset_config()
-
-
-# Clean aliases
-ConfigManager = SingletonConfigManager
-
-
-# Export clean API
-__all__ = [
-    "Feature",
-    "ModelCapabilities",
-    "ProviderConfig",
-    "UnifiedConfigManager",
-    "SingletonConfigManager",
-    "ConfigValidator",
-    "CapabilityChecker",
-    "get_config",
-    "reset_config",
-    "reset_unified_config",
-    "ConfigManager",
-]
+# Alias for backward compatibility
+reset_unified_config = reset_config
+ConfigManager = UnifiedConfigManager

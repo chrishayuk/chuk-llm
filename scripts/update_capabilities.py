@@ -69,6 +69,7 @@ import yaml
 # Load environment variables from .env file
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     pass  # dotenv not available, use system env vars only
@@ -97,33 +98,43 @@ class CapabilityTester:
         """Get the appropriate provider client for testing."""
         if self.provider == "openai":
             from chuk_llm.llm.providers.openai_client import OpenAILLMClient
+
             return OpenAILLMClient(model=model_name)
         elif self.provider == "anthropic":
             from chuk_llm.llm.providers.anthropic_client import AnthropicLLMClient
+
             return AnthropicLLMClient(model=model_name)
         elif self.provider == "gemini":
             from chuk_llm.llm.providers.gemini_client import GeminiLLMClient
+
             return GeminiLLMClient(model=model_name)
         elif self.provider == "ollama":
             from chuk_llm.llm.providers.ollama_client import OllamaLLMClient
+
             return OllamaLLMClient(model=model_name)
         elif self.provider == "mistral":
             from chuk_llm.llm.providers.mistral_client import MistralLLMClient
+
             return MistralLLMClient(model=model_name)
         elif self.provider == "groq":
             from chuk_llm.llm.providers.groq_client import GroqAILLMClient
+
             return GroqAILLMClient(model=model_name)
         elif self.provider == "deepseek":
             from chuk_llm.llm.providers.openai_client import OpenAILLMClient
+
             return OpenAILLMClient(model=model_name)
         elif self.provider == "perplexity":
             from chuk_llm.llm.providers.perplexity_client import PerplexityLLMClient
+
             return PerplexityLLMClient(model=model_name)
         elif self.provider == "watsonx":
             from chuk_llm.llm.providers.watsonx_client import WatsonxLLMClient
+
             return WatsonxLLMClient(model=model_name)
         elif self.provider == "openrouter":
             from chuk_llm.llm.providers.openrouter_client import OpenRouterLLMClient
+
             return OpenRouterLLMClient(model=model_name)
         else:
             raise ValueError(f"Unknown provider: {self.provider}")
@@ -290,7 +301,11 @@ class CapabilityTester:
         if self.provider == "openai":
             model_lower = model_name.lower()
             # Known completion-only models (not chat models)
-            if "instruct" in model_lower and "gpt" in model_lower and "turbo" in model_lower:
+            if (
+                "instruct" in model_lower
+                and "gpt" in model_lower
+                and "turbo" in model_lower
+            ):
                 return False
             if model_lower.startswith("text-") or model_lower.startswith("code-"):
                 return False
@@ -298,9 +313,7 @@ class CapabilityTester:
         try:
             client = self._get_provider_client(model_name)
 
-            messages = [
-                Message(role=MessageRole.USER, content="Say hello")
-            ]
+            messages = [Message(role=MessageRole.USER, content="Say hello")]
 
             # Try to make a chat completion
             response = await client.create_completion(messages, max_tokens=10)
@@ -315,7 +328,11 @@ class CapabilityTester:
         except Exception as e:
             error_msg = str(e).lower()
             # If error mentions "not a chat model" or similar, it's a completion model
-            if "not a chat model" in error_msg or "chat/completions" in error_msg or "chat model" in error_msg:
+            if (
+                "not a chat model" in error_msg
+                or "chat/completions" in error_msg
+                or "chat model" in error_msg
+            ):
                 return False
             # Other errors - could be rate limiting, network, etc - return False to be safe
             return False
@@ -356,7 +373,9 @@ class CapabilityTester:
                 )
             ]
 
-            response = await client.create_completion(messages, tools=tools, max_tokens=50)
+            response = await client.create_completion(
+                messages, tools=tools, max_tokens=50
+            )
 
             # Check if response contains an error
             if isinstance(response, dict) and response.get("error"):
@@ -372,7 +391,11 @@ class CapabilityTester:
         except Exception as e:
             error_msg = str(e).lower()
             # If error mentions tools/functions not being supported, return False
-            if "tool" in error_msg or "function" in error_msg or "not supported" in error_msg:
+            if (
+                "tool" in error_msg
+                or "function" in error_msg
+                or "not supported" in error_msg
+            ):
                 return False
             # Other errors - re-raise so we can see what's happening
             raise
@@ -403,7 +426,9 @@ class CapabilityTester:
                 Message(
                     role=MessageRole.USER,
                     content=[
-                        TextContent(type=ContentType.TEXT, text="What color is this image?"),
+                        TextContent(
+                            type=ContentType.TEXT, text="What color is this image?"
+                        ),
                         ImageUrlContent(
                             type=ContentType.IMAGE_URL,
                             image_url={"url": f"data:image/png;base64,{red_square}"},
@@ -418,7 +443,11 @@ class CapabilityTester:
             if isinstance(response, dict) and response.get("error"):
                 # Try alternative format before giving up
                 pass
-            elif response and isinstance(response, dict) and (response.get("response") or response.get("choices")):
+            elif (
+                response
+                and isinstance(response, dict)
+                and (response.get("response") or response.get("choices"))
+            ):
                 # Success with image_url format - got actual content
                 return True
             else:
@@ -427,7 +456,13 @@ class CapabilityTester:
 
         except Exception as e:
             error_msg = str(e).lower()
-            if "image" in error_msg or "vision" in error_msg or "multimodal" in error_msg or "not supported" in error_msg or "invalid content type" in error_msg:
+            if (
+                "image" in error_msg
+                or "vision" in error_msg
+                or "multimodal" in error_msg
+                or "not supported" in error_msg
+                or "invalid content type" in error_msg
+            ):
                 # Expected error for non-vision models
                 pass
             else:
@@ -442,7 +477,9 @@ class CapabilityTester:
                 Message(
                     role=MessageRole.USER,
                     content=[
-                        TextContent(type=ContentType.TEXT, text="What color is this image?"),
+                        TextContent(
+                            type=ContentType.TEXT, text="What color is this image?"
+                        ),
                         ImageDataContent(
                             type=ContentType.IMAGE_DATA,
                             image_data=red_square,
@@ -459,14 +496,24 @@ class CapabilityTester:
                 return False
 
             # Success with image_data format - check for actual content
-            if response and isinstance(response, dict) and (response.get("response") or response.get("choices")):
+            if (
+                response
+                and isinstance(response, dict)
+                and (response.get("response") or response.get("choices"))
+            ):
                 return True
 
             return False
 
         except Exception as e:
             error_msg = str(e).lower()
-            if "image" in error_msg or "vision" in error_msg or "multimodal" in error_msg or "not supported" in error_msg or "invalid content type" in error_msg:
+            if (
+                "image" in error_msg
+                or "vision" in error_msg
+                or "multimodal" in error_msg
+                or "not supported" in error_msg
+                or "invalid content type" in error_msg
+            ):
                 return False
             return False
 
@@ -478,11 +525,9 @@ class CapabilityTester:
         try:
             client = self._get_provider_client(model_name)
 
-            messages = [
-                Message(role=MessageRole.USER, content="Say hello in one word")
-            ]
+            messages = [Message(role=MessageRole.USER, content="Say hello in one word")]
 
-            response = await client.create_completion(messages, max_tokens=10)
+            await client.create_completion(messages, max_tokens=10)
             # If we get a response, text is supported
             return True
 
@@ -527,7 +572,9 @@ class CapabilityTester:
             from chuk_llm.core.models import AudioDataContent, Message, TextContent
 
             client = self._get_provider_client(model_name)
-            tiny_wav_base64 = "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQAAAAA="
+            tiny_wav_base64 = (
+                "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQAAAAA="
+            )
 
             messages = [
                 Message(
@@ -537,18 +584,22 @@ class CapabilityTester:
                         AudioDataContent(
                             type=ContentType.AUDIO_DATA,
                             audio_data=tiny_wav_base64,
-                            mime_type="audio/wav"
-                        )
-                    ]
+                            mime_type="audio/wav",
+                        ),
+                    ],
                 )
             ]
 
             response = await client.create_completion(messages, max_tokens=50)
-            return bool(response and (response.get("response") or response.get("choices")))
+            return bool(
+                response and (response.get("response") or response.get("choices"))
+            )
 
         except Exception as e:
             error_msg = str(e).lower()
-            if "audio" in error_msg and ("not supported" in error_msg or "invalid" in error_msg):
+            if "audio" in error_msg and (
+                "not supported" in error_msg or "invalid" in error_msg
+            ):
                 return False
             # Inconclusive - default to False
             return False
@@ -562,7 +613,9 @@ class CapabilityTester:
             client = self._get_provider_client(model_name)
 
             # Minimal WAV file base64
-            tiny_wav_base64 = "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQAAAAA="
+            tiny_wav_base64 = (
+                "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQAAAAA="
+            )
 
             # OpenAI's audio models use InputAudioContent with input_audio dict
             messages = [
@@ -571,22 +624,23 @@ class CapabilityTester:
                     content=[
                         InputAudioContent(
                             type=ContentType.INPUT_AUDIO,
-                            input_audio={
-                                "data": tiny_wav_base64,
-                                "format": "wav"
-                            }
+                            input_audio={"data": tiny_wav_base64, "format": "wav"},
                         )
-                    ]
+                    ],
                 )
             ]
 
-            response = await client.create_completion(messages, max_tokens=50, modalities=["text", "audio"])
+            response = await client.create_completion(
+                messages, max_tokens=50, modalities=["text", "audio"]
+            )
 
             # Check if response contains an error
             if isinstance(response, dict) and response.get("error"):
                 return False
 
-            return bool(response and (response.get("response") or response.get("choices")))
+            return bool(
+                response and (response.get("response") or response.get("choices"))
+            )
 
         except Exception as e:
             error_msg = str(e).lower()
@@ -629,7 +683,12 @@ class CapabilityTester:
 
         except Exception as e:
             error_msg = str(e).lower()
-            if "json" in error_msg or "response_format" in error_msg or "not supported" in error_msg or "invalid parameter" in error_msg:
+            if (
+                "json" in error_msg
+                or "response_format" in error_msg
+                or "not supported" in error_msg
+                or "invalid parameter" in error_msg
+            ):
                 return False
             return False
 
@@ -660,11 +719,11 @@ class CapabilityTester:
                     "type": "object",
                     "properties": {
                         "name": {"type": "string"},
-                        "age": {"type": "integer"}
+                        "age": {"type": "integer"},
                     },
                     "required": ["name", "age"],
-                    "additionalProperties": False
-                }
+                    "additionalProperties": False,
+                },
             }
 
             response = await client.create_completion(
@@ -681,7 +740,14 @@ class CapabilityTester:
 
         except Exception as e:
             error_msg = str(e).lower()
-            if "json_schema" in error_msg or "structured" in error_msg or "response_format" in error_msg or "not supported" in error_msg or "invalid parameter" in error_msg or "strict" in error_msg:
+            if (
+                "json_schema" in error_msg
+                or "structured" in error_msg
+                or "response_format" in error_msg
+                or "not supported" in error_msg
+                or "invalid parameter" in error_msg
+                or "strict" in error_msg
+            ):
                 return False
             return False
 
@@ -693,12 +759,12 @@ class CapabilityTester:
         try:
             client = self._get_provider_client(model_name)
 
-            messages = [
-                Message(role=MessageRole.USER, content="Say hello")
-            ]
+            messages = [Message(role=MessageRole.USER, content="Say hello")]
 
             chunks = 0
-            async for chunk in client.create_completion(messages, stream=True, max_tokens=10):
+            async for chunk in client.create_completion(
+                messages, stream=True, max_tokens=10
+            ):
                 if chunk.get("response"):
                     chunks += 1
                     if chunks > 0:
@@ -795,7 +861,9 @@ class CapabilityTester:
             start_time = time.time()
             token_count = 0
 
-            async for chunk in client.create_completion(messages, stream=True, max_tokens=200):
+            async for chunk in client.create_completion(
+                messages, stream=True, max_tokens=200
+            ):
                 if chunk.get("response"):
                     # Rough estimate: count words as tokens
                     token_count += len(chunk["response"].split())
@@ -816,7 +884,13 @@ class CapabilityCacheManager:
 
     def __init__(self, cache_dir: Path | None = None):
         if cache_dir is None:
-            cache_dir = Path(__file__).parent.parent / "src" / "chuk_llm" / "registry" / "capabilities"
+            cache_dir = (
+                Path(__file__).parent.parent
+                / "src"
+                / "chuk_llm"
+                / "registry"
+                / "capabilities"
+            )
 
         self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -846,7 +920,9 @@ class CapabilityCacheManager:
         with open(cache_file, "w") as f:
             f.write(f"# Auto-generated capability cache for {provider}\n")
             f.write(f"# Last updated: {cache_data['last_updated']}\n")
-            f.write("# DO NOT EDIT MANUALLY - Run: python scripts/update_capabilities.py\n\n")
+            f.write(
+                "# DO NOT EDIT MANUALLY - Run: python scripts/update_capabilities.py\n\n"
+            )
             yaml.dump(cache_data, f, default_flow_style=False, sort_keys=False)
 
         print(f"✓ Saved cache to {cache_file}")
@@ -891,7 +967,13 @@ class CapabilityCacheManager:
             base = name_lower.split(":")[0]
             if "llama" in base:
                 return base  # llama2, llama3, llama3.1, etc.
-            elif "qwen" in base or "phi" in base or "mistral" in base or "granite" in base or "gemma" in base:
+            elif (
+                "qwen" in base
+                or "phi" in base
+                or "mistral" in base
+                or "granite" in base
+                or "gemma" in base
+            ):
                 return base
 
         return None
@@ -905,9 +987,9 @@ async def update_provider_capabilities(provider_name: str, test_models: bool = F
         provider_name: Provider to update (openai, anthropic, gemini)
         test_models: Whether to test new models (costs API credits)
     """
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"Updating {provider_name} capabilities")
-    print('='*70)
+    print("=" * 70)
 
     # Initialize
     cache_mgr = CapabilityCacheManager()
@@ -941,7 +1023,9 @@ async def update_provider_capabilities(provider_name: str, test_models: bool = F
             source = OpenRouterModelSource()
         else:
             print(f"❌ Unknown provider: {provider_name}")
-            print("   Supported: openai, anthropic, gemini, ollama, mistral, groq, deepseek, perplexity, watsonx, openrouter")
+            print(
+                "   Supported: openai, anthropic, gemini, ollama, mistral, groq, deepseek, perplexity, watsonx, openrouter"
+            )
             return
 
         specs = await source.discover()
@@ -979,7 +1063,9 @@ async def update_provider_capabilities(provider_name: str, test_models: bool = F
         if test_models:
             print(f"\n🧪 Testing {len(new_models)} new models...")
         else:
-            print(f"\n📝 Adding {len(new_models)} new models (discovery only, no testing)")
+            print(
+                f"\n📝 Adding {len(new_models)} new models (discovery only, no testing)"
+            )
 
         for model_name in sorted(new_models):
             # Detect family
@@ -1001,25 +1087,35 @@ async def update_provider_capabilities(provider_name: str, test_models: bool = F
                 capabilities = test_results.get("capabilities", {})
 
                 # Must support at least one of: chat or text
-                supports_basic_io = capabilities.get("supports_chat") or capabilities.get("supports_text")
+                supports_basic_io = capabilities.get(
+                    "supports_chat"
+                ) or capabilities.get("supports_text")
 
                 # Check for any additional capabilities
-                has_any_capability = any([
-                    capabilities.get("supports_tools"),
-                    capabilities.get("supports_vision"),
-                    capabilities.get("supports_audio_input"),
-                    capabilities.get("supports_json_mode"),
-                    capabilities.get("supports_streaming"),
-                    capabilities.get("max_context"),
-                    capabilities.get("tokens_per_second"),
-                    capabilities.get("known_params")
-                ])
+                has_any_capability = any(
+                    [
+                        capabilities.get("supports_tools"),
+                        capabilities.get("supports_vision"),
+                        capabilities.get("supports_audio_input"),
+                        capabilities.get("supports_json_mode"),
+                        capabilities.get("supports_streaming"),
+                        capabilities.get("max_context"),
+                        capabilities.get("tokens_per_second"),
+                        capabilities.get("known_params"),
+                    ]
+                )
 
                 has_critical_errors = "errors" in test_results
 
                 # Skip if: no basic I/O support OR (no capabilities AND has errors)
-                if not supports_basic_io or (not has_any_capability and has_critical_errors):
-                    reason = "no basic I/O" if not supports_basic_io else "failed tests and no capabilities"
+                if not supports_basic_io or (
+                    not has_any_capability and has_critical_errors
+                ):
+                    reason = (
+                        "no basic I/O"
+                        if not supports_basic_io
+                        else "failed tests and no capabilities"
+                    )
                     print(f"    ⚠ Skipping {model_name} - {reason}")
                     continue
 
@@ -1057,7 +1153,9 @@ async def update_provider_capabilities(provider_name: str, test_models: bool = F
                         continue
                     try:
                         caps = await resolver.get_capabilities(spec)
-                        if caps and (caps.max_context or caps.supports_tools is not None):
+                        if caps and (
+                            caps.max_context or caps.supports_tools is not None
+                        ):
                             capabilities = caps
                             break
                     except Exception:
@@ -1065,13 +1163,19 @@ async def update_provider_capabilities(provider_name: str, test_models: bool = F
 
                 if capabilities:
                     # Convert capabilities to dict for YAML
-                    cap_dict = capabilities.model_dump(exclude_none=True, exclude={"source", "last_updated"})
+                    cap_dict = capabilities.model_dump(
+                        exclude_none=True, exclude={"source", "last_updated"}
+                    )
                     # Convert sets to lists for YAML
                     if "known_params" in cap_dict:
                         cap_dict["known_params"] = list(cap_dict["known_params"])
                     # Convert enum to string
                     if "quality_tier" in cap_dict:
-                        cap_dict["quality_tier"] = cap_dict["quality_tier"].value if hasattr(cap_dict["quality_tier"], "value") else cap_dict["quality_tier"]
+                        cap_dict["quality_tier"] = (
+                            cap_dict["quality_tier"].value
+                            if hasattr(cap_dict["quality_tier"], "value")
+                            else cap_dict["quality_tier"]
+                        )
 
                     cache["models"][model_name] = {
                         "inherits_from": family,
@@ -1111,9 +1215,9 @@ def clear_capabilities(provider: str | None = None, older_than_days: int | None 
         print("✓ No capability files to clear")
         return
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("Clearing capability cache files")
-    print('='*70)
+    print("=" * 70)
     print(f"Location: {capabilities_dir}")
 
     if provider:
@@ -1155,7 +1259,9 @@ def clear_capabilities(provider: str | None = None, older_than_days: int | None 
         print(f"   Skipped {skipped_count} files (didn't match filters)")
 
 
-def clear_registry_cache(provider: str | None = None, older_than_days: int | None = None):
+def clear_registry_cache(
+    provider: str | None = None, older_than_days: int | None = None
+):
     """
     Clear the registry disk cache.
 
@@ -1174,9 +1280,9 @@ def clear_registry_cache(provider: str | None = None, older_than_days: int | Non
         print("✓ No registry cache to clear")
         return
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("Clearing registry disk cache")
-    print('='*70)
+    print("=" * 70)
     print(f"Cache location: {cache_file}")
 
     if provider:
@@ -1211,8 +1317,8 @@ def clear_registry_cache(provider: str | None = None, older_than_days: int | Non
     new_cache = {}
     for key, value in cache_data.items():
         # Parse key format: "provider:model_name"
-        if ':' in key:
-            entry_provider = key.split(':')[0]
+        if ":" in key:
+            entry_provider = key.split(":")[0]
         else:
             # Keep entries without provider info
             new_cache[key] = value
@@ -1228,7 +1334,7 @@ def clear_registry_cache(provider: str | None = None, older_than_days: int | Non
         # Check age filter if specified
         if cutoff_time and isinstance(value, dict):
             # Try to get timestamp from cache entry
-            entry_time = value.get('cached_at', time.time())
+            entry_time = value.get("cached_at", time.time())
             if entry_time > cutoff_time:
                 new_cache[key] = value
                 kept_count += 1
@@ -1240,7 +1346,7 @@ def clear_registry_cache(provider: str | None = None, older_than_days: int | Non
 
     # Save the filtered cache
     if new_cache:
-        with open(cache_file, 'w') as f:
+        with open(cache_file, "w") as f:
             json.dump(new_cache, f, indent=2)
         print(f"\n✅ Cleared {cleared_count} entries, kept {kept_count}")
     else:
@@ -1259,9 +1365,9 @@ def show_capabilities_info():
     package_dir = script_dir.parent / "src" / "chuk_llm"
     capabilities_dir = package_dir / "registry" / "capabilities"
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("Capability Files Information")
-    print('='*70)
+    print("=" * 70)
     print(f"Location: {capabilities_dir}")
 
     if not capabilities_dir.exists():
@@ -1308,9 +1414,9 @@ def show_cache_info():
     cache_dir = Path.home() / ".cache" / "chuk-llm"
     cache_file = cache_dir / "registry_cache.json"
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("Registry Disk Cache Information")
-    print('='*70)
+    print("=" * 70)
     print(f"Location: {cache_file}")
 
     if not cache_file.exists():
@@ -1333,10 +1439,10 @@ def show_cache_info():
 
     # Group by provider
     by_provider = {}
-    for key in cache_data.keys():
+    for key in cache_data:
         # Parse key format: "provider:model_name"
-        if ':' in key:
-            provider = key.split(':')[0]
+        if ":" in key:
+            provider = key.split(":")[0]
             by_provider[provider] = by_provider.get(provider, 0) + 1
 
     if by_provider:
@@ -1391,54 +1497,58 @@ Examples:
 
   # CI mode (discovery only, auto-commit)
   python scripts/update_capabilities.py --ci --auto-commit
-        """
+        """,
     )
 
     # Action commands
     parser.add_argument(
         "--show-capabilities",
         action="store_true",
-        help="Show capability files information and exit"
+        help="Show capability files information and exit",
     )
     parser.add_argument(
         "--show-cache",
         action="store_true",
-        help="Show registry disk cache information and exit"
+        help="Show registry disk cache information and exit",
     )
     parser.add_argument(
         "--clear-capabilities",
         action="store_true",
-        help="Clear the capability YAML files"
+        help="Clear the capability YAML files",
     )
     parser.add_argument(
-        "--clear-cache",
-        action="store_true",
-        help="Clear the registry disk cache"
+        "--clear-cache", action="store_true", help="Clear the registry disk cache"
     )
 
     # Provider selection
     parser.add_argument(
         "--provider",
-        choices=["openai", "anthropic", "gemini", "ollama", "mistral", "groq", "deepseek", "perplexity", "watsonx", "openrouter", "all"],
+        choices=[
+            "openai",
+            "anthropic",
+            "gemini",
+            "ollama",
+            "mistral",
+            "groq",
+            "deepseek",
+            "perplexity",
+            "watsonx",
+            "openrouter",
+            "all",
+        ],
         default="all",
-        help="Provider to update/clear (default: all)"
+        help="Provider to update/clear (default: all)",
     )
 
     # Update options
     parser.add_argument(
-        "--test",
-        action="store_true",
-        help="Test new models (costs API credits!)"
+        "--test", action="store_true", help="Test new models (costs API credits!)"
     )
     parser.add_argument(
-        "--ci",
-        action="store_true",
-        help="Running in CI - don't test, just discover"
+        "--ci", action="store_true", help="Running in CI - don't test, just discover"
     )
     parser.add_argument(
-        "--auto-commit",
-        action="store_true",
-        help="Auto-commit changes to git"
+        "--auto-commit", action="store_true", help="Auto-commit changes to git"
     )
 
     # Cache clearing options
@@ -1446,7 +1556,7 @@ Examples:
         "--older-than",
         type=int,
         metavar="DAYS",
-        help="Only clear cache entries older than N days"
+        help="Only clear cache entries older than N days",
     )
 
     args = parser.parse_args()
@@ -1474,14 +1584,28 @@ Examples:
         return
 
     # Determine which providers to update
-    providers = ["openai", "anthropic", "gemini", "ollama", "mistral", "groq", "deepseek", "perplexity", "watsonx", "openrouter"] if args.provider == "all" else [args.provider]
+    providers = (
+        [
+            "openai",
+            "anthropic",
+            "gemini",
+            "ollama",
+            "mistral",
+            "groq",
+            "deepseek",
+            "perplexity",
+            "watsonx",
+            "openrouter",
+        ]
+        if args.provider == "all"
+        else [args.provider]
+    )
 
     # Update each provider
     for provider in providers:
         try:
             await update_provider_capabilities(
-                provider,
-                test_models=args.test and not args.ci
+                provider, test_models=args.test and not args.ci
             )
         except Exception as e:
             print(f"❌ Error updating {provider}: {e}")
@@ -1491,19 +1615,21 @@ Examples:
     if args.auto_commit:
         print("\n📝 Committing changes...")
         import subprocess
-        subprocess.run([
-            "git", "add",
-            "src/chuk_llm/registry/capabilities/"
-        ])
-        subprocess.run([
-            "git", "commit", "-m",
-            "chore: update model capability caches\n\nAuto-updated by update_capabilities.py"
-        ])
+
+        subprocess.run(["git", "add", "src/chuk_llm/registry/capabilities/"])
+        subprocess.run(
+            [
+                "git",
+                "commit",
+                "-m",
+                "chore: update model capability caches\n\nAuto-updated by update_capabilities.py",
+            ]
+        )
         print("✅ Changes committed")
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("✅ ALL PROVIDERS UPDATED")
-    print("="*70)
+    print("=" * 70)
 
 
 if __name__ == "__main__":

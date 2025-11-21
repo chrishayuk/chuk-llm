@@ -31,14 +31,27 @@ class WatsonxModelSource(BaseModelSource):
             List of ModelSpec objects for known WatsonX models
         """
         known_models = [
-            # IBM Granite models
-            ("ibm/granite-13b-chat-v2", "granite"),
-            ("ibm/granite-13b-instruct-v2", "granite"),
-            ("ibm/granite-20b-multilingual", "granite"),
-            ("ibm/granite-3b-code-instruct", "granite-code"),
+            # IBM Granite 3.x models (Latest - 2025)
+            ("ibm/granite-4-h-small", "granite-4"),
+            ("ibm/granite-3-3-8b-instruct", "granite-3"),
+            ("ibm/granite-3-2-8b-instruct", "granite-3"),
+            ("ibm/granite-vision-3-2-2b", "granite-vision"),
+            ("ibm/granite-3-2b-instruct", "granite-3"),
+            ("ibm/granite-3-8b-instruct", "granite-3"),
+            # IBM Granite Guardian (Content Safety)
+            ("ibm/granite-guardian-3-8b", "granite-guardian"),
+            ("ibm/granite-guardian-3-2b", "granite-guardian"),
+            # IBM Granite Code models
             ("ibm/granite-8b-code-instruct", "granite-code"),
+            ("ibm/granite-3b-code-instruct", "granite-code"),
             ("ibm/granite-20b-code-instruct", "granite-code"),
             ("ibm/granite-34b-code-instruct", "granite-code"),
+            # IBM Granite Time Series
+            ("ibm/granite-timeseries-ttm-r2", "granite-timeseries"),
+            # IBM Granite Legacy (v2)
+            ("ibm/granite-13b-chat-v2", "granite-2"),
+            ("ibm/granite-13b-instruct-v2", "granite-2"),
+            ("ibm/granite-20b-multilingual", "granite-2"),
             # Meta Llama models
             ("meta-llama/llama-3-70b-instruct", "llama-3"),
             ("meta-llama/llama-3-8b-instruct", "llama-3"),

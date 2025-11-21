@@ -936,21 +936,36 @@ class WatsonXLLMClient(
         if not tools:
             return []
 
+        from chuk_llm.core.models import Tool as ToolModel
+
         converted: list[dict[str, Any]] = []
         for entry in tools:
-            fn = entry.get("function", entry)
+            # Handle both Pydantic Tool models and dict-based tools
+            if isinstance(entry, ToolModel):
+                # Pydantic Tool model - convert to dict
+                fn = entry.function
+                name = fn.name
+                description = fn.description or ""
+                parameters = fn.parameters or {}
+            elif isinstance(entry, dict):
+                # Dict-based tool
+                fn = entry.get("function", entry)
+                name = fn.get("name", f"tool_{uuid.uuid4().hex[:6]}")
+                description = fn.get("description", "")
+                parameters = fn.get("parameters") or fn.get("input_schema") or {}
+            else:
+                # Unknown format, skip
+                log.warning(f"Unknown tool format: {type(entry)}")
+                continue
+
             try:
                 converted.append(
                     {
                         "type": "function",
                         "function": {
-                            "name": fn[
-                                "name"
-                            ],  # Should already be sanitized by ToolCompatibilityMixin
-                            "description": fn.get("description", ""),
-                            "parameters": fn.get("parameters")
-                            or fn.get("input_schema")
-                            or {},
+                            "name": name,
+                            "description": description,
+                            "parameters": parameters,
                         },
                     }
                 )
@@ -960,8 +975,8 @@ class WatsonXLLMClient(
                     {
                         "type": "function",
                         "function": {
-                            "name": fn.get("name", f"tool_{uuid.uuid4().hex[:6]}"),
-                            "description": fn.get("description", ""),
+                            "name": name,
+                            "description": description,
                             "parameters": {
                                 "type": "object",
                                 "additionalProperties": True,
@@ -1102,124 +1117,72 @@ class WatsonXLLMClient(
                         {"role": "user", "content": [{"type": "text", "text": content}]}
                     )
                 elif isinstance(content, list):
+                    # Permissive approach: Process all multimodal content (text, vision, audio)
+                    # Let WatsonX API handle unsupported cases rather than filtering
                     # Handle multimodal content for Watson X - both dict and Pydantic
                     from chuk_llm.core.enums import ContentType
 
-                    has_images = any(
-                        (
-                            isinstance(item, dict)
-                            and item.get("type") in ["image", "image_url"]
-                        )
-                        or (
-                            hasattr(item, "type")
-                            and item.type
-                            in [ContentType.IMAGE_URL, ContentType.IMAGE_DATA]
-                        )
-                        for item in content
-                    )
-
-                    if has_images and not self.supports_feature("vision"):
-                        # Extract only text content from both formats
-                        text_parts = []
-                        for item in content:
-                            if isinstance(item, dict) and item.get("type") == "text":
-                                text_parts.append(item.get("text", ""))
+                    # Process multimodal content normally (both dict and Pydantic)
+                    watsonx_content = []
+                    for item in content:
+                        if isinstance(item, dict):
+                            # Dict-based content
+                            if item.get("type") == "text":
+                                watsonx_content.append(
+                                    {"type": "text", "text": item.get("text", "")}
+                                )
+                            elif item.get("type") == "image":
+                                source = item.get("source", {})
+                                if source.get("type") == "base64":
+                                    data_url = f"data:{source.get('media_type', 'image/png')};base64,{source.get('data', '')}"
+                                    watsonx_content.append(
+                                        {
+                                            "type": "image_url",
+                                            "image_url": {"url": data_url},
+                                        }
+                                    )
+                            elif item.get("type") == "image_url":
+                                watsonx_content.append(item)
+                        else:
+                            # Pydantic object-based content
+                            if hasattr(item, "type") and item.type == ContentType.TEXT:
+                                watsonx_content.append(
+                                    {"type": "text", "text": item.text}
+                                )
                             elif (
-                                hasattr(item, "type") and item.type == ContentType.TEXT
+                                hasattr(item, "type")
+                                and item.type == ContentType.IMAGE_URL
                             ):
-                                text_parts.append(item.text)
+                                image_url_data = item.image_url
+                                url = (
+                                    image_url_data.get("url")
+                                    if isinstance(image_url_data, dict)
+                                    else image_url_data
+                                )
+                                watsonx_content.append(
+                                    {"type": "image_url", "image_url": {"url": url}}
+                                )
 
-                        formatted.append(
-                            {
-                                "role": "user",
-                                "content": [
-                                    {
-                                        "type": "text",
-                                        "text": " ".join(text_parts)
-                                        or "[Image content removed - not supported by model]",
-                                    }
-                                ],
-                            }
-                        )
-                    else:
-                        # Process multimodal content normally (both dict and Pydantic)
-                        watsonx_content = []
-                        for item in content:
-                            if isinstance(item, dict):
-                                # Dict-based content
-                                if item.get("type") == "text":
-                                    watsonx_content.append(
-                                        {"type": "text", "text": item.get("text", "")}
-                                    )
-                                elif item.get("type") == "image":
-                                    source = item.get("source", {})
-                                    if source.get("type") == "base64":
-                                        data_url = f"data:{source.get('media_type', 'image/png')};base64,{source.get('data', '')}"
-                                        watsonx_content.append(
-                                            {
-                                                "type": "image_url",
-                                                "image_url": {"url": data_url},
-                                            }
-                                        )
-                                elif item.get("type") == "image_url":
-                                    watsonx_content.append(item)
-                            else:
-                                # Pydantic object-based content
-                                if (
-                                    hasattr(item, "type")
-                                    and item.type == ContentType.TEXT
-                                ):
-                                    watsonx_content.append(
-                                        {"type": "text", "text": item.text}
-                                    )
-                                elif (
-                                    hasattr(item, "type")
-                                    and item.type == ContentType.IMAGE_URL
-                                ):
-                                    image_url_data = item.image_url
-                                    url = (
-                                        image_url_data.get("url")
-                                        if isinstance(image_url_data, dict)
-                                        else image_url_data
-                                    )
-                                    watsonx_content.append(
-                                        {"type": "image_url", "image_url": {"url": url}}
-                                    )
-
-                        formatted.append({"role": "user", "content": watsonx_content})
+                    formatted.append({"role": "user", "content": watsonx_content})
                 else:
                     formatted.append({"role": "user", "content": content})
             elif role == "assistant":
                 if msg.get("tool_calls"):
-                    # Check if tools are supported
-                    if self.supports_feature("tools"):
-                        formatted.append(
-                            {"role": "assistant", "tool_calls": msg["tool_calls"]}
-                        )
-                    else:
-                        # Convert tool calls to text response
-                        log.warning(
-                            f"Tool calls detected but {self.model} doesn't support tools according to configuration"
-                        )
-                        tool_text = f"{content or ''}\n\nNote: Tool calls were requested but not supported by this model."
-                        formatted.append({"role": "assistant", "content": tool_text})
+                    # Permissive approach: Always pass tool calls to API
+                    formatted.append(
+                        {"role": "assistant", "tool_calls": msg["tool_calls"]}
+                    )
                 else:
                     formatted.append({"role": "assistant", "content": content})
             elif role == "tool":
-                # Tool response messages - only include if tools are supported
-                if self.supports_feature("tools"):
-                    formatted.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": msg.get("tool_call_id"),
-                            "content": content,
-                        }
-                    )
-                else:
-                    # Convert tool response to user message
-                    formatted.append(
-                        {"role": "user", "content": f"Tool result: {content or ''}"}
-                    )
+                # Permissive approach: Always pass tool responses to API
+                formatted.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": msg.get("tool_call_id"),
+                        "content": content,
+                    }
+                )
 
         return formatted
 
@@ -1247,25 +1210,32 @@ class WatsonXLLMClient(
         # Ensure messages are Pydantic
         if messages:
             messages = [
-                msg if isinstance(msg, MessageModel) else MessageModel.model_validate(msg)
+                msg
+                if isinstance(msg, MessageModel)
+                else MessageModel.model_validate(msg)
                 for msg in messages
             ]
 
-        # Ensure tools are Pydantic
+        # Ensure tools are Pydantic (skip malformed tools)
         if tools:
-            tools = [
-                tool if isinstance(tool, ToolModel) else ToolModel.model_validate(tool)
-                for tool in tools
-            ]
+            validated_tools = []
+            for tool in tools:
+                if isinstance(tool, ToolModel):
+                    validated_tools.append(tool)
+                else:
+                    try:
+                        validated_tools.append(ToolModel.model_validate(tool))
+                    except Exception as e:
+                        log.warning(f"Skipping malformed tool: {e}")
+                        continue
+            tools = validated_tools
 
         # Convert Pydantic messages to dicts
         dict_messages = [msg.to_dict() for msg in messages]
 
-        # Validate request against configuration (keep tools as Pydantic for now)
+        # Validate request against configuration (keep tools as Pydantic)
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
-            self._validate_request_with_config(
-                dict_messages, tools, stream, **extra
-            )
+            self._validate_request_with_config(dict_messages, tools, stream, **extra)
         )
 
         # Apply max_tokens if provided (will be mapped or skipped based on model)
@@ -1276,6 +1246,7 @@ class WatsonXLLMClient(
         validated_kwargs = self._map_parameters_for_watsonx(validated_kwargs)
 
         # CRITICAL UPDATE: Use universal tool name sanitization (stores mapping for restoration)
+        # Keep tools as Pydantic objects throughout
         name_mapping: dict[str, str] = {}
         if validated_tools:
             validated_tools = self._sanitize_tool_names(validated_tools)
@@ -1290,8 +1261,8 @@ class WatsonXLLMClient(
                 validated_messages
             )
 
-        # Convert to WatsonX format
-        watsonx_tools = self._convert_tools(validated_tools)
+        # Convert to WatsonX format (convert to dicts only at this final step)
+        watsonx_tools = self._convert_tools(self._tools_to_dicts(validated_tools))
 
         # Format messages with configuration-aware processing and Granite template support
         formatted_messages = self._format_messages_for_watsonx(
@@ -1577,10 +1548,10 @@ class WatsonXLLMClient(
     def _validate_request_with_config(
         self,
         messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[Any] | None = None,
         stream: bool = False,
         **kwargs: Any,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]] | None, bool, dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], list[Any] | None, bool, dict[str, Any]]:
         """
         Validate request against configuration before processing.
         """
@@ -1596,33 +1567,9 @@ class WatsonXLLMClient(
             )
             validated_stream = False
 
-        # Check tool support
-        if tools and not self.supports_feature("tools"):
-            log.warning(
-                f"Tools provided but {self.model} doesn't support tools according to configuration"
-            )
-            validated_tools = None
-
-        # Check vision support
-        has_vision = any(
-            isinstance(msg.get("content"), list)
-            and any(
-                isinstance(item, dict) and item.get("type") in ["image", "image_url"]
-                for item in msg.get("content", [])
-            )
-            for msg in messages
-        )
-        if has_vision and not self.supports_feature("vision"):
-            log.warning(
-                f"Vision content detected but {self.model} doesn't support vision according to configuration"
-            )
-
-        # Check multimodal support
-        has_multimodal = any(isinstance(msg.get("content"), list) for msg in messages)
-        if has_multimodal and not self.supports_feature("multimodal"):
-            log.info(
-                f"Multimodal content will be simplified - {self.model} has limited multimodal support"
-            )
+        # Permissive approach: Let WatsonX API handle tool support
+        # Don't block based on capability checks - dynamic models should work
+        # Permissive approach: Pass all content to API (vision, audio, multimodal, etc.)
 
         # Validate parameters using configuration
         validated_kwargs = self.validate_parameters(**validated_kwargs)

@@ -109,7 +109,8 @@ class MockChatCompletion:
 @pytest.fixture
 def mock_config():
     """Mock configuration"""
-    with patch("chuk_llm.configuration.get_config") as mock:
+    # Patch where get_config is used, not where it's defined
+    with patch("chuk_llm.llm.providers.openai_client.get_config") as mock:
         mock_provider = MagicMock()
         mock_provider.models = ["gpt-4o", "gpt-4o-mini"]
         mock_provider.model_capabilities = []

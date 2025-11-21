@@ -32,13 +32,24 @@ class Provider(str, Enum):
 class Feature(str, Enum):
     """Model feature capabilities."""
 
+    TEXT = "text"  # Basic text completion capability
     STREAMING = "streaming"
     TOOLS = "tools"
     VISION = "vision"
+    AUDIO_INPUT = "audio_input"  # Audio input processing
     JSON_MODE = "json_mode"
     SYSTEM_MESSAGES = "system_messages"
     PARALLEL_CALLS = "parallel_calls"
+    MULTIMODAL = "multimodal"  # Multiple input modalities
     REASONING = "reasoning"
+
+    @classmethod
+    def from_string(cls, value: str) -> "Feature":
+        """Convert string to Feature enum"""
+        try:
+            return cls(value.lower())
+        except ValueError as exc:
+            raise ValueError(f"Unknown feature: {value}") from exc
 
 
 class MessageRole(str, Enum):

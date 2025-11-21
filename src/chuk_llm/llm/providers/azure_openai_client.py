@@ -83,7 +83,8 @@ class AzureOpenAILLMClient(
         # Azure OpenAI client configuration
         client_kwargs = {
             AzureOpenAIParam.API_VERSION.value: self.api_version,
-            AzureOpenAIParam.AZURE_ENDPOINT.value: azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT"),
+            AzureOpenAIParam.AZURE_ENDPOINT.value: azure_endpoint
+            or os.getenv("AZURE_OPENAI_ENDPOINT"),
         }
 
         # Authentication - priority order: token provider > token > api key
@@ -92,7 +93,9 @@ class AzureOpenAILLMClient(
         elif azure_ad_token:
             client_kwargs["azure_ad_token"] = azure_ad_token
         else:
-            client_kwargs[AzureOpenAIParam.API_KEY.value] = api_key or os.getenv("AZURE_OPENAI_API_KEY")
+            client_kwargs[AzureOpenAIParam.API_KEY.value] = api_key or os.getenv(
+                "AZURE_OPENAI_API_KEY"
+            )
 
         # Validate required parameters
         if not client_kwargs.get(AzureOpenAIParam.AZURE_ENDPOINT.value):
@@ -101,7 +104,11 @@ class AzureOpenAILLMClient(
             )
 
         if not any(
-            [azure_ad_token_provider, azure_ad_token, client_kwargs.get(AzureOpenAIParam.API_KEY.value)]
+            [
+                azure_ad_token_provider,
+                azure_ad_token,
+                client_kwargs.get(AzureOpenAIParam.API_KEY.value),
+            ]
         ):
             raise ValueError(
                 "Authentication required: provide api_key, azure_ad_token, or azure_ad_token_provider"
@@ -403,10 +410,10 @@ class AzureOpenAILLMClient(
     def _validate_request_with_config(
         self,
         messages: list[Message],
-        tools: list[Tool] | None = None,
+        tools: list[Any] | None = None,
         stream: bool = False,
         **kwargs,
-    ) -> tuple[list[Message], list[Tool] | None, bool, dict[str, Any]]:
+    ) -> tuple[list[Message], list[Any] | None, bool, dict[str, Any]]:
         """
         Enhanced validation that uses smart defaults for unknown deployments.
         FIXED: Actually disable streaming when not supported.
@@ -421,7 +428,7 @@ class AzureOpenAILLMClient(
             if isinstance(item, dict):
                 return item
             # Handle objects with attributes
-            return {k: v for k, v in vars(item).items()}
+            return dict(vars(item).items())
 
         def _convert_message(msg):
             if isinstance(msg, MessageModel):
@@ -460,9 +467,7 @@ class AzureOpenAILLMClient(
                     {"type": getattr(tool, "type", "function"), **vars(tool)}
                 )
 
-        validated_tools = (
-            [_convert_tool(tool) for tool in tools] if tools else None
-        )
+        validated_tools = [_convert_tool(tool) for tool in tools] if tools else None
         validated_stream = stream
         validated_kwargs = kwargs.copy()
 
@@ -487,24 +492,8 @@ class AzureOpenAILLMClient(
                     f"Using smart default: assuming deployment '{self.azure_deployment}' supports tools"
                 )
 
-        # Check vision support (Pydantic native)
-        has_vision = False
-        for msg in messages:
-            # Handle both Message objects and dicts
-            content = msg.content if hasattr(msg, "content") else msg.get("content")
-            if isinstance(content, list):
-                for item in content:
-                    # Handle both Pydantic objects and dicts
-                    item_type = item.type if hasattr(item, "type") else item.get("type")
-                    if item_type == "image_url":
-                        has_vision = True
-                        break
-            if has_vision:
-                break
-        if has_vision and not self.supports_feature("vision"):
-            log.warning(
-                f"Vision content detected but deployment '{self.azure_deployment}' doesn't support vision"
-            )
+        # Permissive approach: Pass all content to API (vision, audio, etc.)
+        # Let Azure OpenAI API handle unsupported cases
 
         # Check JSON mode
         if kwargs.get("response_format", {}).get("type") == "json_object":
@@ -612,12 +601,11 @@ class AzureOpenAILLMClient(
         # Validate request against configuration (with smart defaults for unknown deployments)
         # Note: _validate_request_with_config handles Pydantic conversion internally
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
-            self._validate_request_with_config(
-                messages, tools, stream, **kwargs
-            )
+            self._validate_request_with_config(messages, tools, stream, **kwargs)
         )
 
         # Apply universal tool name sanitization (stores mapping for restoration)
+        # Keep tools as Pydantic objects throughout
         name_mapping = {}
         if validated_tools:
             validated_tools = self._sanitize_tool_names(validated_tools)
@@ -629,19 +617,13 @@ class AzureOpenAILLMClient(
         # Use configuration-aware parameter adjustment
         validated_kwargs = self._adjust_parameters_for_provider(validated_kwargs)
 
-        # Convert Pydantic models to dicts for OpenAI SDK
-        messages_dicts = [
+        # Convert Pydantic models to dicts for OpenAI SDK (only at final step)
+        messages_dicts: list[dict[str, Any]] = [
             msg.model_dump() if hasattr(msg, "model_dump") else msg
             for msg in validated_messages
         ]
-        tools_dicts = (
-            [
-                tool.model_dump() if hasattr(tool, "model_dump") else tool
-                for tool in validated_tools
-            ]
-            if validated_tools
-            else None
-        )
+        # Use the helper method to convert tools to dicts at the final step
+        tools_dicts: list[dict[str, Any]] | None = self._tools_to_dicts(validated_tools)
 
         if validated_stream:
             return self._stream_completion_async(

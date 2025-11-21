@@ -62,7 +62,11 @@ class ModelRegistry:
         self.sources = sources
         self.resolvers = resolvers
         self._memory_cache: dict[tuple[str, str], ModelWithCapabilities] | None = None
-        self._disk_cache = RegistryCache(ttl_hours=cache_ttl_hours) if enable_persistent_cache else None
+        self._disk_cache = (
+            RegistryCache(ttl_hours=cache_ttl_hours)
+            if enable_persistent_cache
+            else None
+        )
 
     async def get_models(
         self, *, force_refresh: bool = False

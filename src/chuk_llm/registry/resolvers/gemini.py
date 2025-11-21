@@ -34,7 +34,9 @@ class GeminiCapabilityResolver(BaseCapabilityResolver):
             api_key: Google API key (defaults to GEMINI_API_KEY or GOOGLE_API_KEY env var)
             timeout: Request timeout in seconds
         """
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        self.api_key = (
+            api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        )
         self.timeout = timeout
         self._cache: dict[str, ModelCapabilities] = {}
 

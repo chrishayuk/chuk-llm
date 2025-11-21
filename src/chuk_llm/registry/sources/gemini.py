@@ -32,7 +32,9 @@ class GeminiModelSource(BaseModelSource):
             api_key: Google API key (defaults to GEMINI_API_KEY or GOOGLE_API_KEY env var)
             timeout: Request timeout in seconds
         """
-        self.api_key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        self.api_key = (
+            api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        )
         self.timeout = timeout
 
     async def discover(self) -> list[ModelSpec]:
@@ -60,10 +62,7 @@ class GeminiModelSource(BaseModelSource):
                         continue
 
                     # Extract model name from full path (models/gemini-1.5-pro -> gemini-1.5-pro)
-                    if "/" in name:
-                        model_id = name.split("/", 1)[1]
-                    else:
-                        model_id = name
+                    model_id = name.split("/", 1)[1] if "/" in name else name
 
                     # Filter for generative models only
                     if self._is_generative_model(model_id):
@@ -114,7 +113,10 @@ class GeminiModelSource(BaseModelSource):
         """
         model_lower = model_id.lower()
 
-        if "gemini-2" in model_lower:
+        # Check in descending version order to match correctly
+        if "gemini-3" in model_lower:
+            return "gemini-3"
+        elif "gemini-2" in model_lower:
             return "gemini-2"
         elif "gemini-1.5" in model_lower:
             return "gemini-1.5"

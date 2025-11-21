@@ -19,6 +19,13 @@ from chuk_llm.llm.system_prompt_generator import SystemPromptGenerator
 
 # Import session tracking components
 try:
+    import warnings
+
+    # Suppress Pydantic v2 validator warning from session_manager globally
+    # This warning comes from deep inside Session.__init__ and can't be caught locally
+    warnings.filterwarnings(
+        "ignore", category=UserWarning, message=".*Returning anything other than.*"
+    )
     from chuk_ai_session_manager import SessionManager
 
     _SESSION_AVAILABLE = True
@@ -65,12 +72,17 @@ class ConversationContext:
         # Initialize session tracking automatically if available
         if _SESSIONS_ENABLED:
             try:
-                self.session_manager: SessionManager | None = SessionManager(
-                    session_id=session_id,
-                    system_prompt=system_prompt,
-                    infinite_context=infinite_context,
-                    token_threshold=token_threshold,
-                )
+                # Suppress Pydantic v2 validator warning from session_manager
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore", message=".*Returning anything other than.*"
+                    )
+                    self.session_manager: SessionManager | None = SessionManager(
+                        session_id=session_id,
+                        system_prompt=system_prompt,
+                        infinite_context=infinite_context,
+                        token_threshold=token_threshold,
+                    )
             except Exception as e:
                 logger.debug(f"Could not initialize session manager: {e}")
                 self.session_manager: SessionManager | None = None

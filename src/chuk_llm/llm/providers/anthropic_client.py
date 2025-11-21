@@ -31,7 +31,7 @@ from typing import Any
 from anthropic import AsyncAnthropic
 
 # core
-from ...core.enums import MessageRole
+from ...core.enums import Feature, MessageRole
 
 # providers
 from ..core.base import BaseLLMClient
@@ -224,19 +224,33 @@ class AnthropicLLMClient(
     def _check_json_mode(self, kwargs: dict[str, Any]) -> str | None:
         """Check if JSON mode is requested and return appropriate system instruction"""
         # Only proceed if the model supports JSON mode according to config
-        if not self.supports_feature("json_mode"):
+        if not self.supports_feature(Feature.JSON_MODE.value):
             log.debug(
                 f"Model {self.model} does not support JSON mode according to configuration"
             )
             return None
 
         # Check for OpenAI-style response_format
+        from chuk_llm.core import ResponseFormat
+
         response_format = kwargs.get("response_format")
-        if (
-            isinstance(response_format, dict)
-            and response_format.get("type") == "json_object"
-        ):
-            return "You must respond with valid JSON only. No markdown code blocks, no explanations, no text before or after. Just pure, valid JSON."
+        if response_format:
+            # Validate with Pydantic if it's a dict
+            if isinstance(response_format, dict):
+                try:
+                    response_format = ResponseFormat.model_validate(response_format)
+                except Exception:
+                    pass  # Keep as dict if validation fails
+
+            # Check type regardless of whether it's dict or ResponseFormat
+            format_type = (
+                response_format.type
+                if isinstance(response_format, ResponseFormat)
+                else response_format.get("type") if isinstance(response_format, dict) else None
+            )
+
+            if format_type == "json_object":
+                return "You must respond with valid JSON only. No markdown code blocks, no explanations, no text before or after. Just pure, valid JSON."
 
         # Check for _json_mode_instruction from provider adapter
         json_instruction = kwargs.get("_json_mode_instruction")
@@ -431,25 +445,8 @@ class AnthropicLLMClient(
                         {"role": role, "content": [{"type": "text", "text": cont}]}
                     )
                 elif isinstance(cont, list):
-                    # Multimodal content - check if vision is supported
-                    has_vision_content = any(
-                        _safe_get(item, "type") == "image_url" for item in cont
-                    )
-
-                    if has_vision_content and not self.supports_feature("vision"):
-                        log.warning(
-                            f"Vision content detected but model {self.model} doesn't support vision according to configuration"
-                        )
-                        # Convert to text-only by filtering out images
-                        text_only_content = [
-                            item
-                            for item in cont
-                            if _safe_get(item, "type") != "image_url"
-                        ]
-                        if text_only_content:
-                            out.append({"role": role, "content": text_only_content})
-                        continue
-
+                    # Permissive approach: Process all multimodal content (text, vision, audio)
+                    # Let Anthropic API handle unsupported cases rather than filtering
                     # Process multimodal content - convert universal format to Anthropic
                     anthropic_content = []
                     for item in cont:
@@ -464,8 +461,10 @@ class AnthropicLLMClient(
                                 )
                         elif item_type == "image_url":
                             # Convert universal image_url to Anthropic format with async support
-                            anthropic_item = await self._convert_universal_vision_to_anthropic_async(
-                                item
+                            anthropic_item = (
+                                await self._convert_universal_vision_to_anthropic_async(
+                                    item
+                                )
                             )
                             anthropic_content.append(anthropic_item)
                         else:
@@ -562,22 +561,14 @@ class AnthropicLLMClient(
         # Convert messages to dicts
         dict_messages = [msg.to_dict() for msg in messages]
 
-        # Validate capabilities using configuration (keep tools as Pydantic for now)
-        if tools and not self.supports_feature("tools"):
-            log.warning(
-                f"Tools provided but model {self.model} doesn't support tools according to configuration"
-            )
-            tools = None
-
-        if stream and not self.supports_feature("streaming"):
-            log.warning(
-                f"Streaming requested but model {self.model} doesn't support streaming according to configuration"
-            )
-            stream = False
+        # Permissive approach: Don't block tools or streaming
+        # Let Anthropic API handle unsupported cases - models can be added dynamically
+        # and we shouldn't prevent attempts based on capability checks
 
         # Apply universal tool name sanitization (stores mapping for restoration)
         name_mapping = {}
         dict_tools = None
+        sanitized_tools = None
         if tools:
             from chuk_llm.core.models import Tool as ToolModel
 
@@ -597,10 +588,9 @@ class AnthropicLLMClient(
             log.debug(
                 f"Tool sanitization: {len(name_mapping)} tools processed for Anthropic compatibility"
             )
-            # Convert Pydantic models back to dicts for Anthropic format conversion
-            dict_tools = [tool.model_dump() for tool in sanitized_tools]  # type: ignore[union-attr]
 
-        anth_tools = self._convert_tools(dict_tools)
+        # Convert Pydantic models to dicts only at this final step
+        anth_tools = self._convert_tools(self._tools_to_dicts(sanitized_tools)) if sanitized_tools else None
 
         # Check for JSON mode (using configuration validation)
         json_instruction = self._check_json_mode(extra)
@@ -661,12 +651,12 @@ class AnthropicLLMClient(
             base_payload: dict[str, Any] = {
                 "model": self.model,
                 "messages": msg_no_system,
-                "tools": anth_tools,
                 **filtered_params,
             }
             if final_system:
                 base_payload["system"] = final_system
             if anth_tools:
+                base_payload["tools"] = anth_tools
                 base_payload["tool_choice"] = {"type": "auto"}
 
             log.debug("Claude streaming payload keys: %s", list(base_payload.keys()))
@@ -889,12 +879,12 @@ class AnthropicLLMClient(
             base_payload: dict[str, Any] = {
                 "model": self.model,
                 "messages": msg_no_system,
-                "tools": anth_tools,
                 **filtered_params,
             }
             if final_system:
                 base_payload["system"] = final_system
             if anth_tools:
+                base_payload["tools"] = anth_tools
                 base_payload["tool_choice"] = {"type": "auto"}
 
             log.debug("Claude payload keys: %s", list(base_payload.keys()))

@@ -26,6 +26,7 @@ Example:
 # Load environment variables from .env file before importing sources
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     pass  # dotenv not available, use system env vars only

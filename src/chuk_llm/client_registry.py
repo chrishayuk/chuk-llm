@@ -64,8 +64,10 @@ def _make_cache_key(provider: str, model: str, **kwargs) -> str:
     # Sort kwargs for consistent key generation
     sorted_kwargs = sorted(kwargs.items())
 
-    # Create key from provider, model, and kwargs
-    key_parts = [provider, model] + [f"{k}={v}" for k, v in sorted_kwargs]
+    # Create key from provider, model, and kwargs (convert ALL to strings)
+    key_parts = [str(provider), str(model)] + [
+        f"{k}={str(v)}" for k, v in sorted_kwargs
+    ]
     key_string = ":".join(key_parts)
 
     # Hash for privacy (don't expose API keys in logs)

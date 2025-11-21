@@ -76,15 +76,45 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
             else:
                 log.debug("Ollama using default host (localhost:11434)")
 
-        # Look up model capabilities reported by Ollama
-        self._model_capabilities = []  # type: ignore[var-annotated]
+        # Defer model capabilities lookup to async property
+        # FIXED: Don't block event loop in __init__
+        self._model_capabilities: list[str] = []
+        self._capabilities_loaded = False
+
+    def _load_capabilities_sync(self) -> None:
+        """Load model capabilities synchronously (backward compatibility)."""
+        if self._capabilities_loaded:
+            return
+
         try:
             model_info = self.sync_client.show(model=self.model)
             self._model_capabilities = model_info.capabilities
+            self._capabilities_loaded = True
+            log.debug(f"Loaded capabilities for {self.model}: {self._model_capabilities}")
         except ollama.ResponseError:
             log.debug("Unable to get model capabilities from Ollama")
+            self._capabilities_loaded = True  # Don't retry
+
+    async def _load_capabilities(self) -> None:
+        """Load model capabilities asynchronously (async-native)."""
+        if self._capabilities_loaded:
+            return
+
+        try:
+            # Run sync SDK call in thread pool to avoid blocking
+            model_info = await asyncio.to_thread(self.sync_client.show, model=self.model)
+            self._model_capabilities = model_info.capabilities
+            self._capabilities_loaded = True
+            log.debug(f"Loaded capabilities for {self.model}: {self._model_capabilities}")
+        except ollama.ResponseError:
+            log.debug("Unable to get model capabilities from Ollama")
+            self._capabilities_loaded = True  # Don't retry
 
     def supports_feature(self, feature_name: str) -> bool:
+        """Check if model supports a feature (with lazy sync loading for backward compatibility)."""
+        # Lazy load capabilities on first call
+        self._load_capabilities_sync()
+
         if feature_name in self._model_capabilities:
             return True
         return super().supports_feature(feature_name)
@@ -209,26 +239,9 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
             )
             validated_stream = False
 
-        # Check tool support
-        if tools and not self.supports_feature("tools"):
-            log.warning(
-                f"Tools provided but {self.model} doesn't support tools according to configuration"
-            )
-            validated_tools = None
-
-        # Check vision support
-        has_vision = any(
-            isinstance(msg.get("content"), list)
-            and any(
-                isinstance(item, dict) and item.get("type") in ["image", "image_url"]
-                for item in msg.get("content", [])
-            )
-            for msg in messages
-        )
-        if has_vision and not self.supports_feature("vision"):
-            log.warning(
-                f"Vision content detected but {self.model} doesn't support vision according to configuration"
-            )
+        # Permissive approach: Let Ollama API handle tool support
+        # Don't block based on capability checks - dynamic models should work
+        # Permissive approach: Pass all content to API (vision, audio, etc.)
 
         # Check system message support
         has_system = any(
@@ -341,89 +354,52 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
 
                 # Handle images if present in the message content
                 if isinstance(content, list):
+                    # Permissive approach: Process all multimodal content (text, vision, audio)
+                    # Let Ollama API handle unsupported cases rather than filtering
+                    # Process images for Ollama format (both dict and Pydantic)
+                    import base64
+
                     from chuk_llm.core.enums import ContentType
 
-                    # Check for images (both dict and Pydantic formats)
-                    has_images = any(
-                        (
-                            isinstance(item, dict)
-                            and item.get("type") in ["image", "image_url"]
-                        )
-                        or (
-                            hasattr(item, "type")
-                            and item.type
-                            in [ContentType.IMAGE_URL, ContentType.IMAGE_DATA]
-                        )
-                        for item in content
-                    )
+                    text_parts = []
+                    images = []
 
-                    if has_images and not self.supports_feature("vision"):
-                        # Extract only text content from both dict and Pydantic formats
-                        text_parts = []
-                        for item in content:
-                            if isinstance(item, dict) and item.get("type") == "text":
+                    for item in content:
+                        if isinstance(item, dict):
+                            # Dict-based content
+                            if item.get("type") == "text":
                                 text_parts.append(item.get("text", ""))
-                            elif (
-                                hasattr(item, "type") and item.type == ContentType.TEXT
-                            ):
+                            elif item.get("type") in ["image", "image_url"]:
+                                image_url = item.get("image_url", {}).get("url", "")
+                                if image_url.startswith("data:image"):
+                                    _, encoded = image_url.split(",", 1)
+                                    images.append(base64.b64decode(encoded))
+                                else:
+                                    images.append(image_url)
+                        else:
+                            # Pydantic object-based content
+                            if hasattr(item, "type") and item.type == ContentType.TEXT:
                                 text_parts.append(item.text)
+                            elif (
+                                hasattr(item, "type")
+                                and item.type == ContentType.IMAGE_URL
+                            ):
+                                # Extract URL from Pydantic ImageUrlContent
+                                image_url_data = item.image_url
+                                url = (
+                                    image_url_data.get("url")
+                                    if isinstance(image_url_data, dict)
+                                    else image_url_data
+                                )
+                                if url and url.startswith("data:image"):
+                                    _, encoded = url.split(",", 1)
+                                    images.append(base64.b64decode(encoded))
+                                elif url:
+                                    images.append(url)
 
-                        text_content = " ".join(text_parts)
-                        message["content"] = (
-                            text_content
-                            or "[Image content removed - not supported by model]"
-                        )
-                        log.warning(
-                            f"Removed vision content - {self.model} doesn't support vision"
-                        )
-                    else:
-                        # Process images for Ollama format (both dict and Pydantic)
-                        import base64
-
-                        from chuk_llm.core.enums import ContentType
-
-                        text_parts = []
-                        images = []
-
-                        for item in content:
-                            if isinstance(item, dict):
-                                # Dict-based content
-                                if item.get("type") == "text":
-                                    text_parts.append(item.get("text", ""))
-                                elif item.get("type") in ["image", "image_url"]:
-                                    image_url = item.get("image_url", {}).get("url", "")
-                                    if image_url.startswith("data:image"):
-                                        _, encoded = image_url.split(",", 1)
-                                        images.append(base64.b64decode(encoded))
-                                    else:
-                                        images.append(image_url)
-                            else:
-                                # Pydantic object-based content
-                                if (
-                                    hasattr(item, "type")
-                                    and item.type == ContentType.TEXT
-                                ):
-                                    text_parts.append(item.text)
-                                elif (
-                                    hasattr(item, "type")
-                                    and item.type == ContentType.IMAGE_URL
-                                ):
-                                    # Extract URL from Pydantic ImageUrlContent
-                                    image_url_data = item.image_url
-                                    url = (
-                                        image_url_data.get("url")
-                                        if isinstance(image_url_data, dict)
-                                        else image_url_data
-                                    )
-                                    if url and url.startswith("data:image"):
-                                        _, encoded = url.split(",", 1)
-                                        images.append(base64.b64decode(encoded))
-                                    elif url:
-                                        images.append(url)
-
-                        message["content"] = " ".join(text_parts)
-                        if images:
-                            message["images"] = images
+                    message["content"] = " ".join(text_parts)
+                    if images:
+                        message["images"] = images
             else:
                 # Handle any other role types
                 message = {"role": role, "content": content}

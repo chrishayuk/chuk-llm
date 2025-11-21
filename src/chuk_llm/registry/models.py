@@ -80,7 +80,8 @@ class ModelCapabilities(BaseModel):
         None, description="Basic JSON output mode (response_format={type: json_object})"
     )
     supports_structured_outputs: bool | None = Field(
-        None, description="Structured outputs with JSON Schema (response_format={type: json_schema})"
+        None,
+        description="Structured outputs with JSON Schema (response_format={type: json_schema})",
     )
     supports_streaming: bool | None = Field(
         None, description="Streaming response support"

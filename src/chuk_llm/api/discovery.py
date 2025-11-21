@@ -58,11 +58,17 @@ async def discover_models(
             "context_length": model.capabilities.max_context,
             "max_output_tokens": model.capabilities.max_output_tokens,
             "features": _capabilities_to_features(model.capabilities),
-            CapabilityKey.SUPPORTS_TOOLS.value: model.capabilities.supports_tools or False,
-            CapabilityKey.SUPPORTS_VISION.value: model.capabilities.supports_vision or False,
-            CapabilityKey.SUPPORTS_JSON_MODE.value: model.capabilities.supports_json_mode or False,
-            CapabilityKey.SUPPORTS_STREAMING.value: model.capabilities.supports_streaming or False,
-            "quality_tier": model.capabilities.quality_tier.value if model.capabilities.quality_tier else "unknown",
+            CapabilityKey.SUPPORTS_TOOLS.value: model.capabilities.supports_tools
+            or False,
+            CapabilityKey.SUPPORTS_VISION.value: model.capabilities.supports_vision
+            or False,
+            CapabilityKey.SUPPORTS_JSON_MODE.value: model.capabilities.supports_json_mode
+            or False,
+            CapabilityKey.SUPPORTS_STREAMING.value: model.capabilities.supports_streaming
+            or False,
+            "quality_tier": model.capabilities.quality_tier.value
+            if model.capabilities.quality_tier
+            else "unknown",
             "tokens_per_second": model.capabilities.tokens_per_second,
         }
         for model in provider_models
@@ -123,19 +129,29 @@ async def get_model_info(
                 "context_length": model.capabilities.max_context,
                 "max_output_tokens": model.capabilities.max_output_tokens,
                 "features": _capabilities_to_features(model.capabilities),
-                CapabilityKey.SUPPORTS_TOOLS.value: model.capabilities.supports_tools or False,
-                CapabilityKey.SUPPORTS_VISION.value: model.capabilities.supports_vision or False,
-                CapabilityKey.SUPPORTS_JSON_MODE.value: model.capabilities.supports_json_mode or False,
-                CapabilityKey.SUPPORTS_STREAMING.value: model.capabilities.supports_streaming or False,
-                "quality_tier": model.capabilities.quality_tier.value if model.capabilities.quality_tier else "unknown",
+                CapabilityKey.SUPPORTS_TOOLS.value: model.capabilities.supports_tools
+                or False,
+                CapabilityKey.SUPPORTS_VISION.value: model.capabilities.supports_vision
+                or False,
+                CapabilityKey.SUPPORTS_JSON_MODE.value: model.capabilities.supports_json_mode
+                or False,
+                CapabilityKey.SUPPORTS_STREAMING.value: model.capabilities.supports_streaming
+                or False,
+                "quality_tier": model.capabilities.quality_tier.value
+                if model.capabilities.quality_tier
+                else "unknown",
                 "tokens_per_second": model.capabilities.tokens_per_second,
-                "known_params": list(model.capabilities.known_params) if model.capabilities.known_params else [],
+                "known_params": list(model.capabilities.known_params)
+                if model.capabilities.known_params
+                else [],
             }
 
     return None
 
 
-def get_model_info_sync(provider_name: str, model_name: str, **kwargs) -> dict[str, Any] | None:
+def get_model_info_sync(
+    provider_name: str, model_name: str, **kwargs
+) -> dict[str, Any] | None:
     """Synchronous version of get_model_info"""
     return asyncio.run(get_model_info(provider_name, model_name, **kwargs))
 
@@ -193,7 +209,9 @@ async def find_best_model(
         "context_length": best_model.capabilities.max_context,
         "max_output_tokens": best_model.capabilities.max_output_tokens,
         "features": _capabilities_to_features(best_model.capabilities),
-        "quality_tier": best_model.capabilities.quality_tier.value if best_model.capabilities.quality_tier else "unknown",
+        "quality_tier": best_model.capabilities.quality_tier.value
+        if best_model.capabilities.quality_tier
+        else "unknown",
     }
 
 
@@ -217,7 +235,7 @@ async def list_providers() -> list[str]:
     all_models = await registry.get_models()
 
     # Get unique providers
-    providers = sorted(set(m.spec.provider for m in all_models))
+    providers = sorted({m.spec.provider for m in all_models})
     return providers
 
 
@@ -263,15 +281,17 @@ async def show_discovered_models(
         print(f"\n📁 {family.title()} ({len(family_models)} models):")
 
         for model in sorted(family_models, key=lambda x: x["name"]):
-            ctx = f"{model['context_length']:,}" if model['context_length'] else "Unknown"
-            tier = model['quality_tier']
-            features = ", ".join(model['features'])
+            ctx = (
+                f"{model['context_length']:,}" if model["context_length"] else "Unknown"
+            )
+            tier = model["quality_tier"]
+            features = ", ".join(model["features"])
 
             print(f"  • {model['name']}")
             print(f"    Context: {ctx} | Tier: {tier}")
             print(f"    Features: {features}")
 
-            if model['tokens_per_second']:
+            if model["tokens_per_second"]:
                 print(f"    Speed: {model['tokens_per_second']:.1f} tokens/sec")
             print()
 

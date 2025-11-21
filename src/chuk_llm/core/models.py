@@ -82,7 +82,14 @@ class AudioDataContent(BaseModel):
     model_config = ConfigDict(frozen=True)
 
 
-ContentPart = TextContent | ImageUrlContent | ImageDataContent | InputAudioContent | AudioUrlContent | AudioDataContent
+ContentPart = (
+    TextContent
+    | ImageUrlContent
+    | ImageDataContent
+    | InputAudioContent
+    | AudioUrlContent
+    | AudioDataContent
+)
 
 
 # ================================================================
@@ -182,7 +189,17 @@ class Message(BaseModel):
             return v
         if isinstance(v, list):
             if not all(
-                isinstance(part, (TextContent, ImageUrlContent, ImageDataContent, InputAudioContent, AudioUrlContent, AudioDataContent))
+                isinstance(
+                    part,
+                    (
+                        TextContent,
+                        ImageUrlContent,
+                        ImageDataContent,
+                        InputAudioContent,
+                        AudioUrlContent,
+                        AudioDataContent,
+                    ),
+                )
                 for part in v
             ):
                 raise ValueError("All content parts must be valid ContentPart types")
@@ -212,6 +229,20 @@ class TokenUsage(BaseModel):
 
 
 # ================================================================
+# Response Format
+# ================================================================
+
+
+class ResponseFormat(BaseModel):
+    """Response format specification for JSON mode."""
+
+    type: Literal["text", "json_object", "json_schema"] = "text"
+    json_schema: dict[str, Any] | None = None  # For structured output
+
+    model_config = ConfigDict(frozen=True)
+
+
+# ================================================================
 # Requests
 # ================================================================
 
@@ -229,7 +260,7 @@ class CompletionRequest(BaseModel):
     stop: str | list[str] | None = None
     tools: list[Tool] | None = None
     stream: bool = False
-    response_format: dict[str, str] | None = None  # For JSON mode
+    response_format: ResponseFormat | dict[str, str] | None = None  # For JSON mode
 
     model_config = ConfigDict(
         frozen=True,

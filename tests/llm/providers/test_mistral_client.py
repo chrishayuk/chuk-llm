@@ -486,34 +486,6 @@ async def test_convert_messages_multimodal(client):
 
 
 @pytest.mark.asyncio
-async def test_convert_messages_vision_not_supported(client, monkeypatch):
-    """Test message conversion when vision is not supported."""
-    # Mock the supports_feature method to return False for vision
-    monkeypatch.setattr(client, "supports_feature", lambda feature: feature != "vision")
-
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Look at this"},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": "data:image/png;base64,..."},
-                },
-            ],
-        }
-    ]
-
-    converted = await client._convert_messages_to_mistral_format(messages)
-
-    assert len(converted) == 1
-    assert converted[0]["role"] == "user"
-    # Should only have text content when vision is not supported
-    assert isinstance(converted[0]["content"], str)
-    assert "Look at this" in converted[0]["content"]
-
-
-@pytest.mark.asyncio
 async def test_convert_messages_tool_calls(client):
     """Test message conversion with tool calls."""
     messages = [
@@ -546,36 +518,10 @@ async def test_convert_messages_tool_calls(client):
 
 
 @pytest.mark.asyncio
-async def test_convert_messages_tools_not_supported(client, monkeypatch):
-    """Test message conversion when tools are not supported."""
-    # Mock the supports_feature method to return False for tools
-    monkeypatch.setattr(client, "supports_feature", lambda feature: feature != "tools")
-
-    messages = [
-        {
-            "role": "assistant",
-            "tool_calls": [
-                {"id": "call_123", "function": {"name": "test_tool", "arguments": "{}"}}
-            ],
-        }
-    ]
-
-    converted = await client._convert_messages_to_mistral_format(messages)
-
-    assert len(converted) == 1
-    assert converted[0]["role"] == "assistant"
-    # Should have text content instead of tool calls
-    assert "content" in converted[0]
-    assert "Tool calls were requested" in converted[0]["content"]
-
-
-@pytest.mark.asyncio
 async def test_convert_messages_system_not_supported(client, monkeypatch):
-    """Test message conversion when system messages are not supported."""
-    # Mock the supports_feature method to return False for system_messages
-    monkeypatch.setattr(
-        client, "supports_feature", lambda feature: feature != "system_messages"
-    )
+    """Test message conversion - system messages are always sent to API."""
+    # Note: Current implementation always sends system messages and lets the API handle them,
+    # regardless of supports_feature check
 
     messages = [
         {"role": "system", "content": "You are helpful"},
@@ -585,10 +531,11 @@ async def test_convert_messages_system_not_supported(client, monkeypatch):
     converted = await client._convert_messages_to_mistral_format(messages)
 
     assert len(converted) == 2
-    # System message should be converted to user message
-    assert converted[0]["role"] == "user"
-    assert "System: You are helpful" in converted[0]["content"]
+    # System messages are now always sent as-is to the API
+    assert converted[0]["role"] == "system"
+    assert converted[0]["content"] == "You are helpful"
     assert converted[1]["role"] == "user"
+    assert converted[1]["content"] == "Hello"
 
 
 # ---------------------------------------------------------------------------
@@ -624,30 +571,6 @@ def test_normalize_mistral_response_tool_calls(client):
     assert result["response"] is None
     assert len(result["tool_calls"]) == 1
     assert result["tool_calls"][0]["function"]["name"] == "test_tool"
-
-
-def test_normalize_mistral_response_tools_not_supported(client, monkeypatch):
-    """Test normalizing response when tools are not supported."""
-    # Mock the supports_feature method to return False for tools
-    monkeypatch.setattr(client, "supports_feature", lambda feature: feature != "tools")
-
-    # Mock tool call structure
-    mock_tool_call = types.SimpleNamespace()
-    mock_tool_call.id = "call_123"
-    mock_tool_call.type = "function"
-    mock_tool_call.function = types.SimpleNamespace()
-    mock_tool_call.function.name = "test_tool"
-    mock_tool_call.function.arguments = '{"arg": "value"}'
-
-    mock_response = create_mock_mistral_response(
-        content="Some content", tool_calls=[mock_tool_call]
-    )
-
-    result = client._normalize_mistral_response(mock_response)
-
-    # Should return text content and ignore tool calls
-    assert result["response"] == "Some content"
-    assert result["tool_calls"] == []
 
 
 def test_normalize_mistral_response_fallback(client):
@@ -710,27 +633,6 @@ def test_validate_request_with_config(client):
     assert validated_messages == messages
     assert validated_tools == tools
     assert validated_stream is True
-    assert "temperature" in validated_kwargs
-
-
-def test_validate_request_unsupported_features(client, monkeypatch):
-    """Test request validation when features are not supported."""
-    messages = [{"role": "user", "content": "Hello"}]
-    tools = [{"type": "function", "function": {"name": "test_tool"}}]
-
-    # Mock configuration to not support streaming or tools
-    monkeypatch.setattr(client, "supports_feature", lambda feature: False)
-
-    validated_messages, validated_tools, validated_stream, validated_kwargs = (
-        client._validate_request_with_config(
-            messages, tools, stream=True, temperature=0.7, tool_choice="auto"
-        )
-    )
-
-    assert validated_messages == messages
-    assert validated_tools is None  # Should be None when not supported
-    assert validated_stream is False  # Should be False when not supported
-    assert "tool_choice" not in validated_kwargs  # Should be removed
     assert "temperature" in validated_kwargs
 
 
@@ -1093,34 +995,6 @@ async def test_create_completion_streaming(client):
 
 
 @pytest.mark.asyncio
-async def test_create_completion_streaming_not_supported(client, monkeypatch):
-    """Test create_completion with streaming when not supported."""
-    messages = [{"role": "user", "content": "Hello"}]
-
-    # Mock streaming as not supported
-    monkeypatch.setattr(
-        client, "supports_feature", lambda feature: feature != "streaming"
-    )
-
-    # Mock the regular completion method (should be called instead of streaming)
-    expected_result = {"response": "Hello!", "tool_calls": []}
-
-    async def mock_regular_completion(request_params, name_mapping=None):
-        return expected_result
-
-    client._regular_completion = mock_regular_completion
-
-    result = client.create_completion(messages, stream=True)
-
-    # Should return an awaitable (not async iterator) when streaming not supported
-    assert hasattr(result, "__await__")
-    assert not hasattr(result, "__aiter__")
-
-    final_result = await result
-    assert final_result == expected_result
-
-
-@pytest.mark.asyncio
 async def test_create_completion_with_tools(client):
     """Test create_completion with tools."""
     messages = [{"role": "user", "content": "What's the weather?"}]
@@ -1156,32 +1030,6 @@ async def test_create_completion_with_tools(client):
 
     assert result == expected_result
     assert len(result["tool_calls"]) == 1
-
-
-@pytest.mark.asyncio
-async def test_create_completion_with_tools_not_supported(client, monkeypatch):
-    """Test create_completion with tools when not supported."""
-    messages = [{"role": "user", "content": "What's the weather?"}]
-    tools = [
-        {"type": "function", "function": {"name": "get_weather", "parameters": {}}}
-    ]
-
-    # Mock tools as not supported
-    monkeypatch.setattr(client, "supports_feature", lambda feature: feature != "tools")
-
-    # Mock regular completion
-    expected_result = {"response": "I cannot use tools.", "tool_calls": []}
-
-    async def mock_regular_completion(request_params, name_mapping=None):
-        # Verify tools were not passed
-        assert "tools" not in request_params
-        return expected_result
-
-    client._regular_completion = mock_regular_completion
-
-    result = await client.create_completion(messages, tools=tools, stream=False)
-
-    assert result == expected_result
 
 
 @pytest.mark.asyncio
@@ -1531,51 +1379,6 @@ def test_configuration_feature_detection(client):
     assert isinstance(info.get("supports_system_messages"), bool)
 
 
-@pytest.mark.asyncio
-async def test_unsupported_features_graceful_handling(client, monkeypatch):
-    """Test graceful handling when features are not supported."""
-    # Mock all features as unsupported
-    monkeypatch.setattr(client, "supports_feature", lambda feature: False)
-
-    messages = [
-        {"role": "system", "content": "System message"},
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Text with image"},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": "data:image/png;base64,..."},
-                },
-            ],
-        },
-        {
-            "role": "assistant",
-            "tool_calls": [
-                {"id": "call_123", "function": {"name": "test_tool", "arguments": "{}"}}
-            ],
-        },
-    ]
-
-    tools = [{"type": "function", "function": {"name": "test_tool", "parameters": {}}}]
-
-    # Mock completion
-    async def mock_completion(request_params, name_mapping=None):
-        # Verify that unsupported features were handled gracefully
-        assert "tools" not in request_params
-        return {"response": "Features handled gracefully", "tool_calls": []}
-
-    client._regular_completion = mock_completion
-
-    result = await client.create_completion(
-        messages,
-        tools=tools,
-        stream=False,  # Should be converted to False when not supported
-    )
-
-    assert result["response"] == "Features handled gracefully"
-
-
 # ---------------------------------------------------------------------------
 # Environment and configuration tests
 # ---------------------------------------------------------------------------
@@ -1806,48 +1609,6 @@ async def test_convert_messages_pydantic_image_url(client):
     assert converted[0]["content"][1]["type"] == "image_url"
 
 
-@pytest.mark.asyncio
-async def test_convert_messages_pydantic_image_data(client):
-    """Test message conversion with Pydantic IMAGE_DATA content type."""
-    from chuk_llm.core.enums import ContentType
-
-    # Create mock Pydantic-style content object with IMAGE_DATA type
-    class MockPydanticImageDataContent:
-        def __init__(self):
-            self.type = ContentType.IMAGE_DATA
-            self.image_url = "data:image/png;base64,iVBORw0KGgoAAAA"
-
-    class MockPydanticTextContent:
-        def __init__(self):
-            self.type = ContentType.TEXT
-            self.text = "Image analysis"
-
-    # Mock the supports_feature to return False for vision
-    import unittest.mock
-
-    with unittest.mock.patch.object(client, "supports_feature") as mock_feature:
-        # Return False only for vision feature
-        mock_feature.side_effect = lambda f: f != "vision"
-
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    MockPydanticTextContent(),
-                    MockPydanticImageDataContent(),
-                ],
-            }
-        ]
-
-        converted = await client._convert_messages_to_mistral_format(messages)
-
-        # When vision not supported, should extract only text
-        assert len(converted) == 1
-        assert converted[0]["role"] == "user"
-        assert isinstance(converted[0]["content"], str)
-        assert "Image analysis" in converted[0]["content"]
-
-
 # ---------------------------------------------------------------------------
 # Image download error handling (lines 224-230)
 # ---------------------------------------------------------------------------
@@ -2008,30 +1769,6 @@ async def test_convert_messages_image_download_success_pydantic_format(
 # ---------------------------------------------------------------------------
 # Tool response without tools support (line 331)
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_convert_messages_tool_response_not_supported(client, monkeypatch):
-    """Test tool response conversion when tools not supported (line 331)."""
-    # Mock the supports_feature to return False for tools
-    monkeypatch.setattr(client, "supports_feature", lambda feature: feature != "tools")
-
-    messages = [
-        {
-            "role": "tool",
-            "tool_call_id": "call_123",
-            "name": "test_tool",
-            "content": "Tool execution result",
-        }
-    ]
-
-    converted = await client._convert_messages_to_mistral_format(messages)
-
-    # Should convert tool message to user message
-    assert len(converted) == 1
-    assert converted[0]["role"] == "user"
-    assert "Tool result:" in converted[0]["content"]
-    assert "Tool execution result" in converted[0]["content"]
 
 
 # ---------------------------------------------------------------------------

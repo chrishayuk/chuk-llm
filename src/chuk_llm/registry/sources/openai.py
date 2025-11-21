@@ -121,11 +121,7 @@ class OpenAIModelSource(BaseModelSource):
             "o3",
         ]
 
-        for pattern in include_patterns:
-            if pattern in model_lower:
-                return True
-
-        return False
+        return any(pattern in model_lower for pattern in include_patterns)
 
     def _extract_family(self, model_id: str) -> str | None:
         """

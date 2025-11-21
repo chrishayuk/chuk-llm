@@ -1141,9 +1141,130 @@ def _generate_static_functions():
     return functions
 
 
+def _generate_family_aliases():
+    """
+    Generate family-based convenience function aliases.
+
+    Allows users to type:
+    - ask_claude instead of ask_anthropic
+    - ask_gpt instead of ask_openai (for GPT models)
+    - ask_granite, ask_llama, ask_gemma (for Ollama model families)
+    - ask_gpt_4, ask_gpt_5 (for specific GPT generations)
+    """
+    config_manager = get_config()
+    aliases = {}
+
+    # Provider-level family aliases
+    family_mappings = {
+        # Anthropic -> Claude
+        "claude": ("anthropic", None),  # ask_claude -> ask_anthropic with default model
+        "claude_sonnet": ("anthropic", "claude-sonnet-4-5"),  # Latest Sonnet
+        "claude_opus": ("anthropic", "claude-opus-4-1"),  # Latest Opus
+        "claude_haiku": ("anthropic", "claude-haiku-4-5"),  # Latest Haiku
+        "sonnet": ("anthropic", "claude-sonnet-4-5"),  # Short alias
+        "opus": ("anthropic", "claude-opus-4-1"),  # Short alias
+        "haiku": ("anthropic", "claude-haiku-4-5"),  # Short alias
+        # OpenAI GPT families
+        "gpt": ("openai", None),  # ask_gpt -> ask_openai with default model
+        "gpt_4": ("openai", "gpt-4o"),  # ask_gpt_4 -> GPT-4o (latest GPT-4)
+        "gpt_5": ("openai", "gpt-5"),  # ask_gpt_5 -> GPT-5 (if available)
+        "gpt_4o": ("openai", "gpt-4o"),
+        # Gemini
+        "gemini": ("gemini", None),
+        # Mistral AI (provider-level)
+        "mistral": ("mistral", None),  # Uses default mistral-medium-latest
+        # Groq - using GPT-OSS as default
+        "groq": ("groq", "openai/gpt-oss-20b"),  # Fast inference with GPT-OSS
+        "gpt_oss": ("groq", "openai/gpt-oss-20b"),  # GPT-OSS 20B
+        "gpt_oss_120": ("groq", "openai/gpt-oss-120b"),  # GPT-OSS 120B
+        # WatsonX / IBM - using latest Granite 3.3
+        "watsonx": ("watsonx", "ibm/granite-3-3-8b-instruct"),  # Latest Granite 3.3
+        "ibm": ("watsonx", "ibm/granite-3-3-8b-instruct"),  # IBM alias
+    }
+
+    # Add Ollama model family aliases (granite, llama, mistral, etc.)
+    try:
+        ollama_config = config_manager.get_provider("ollama")
+        ollama_models = _get_safe_models_for_provider("ollama", ollama_config)
+
+        # Track families we've seen to avoid duplicates
+        seen_families = set()
+
+        for model in ollama_models:
+            # Extract family from model name (e.g., "granite3-dense:8b" -> "granite")
+            family = None
+            model_lower = model.lower()
+
+            # Common Ollama families
+            if "granite" in model_lower:
+                family = "granite"
+            elif "llama" in model_lower:
+                family = "llama"
+            elif "mistral" in model_lower:
+                family = "mistral"
+            elif "gemma" in model_lower:
+                family = "gemma"
+            elif "qwen" in model_lower:
+                family = "qwen"
+            elif "phi" in model_lower:
+                family = "phi"
+            elif "deepseek" in model_lower:
+                family = "deepseek"
+            elif "codellama" in model_lower:
+                family = "codellama"
+
+            # Add family alias if found and not already added
+            if family and family not in seen_families:
+                seen_families.add(family)
+                # Use the first model we find for this family as the default
+                family_mappings[family] = ("ollama", model)
+
+    except (ValueError, KeyError):
+        pass  # Ollama not configured
+
+    # Generate ask/stream/sync variants for each family
+    for family_name, (provider, model) in family_mappings.items():
+        try:
+            provider_config = config_manager.get_provider(provider)
+
+            # Determine vision support
+            if model:
+                model_caps = provider_config.get_model_capabilities(model)
+                supports_vision = Feature.VISION in model_caps.features
+            else:
+                supports_vision = Feature.VISION in provider_config.features
+
+            # Create the three function variants
+            aliases[f"ask_{family_name}"] = _create_provider_function(
+                provider, model, supports_vision
+            )
+            aliases[f"stream_{family_name}"] = _create_stream_function(
+                provider, model, supports_vision
+            )
+            aliases[f"ask_{family_name}_sync"] = _create_sync_function(
+                provider, model, supports_vision
+            )
+
+            logger.debug(
+                f"Created family alias: ask_{family_name} -> {provider}/{model or 'default'}"
+            )
+
+        except Exception as e:
+            logger.debug(f"Could not create family alias for {family_name}: {e}")
+            continue
+
+    return aliases
+
+
 def _generate_functions():
     """Generate all provider functions from YAML config"""
-    return _generate_static_functions()
+    static_functions = _generate_static_functions()
+    family_aliases = _generate_family_aliases()
+
+    # Merge family aliases into static functions (static functions take precedence)
+    all_functions = {**family_aliases, **static_functions}
+
+    return all_functions
 
 
 def _create_utility_functions():

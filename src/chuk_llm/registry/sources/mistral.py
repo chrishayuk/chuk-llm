@@ -52,21 +52,22 @@ class MistralModelSource(BaseModelSource):
             response = client.models.list()
 
             specs = []
-            for model in response.data:
-                model_id = model.id
-                if not model_id:
-                    continue
+            if response.data:  # Check if data is not None
+                for model in response.data:
+                    model_id = model.id
+                    if not model_id:
+                        continue
 
-                # Filter out non-chat models
-                if self._is_chat_model(model_id):
-                    family = self._extract_family(model_id)
-                    specs.append(
-                        ModelSpec(
-                            provider=Provider.MISTRAL.value,
-                            name=model_id,
-                            family=family,
+                    # Filter out non-chat models
+                    if self._is_chat_model(model_id):
+                        family = self._extract_family(model_id)
+                        specs.append(
+                            ModelSpec(
+                                provider=Provider.MISTRAL.value,
+                                name=model_id,
+                                family=family,
+                            )
                         )
-                    )
 
             return self._deduplicate_specs(specs)
 
@@ -94,11 +95,7 @@ class MistralModelSource(BaseModelSource):
         ]
 
         model_lower = model_id.lower()
-        for pattern in exclude_patterns:
-            if pattern in model_lower:
-                return False
-
-        return True
+        return all(pattern not in model_lower for pattern in exclude_patterns)
 
     def _extract_family(self, model_id: str) -> str | None:
         """

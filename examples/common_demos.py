@@ -692,7 +692,11 @@ async def demo_audio_input(client, provider: str, model: str):
         print("\n⏳ Analyzing audio...")
 
         start = time.time()
-        response = await client.create_completion(messages, stream=False)
+        # Only pass model parameter if it differs from client's model (avoid duplicate parameter)
+        if hasattr(client, 'model') and client.model == model:
+            response = await client.create_completion(messages, stream=False)
+        else:
+            response = await client.create_completion(messages, stream=False, model=model)
         elapsed = time.time() - start
 
         print(f"\n✅ Response ({elapsed:.2f}s):")
@@ -913,7 +917,7 @@ async def demo_error_handling(client, provider: str, model: str):
 # Demo Runner Helper
 # =============================================================================
 
-async def run_all_demos(client, provider: str, model: str, skip_tools=False, skip_vision=False, skip_discovery=False, skip_audio=False, skip_parameters=False, skip_comparison=False, comparison_models=None):
+async def run_all_demos(client, provider: str, model: str, skip_tools=False, skip_vision=False, skip_discovery=False, skip_audio=False, skip_parameters=False, skip_comparison=False, comparison_models=None, audio_model=None):
     """Run all demos for a provider"""
     demos = [
         ("Basic Completion", demo_basic_completion(client, provider, model)),
@@ -939,7 +943,9 @@ async def run_all_demos(client, provider: str, model: str, skip_tools=False, ski
 
     # Audio input demo (may not be supported by all providers/models)
     if not skip_audio:
-        demos.append(("Audio Input", demo_audio_input(client, provider, model)))
+        # Use custom audio model if provided (e.g., voxtral for Mistral), same client
+        audio_model_to_use = audio_model if audio_model else model
+        demos.append(("Audio Input", demo_audio_input(client, provider, audio_model_to_use)))
 
     # Temperature/parameters demo
     if not skip_parameters:

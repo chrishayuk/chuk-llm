@@ -31,8 +31,18 @@ class EnvProviderSource(BaseModelSource):
             "claude-3",
             None,
         ),
-        Provider.GROQ.value: ("GROQ_API_KEY", "llama-3.3-70b-versatile", "llama-3", None),
-        Provider.DEEPSEEK.value: ("DEEPSEEK_API_KEY", "deepseek-chat", "deepseek", None),
+        Provider.GROQ.value: (
+            "GROQ_API_KEY",
+            "llama-3.3-70b-versatile",
+            "llama-3",
+            None,
+        ),
+        Provider.DEEPSEEK.value: (
+            "DEEPSEEK_API_KEY",
+            "deepseek-chat",
+            "deepseek",
+            None,
+        ),
         Provider.TOGETHER.value: (
             "TOGETHER_API_KEY",
             "meta-llama/Llama-3.3-70B-Instruct-Turbo",
@@ -45,9 +55,24 @@ class EnvProviderSource(BaseModelSource):
             "llama-3",
             None,
         ),
-        Provider.MISTRAL.value: ("MISTRAL_API_KEY", "mistral-small-latest", "mistral", None),
-        Provider.GEMINI.value: ("GEMINI_API_KEY", "gemini-2.0-flash", "gemini", "GOOGLE_API_KEY"),
-        Provider.WATSONX.value: ("WATSONX_API_KEY", "ibm/granite-3-8b-instruct", "granite", None),
+        Provider.MISTRAL.value: (
+            "MISTRAL_API_KEY",
+            "mistral-small-latest",
+            "mistral",
+            None,
+        ),
+        Provider.GEMINI.value: (
+            "GEMINI_API_KEY",
+            "gemini-2.0-flash",
+            "gemini",
+            "GOOGLE_API_KEY",
+        ),
+        Provider.WATSONX.value: (
+            "WATSONX_API_KEY",
+            "ibm/granite-3-8b-instruct",
+            "granite",
+            None,
+        ),
         Provider.AZURE_OPENAI.value: ("AZURE_OPENAI_API_KEY", "gpt-4o", "gpt-4o", None),
         Provider.ADVANTAGE.value: (
             "ADVANTAGE_API_KEY",

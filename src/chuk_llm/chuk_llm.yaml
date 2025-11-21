@@ -13,15 +13,15 @@ openai:
 anthropic:
   client_class: "chuk_llm.llm.providers.anthropic_client:AnthropicLLMClient"
   api_key_env: "ANTHROPIC_API_KEY"
-  api_base: "https://api.anthropic.com/v1"
-  default_model: "claude-3-5-sonnet-20241022"
+  api_base: "https://api.anthropic.com"
+  default_model: "claude-sonnet-4-5"
   models: ["*"]
 
 gemini:
   client_class: "chuk_llm.llm.providers.gemini_client:GeminiLLMClient"
   api_key_env: "GEMINI_API_KEY"
   api_base: "https://generativelanguage.googleapis.com/v1"
-  default_model: "gemini-2.5-flash"
+  default_model: "gemini-3-pro-preview"
   models: ["*"]
 
 groq:
@@ -53,6 +53,7 @@ ollama:
 watsonx:
   client_class: "chuk_llm.llm.providers.watsonx_client:WatsonxLLMClient"
   api_key_env: "WATSONX_API_KEY"
+  default_model: "ibm/granite-3-3-8b-instruct"
   models: ["*"]
 
 azure_openai:

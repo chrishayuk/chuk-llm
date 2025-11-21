@@ -23,17 +23,11 @@ class AnthropicModelSource(BaseModelSource):
     a curated list of available models.
     """
 
-    # Known Anthropic models (updated as new models are released)
-    KNOWN_MODELS = [
-        ("claude-3-5-sonnet-20241022", "claude-3"),
-        ("claude-3-5-sonnet-20240620", "claude-3"),
-        ("claude-3-5-haiku-20241022", "claude-3"),
-        ("claude-3-opus-20240229", "claude-3"),
-        ("claude-3-sonnet-20240229", "claude-3"),
-        ("claude-3-haiku-20240307", "claude-3"),
-        ("claude-2.1", "claude-2"),
-        ("claude-2.0", "claude-2"),
-    ]
+    # Note: We no longer maintain a hardcoded model list!
+    # Models are discovered dynamically via the capabilities script:
+    #   python scripts/update_capabilities.py --provider anthropic
+    #
+    # This ensures the registry stays up-to-date without code changes
 
     def __init__(self, api_key: str | None = None):
         """
@@ -46,9 +40,10 @@ class AnthropicModelSource(BaseModelSource):
 
     async def discover(self) -> list[ModelSpec]:
         """
-        Discover Anthropic models.
+        Discover Anthropic models from capabilities cache.
 
-        Returns known models if API key is available.
+        Models are discovered by running:
+            python scripts/update_capabilities.py --provider anthropic
 
         Returns:
             List of ModelSpec objects for Anthropic models
@@ -56,8 +51,26 @@ class AnthropicModelSource(BaseModelSource):
         if not self.api_key:
             return []
 
+        # Load models from capabilities YAML
+        from pathlib import Path
+
+        import yaml
+
+        capabilities_file = (
+            Path(__file__).parent.parent / "capabilities" / "anthropic.yaml"
+        )
+
+        if not capabilities_file.exists():
+            # No capabilities file - return empty list
+            # User needs to run: python scripts/update_capabilities.py --provider anthropic
+            return []
+
+        with open(capabilities_file) as f:
+            data = yaml.safe_load(f)
+
         specs = []
-        for model_name, family in self.KNOWN_MODELS:
+        for model_name, model_data in data.get("models", {}).items():
+            family = model_data.get("inherits_from")
             specs.append(
                 ModelSpec(
                     provider=Provider.ANTHROPIC.value,

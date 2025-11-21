@@ -1,45 +1,73 @@
-# ChukLLM Examples
+# chuk-llm Examples
 
-Comprehensive examples demonstrating all features of ChukLLM with modern Pydantic clients (100% migrated).
+Comprehensive examples demonstrating all features of chuk-llm with modern Pydantic-native architecture.
 
-## Quick Start
+## 🚀 Quick Start - New User Path
 
-### Test All Providers
+**Start here if you're new to chuk-llm!**
 
-Run the master test suite to verify all 12 providers work:
+### Beginner Examples (5 minutes)
+1. **[00_quick_start.py](00_quick_start.py)** - One line to ask a question
+2. **[01_basic_ask.py](01_basic_ask.py)** - Basic async and sync patterns
+3. **[02_streaming.py](02_streaming.py)** - Real-time streaming responses
 
-```bash
-python providers/run_all_providers.py
-```
+### Registry System (10 minutes) - ⭐ THE KEY DIFFERENTIATOR
+4. **[03_registry_discovery.py](03_registry_discovery.py)** - Intelligent model selection
+5. **[registry_provider_discovery.py](registry_provider_discovery.py)** - Deep dive into discovery
 
-### Test Specific Provider
+### Intermediate Examples (15 minutes)
+6. **[04_tools_basic.py](04_tools_basic.py)** - Function calling basics
+7. **[05_tools_advanced.py](05_tools_advanced.py)** - Auto-execution with Tools class
+8. **[06_conversations.py](06_conversations.py)** - Stateful conversations
 
-```bash
-python providers/run_all_providers.py --provider openai
-python providers/run_all_providers.py --provider anthropic --verbose
-```
+### Advanced Examples (20 minutes)
+9. **[07_json_mode.py](07_json_mode.py)** - Structured outputs and data extraction
+10. **[08_multimodal.py](08_multimodal.py)** - Vision and image understanding
 
 ## Directory Structure
 
 ```
 examples/
 ├── README.md                                   # This file
-├── providers/                                  # Provider-specific examples ⭐
-│   ├── run_all_providers.py                   # Master test runner for all 12 providers
-│   ├── openai_chat_completions_example.py     # 🆕 OpenAI Chat Completions API
-│   ├── openai_responses_example.py            # 🆕 OpenAI Responses API (stateful)
-│   ├── openai_compatible_example.py           # 🆕 OpenAI-compatible providers
-│   ├── anthropic_usage_examples.py            # Anthropic/Claude examples
-│   ├── groq_usage_examples.py                 # Groq examples
-│   ├── deepseek_usage_examples.py             # DeepSeek examples
-│   ├── perplexity_usage_examples.py           # Perplexity examples
-│   ├── mistral_usage_examples.py              # Mistral examples
-│   ├── gemini_usage_examples.py               # Google Gemini examples
-│   ├── azure_usage_examples.py                # Azure OpenAI examples
-│   ├── advantage_usage_examples.py            # IBM Advantage examples
-│   └── watsonx_usage_examples.py              # IBM Watsonx examples
-├── basic/                                      # Simple usage patterns
-└── advanced/                                   # Complex features
+│
+├── 🆕 CORE EXAMPLES (Start Here!)
+│   ├── 00_quick_start.py                      # Simplest possible example
+│   ├── 01_basic_ask.py                        # Basic usage patterns
+│   ├── 02_streaming.py                        # Real-time streaming
+│   ├── 03_registry_discovery.py               # 🧠 Registry-based selection
+│   ├── 04_tools_basic.py                      # Tool calling basics
+│   ├── 05_tools_advanced.py                   # Auto-execution
+│   ├── 06_conversations.py                    # Stateful chatbots
+│   ├── 07_json_mode.py                        # Structured outputs
+│   ├── 08_multimodal.py                       # Vision/images
+│   └── registry_provider_discovery.py         # Registry deep dive
+│
+├── providers/                                  # Provider-specific examples
+│   ├── run_all_providers.py                   # Test all 15+ providers
+│   ├── openai_usage_examples.py               # OpenAI (GPT-5, o1, GPT-4o)
+│   ├── anthropic_usage_examples.py            # Claude 3.5
+│   ├── gemini_usage_examples.py               # Gemini 2.0
+│   ├── groq_usage_examples.py                 # Ultra-fast inference
+│   ├── mistral_usage_examples.py              # Mistral AI
+│   ├── azure_usage_examples.py                # Enterprise Azure
+│   ├── watsonx_usage_examples.py              # IBM Watsonx
+│   ├── deepseek_usage_examples.py             # DeepSeek V3
+│   ├── perplexity_usage_examples.py           # Web search + citations
+│   ├── openrouter_usage_examples.py           # 100+ models via one API
+│   ├── openai_chat_completions_example.py     # Chat completions format
+│   ├── openai_responses_example.py            # Responses API (stateful)
+│   └── openai_compatible_example.py           # OpenAI-compatible providers
+│
+└── (legacy examples preserved for reference)
+```
+
+## Test All Providers
+
+Run the master test suite to verify all providers work:
+
+```bash
+python providers/run_all_providers.py
+python providers/run_all_providers.py --provider openai --verbose
 ```
 
 ## OpenAI Examples Overview 🆕

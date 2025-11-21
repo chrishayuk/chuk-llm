@@ -66,7 +66,8 @@ class OpenAICompatibleSource(BaseModelSource):
         self.model_filter = model_filter
         self.family_extractor = family_extractor or self._default_family_extractor
 
-        # Get API key
+        # Get API key - declare type as str | None
+        self.api_key: str | None
         if api_key:
             self.api_key = api_key
         elif api_key_env:

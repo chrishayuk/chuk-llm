@@ -693,35 +693,6 @@ async def test_split_for_anthropic_async_multimodal(client):
 
 
 @pytest.mark.asyncio
-async def test_split_for_anthropic_async_multimodal_not_supported(client, monkeypatch):
-    """Test message splitting with multimodal content when vision is not supported."""
-    # Mock vision as not supported
-    monkeypatch.setattr(client, "supports_feature", lambda feature: feature != "vision")
-
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Look at this"},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": "data:image/png;base64,..."},
-                },
-            ],
-        }
-    ]
-
-    system_txt, anthropic_messages = await client._split_for_anthropic_async(messages)
-
-    assert system_txt == ""
-    assert len(anthropic_messages) == 1
-    # Should only contain text content when vision not supported
-    content = anthropic_messages[0]["content"]
-    has_image = any(item.get("type") == "image" for item in content)
-    assert not has_image
-
-
-@pytest.mark.asyncio
 async def test_split_for_anthropic_async_tool_calls(client):
     """Test message splitting with tool calls."""
     messages = [
@@ -1201,24 +1172,13 @@ async def test_create_completion_streaming_not_supported(client, monkeypatch):
         client, "supports_feature", lambda feature: feature != "streaming"
     )
 
-    # Mock the regular completion method (should be called instead of streaming)
-    expected_result = {"response": "Hello!", "tool_calls": []}
-
-    async def mock_regular_completion_async(
-        system, json_instruction, messages, anth_tools, filtered_params, name_mapping
-    ):
-        return expected_result
-
-    client._regular_completion_async = mock_regular_completion_async
-
+    # With the permissive approach, we still attempt streaming even if capability check says no
+    # The API will handle unsupported cases
     result = client.create_completion(messages, stream=True)
 
-    # Should return an awaitable (not async iterator) when streaming not supported
-    assert hasattr(result, "__await__")
-    assert not hasattr(result, "__aiter__")
-
-    final_result = await result
-    assert final_result == expected_result
+    # Should return an async iterator (streaming is always attempted)
+    assert hasattr(result, "__aiter__")
+    assert not hasattr(result, "__await__")
 
 
 @pytest.mark.asyncio
@@ -1258,37 +1218,6 @@ async def test_create_completion_with_tools(client):
 
     assert result == expected_result
     assert len(result["tool_calls"]) == 1
-
-
-@pytest.mark.asyncio
-async def test_create_completion_with_tools_not_supported(client, monkeypatch):
-    """Test create_completion with tools when not supported."""
-    messages_dicts = [{"role": "user", "content": "What's the weather?"}]
-    tools = [
-        {"type": "function", "function": {"name": "get_weather", "description": "get_weather description", "parameters": {}}}
-    ]
-    # Convert dicts to Pydantic models
-    messages = [Message.model_validate(msg) for msg in messages_dicts]
-
-
-    # Mock tools as not supported
-    monkeypatch.setattr(client, "supports_feature", lambda feature: feature != "tools")
-
-    # Mock regular completion
-    expected_result = {"response": "I cannot use tools.", "tool_calls": []}
-
-    async def mock_regular_completion_async(
-        system, json_instruction, messages, anth_tools, filtered_params, name_mapping
-    ):
-        # Verify tools were not passed
-        assert len(anth_tools) == 0
-        return expected_result
-
-    client._regular_completion_async = mock_regular_completion_async
-
-    result = await client.create_completion(messages, tools=tools, stream=False)
-
-    assert result == expected_result
 
 
 @pytest.mark.asyncio

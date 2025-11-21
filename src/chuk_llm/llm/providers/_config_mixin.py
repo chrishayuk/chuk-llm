@@ -117,16 +117,21 @@ class ConfigAwareProviderMixin:
                 "max_output_tokens": model_caps.max_output_tokens,
                 # Individual capability flags for backward compatibility
                 CapabilityKey.SUPPORTS_TEXT.value: Feature.TEXT in model_caps.features,
-                CapabilityKey.SUPPORTS_STREAMING.value: Feature.STREAMING in model_caps.features,
-                CapabilityKey.SUPPORTS_TOOLS.value: Feature.TOOLS in model_caps.features,
-                CapabilityKey.SUPPORTS_VISION.value: Feature.VISION in model_caps.features,
-                CapabilityKey.SUPPORTS_JSON_MODE.value: Feature.JSON_MODE in model_caps.features,
+                CapabilityKey.SUPPORTS_STREAMING.value: Feature.STREAMING
+                in model_caps.features,
+                CapabilityKey.SUPPORTS_TOOLS.value: Feature.TOOLS
+                in model_caps.features,
+                CapabilityKey.SUPPORTS_VISION.value: Feature.VISION
+                in model_caps.features,
+                CapabilityKey.SUPPORTS_JSON_MODE.value: Feature.JSON_MODE
+                in model_caps.features,
                 CapabilityKey.SUPPORTS_SYSTEM_MESSAGES.value: Feature.SYSTEM_MESSAGES
                 in model_caps.features,
                 CapabilityKey.SUPPORTS_PARALLEL_CALLS.value: Feature.PARALLEL_CALLS
                 in model_caps.features,
                 "supports_multimodal": Feature.MULTIMODAL in model_caps.features,
-                CapabilityKey.SUPPORTS_REASONING.value: Feature.REASONING in model_caps.features,
+                CapabilityKey.SUPPORTS_REASONING.value: Feature.REASONING
+                in model_caps.features,
                 # Provider metadata
                 "rate_limits": provider_config.rate_limits,
                 "available_models": provider_config.models,

@@ -108,7 +108,11 @@ class OllamaCapabilityResolver(BaseCapabilityResolver):
         # Check for tool support from template
         # Models with tool templates support function calling
         template = data.get("template", "")
-        supports_tools = ".Tools" in template or "{{.Tools}}" in template or "tool" in template.lower()
+        supports_tools = (
+            ".Tools" in template
+            or "{{.Tools}}" in template
+            or "tool" in template.lower()
+        )
 
         # Check for JSON mode support (some models have it in template)
         supports_json_mode = "json" in template.lower()

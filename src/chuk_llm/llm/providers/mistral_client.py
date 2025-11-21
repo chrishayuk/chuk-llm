@@ -161,208 +161,175 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
             # Handle different message types
             if role == MessageRole.SYSTEM.value:
                 # Always try system messages - let API handle if not supported
-                mistral_messages.append({"role": MessageRole.SYSTEM.value, "content": content})
+                mistral_messages.append(
+                    {"role": MessageRole.SYSTEM.value, "content": content}
+                )
 
             elif role == MessageRole.USER.value:
                 if isinstance(content, str):
                     # Simple text message
-                    mistral_messages.append({"role": MessageRole.USER.value, "content": content})
+                    mistral_messages.append(
+                        {"role": MessageRole.USER.value, "content": content}
+                    )
                 elif isinstance(content, list):
-                    # Multimodal message (text + images) - both dict and Pydantic
-                    # Check if vision is supported before processing (both formats)
-                    has_images = any(
-                        (isinstance(item, dict) and item.get("type") == ContentType.IMAGE_URL.value)
-                        or (
-                            hasattr(item, "type")
-                            and item.type
-                            in [ContentType.IMAGE_URL, ContentType.IMAGE_DATA]
-                        )
-                        for item in content
+                    # Permissive approach: Process all multimodal content (text, vision, audio)
+                    # Let Mistral API handle unsupported cases rather than filtering
+                    # Process multimodal content normally (both dict and Pydantic)
+                    mistral_content = []
+                    for item in content:
+                        if isinstance(item, dict):
+                            # Dict-based content
+                            if item.get("type") == ContentType.TEXT.value:
+                                mistral_content.append(
+                                    {
+                                        "type": ContentType.TEXT.value,
+                                        "text": item.get("text", ""),
+                                    }
+                                )
+                            elif item.get("type") == ContentType.IMAGE_URL.value:
+                                image_url = item.get("image_url", {})
+                                url = (
+                                    image_url.get("url", "")
+                                    if isinstance(image_url, dict)
+                                    else str(image_url)
+                                )
+
+                                # Download HTTP(S) URLs and convert to base64
+                                if url.startswith(("http://", "https://")):
+                                    try:
+                                        log.debug(
+                                            f"Downloading image from URL for Mistral: {url[:100]}..."
+                                        )
+                                        (
+                                            encoded_data,
+                                            image_format,
+                                        ) = await OpenAIStyleMixin._download_and_encode_image(
+                                            url
+                                        )
+                                        url = f"data:image/{image_format};base64,{encoded_data}"
+                                        log.debug(
+                                            "Image downloaded and encoded successfully"
+                                        )
+                                    except Exception as e:
+                                        log.error(
+                                            f"Failed to download image from {url}: {e}"
+                                        )
+                                        # Keep original URL and let Mistral handle the error
+
+                                mistral_content.append(
+                                    {
+                                        "type": ContentType.IMAGE_URL.value,
+                                        "image_url": url,
+                                    }
+                                )
+                        else:
+                            # Pydantic object-based content
+                            if hasattr(item, "type") and item.type == ContentType.TEXT:
+                                mistral_content.append(
+                                    {
+                                        "type": ContentType.TEXT.value,
+                                        "text": item.text,
+                                    }
+                                )
+                            elif (
+                                hasattr(item, "type")
+                                and item.type == ContentType.IMAGE_URL
+                            ):
+                                image_url_data = item.image_url
+                                url = (
+                                    image_url_data.get("url")
+                                    if isinstance(image_url_data, dict)
+                                    else image_url_data
+                                )
+
+                                # Download HTTP(S) URLs and convert to base64
+                                if url and url.startswith(("http://", "https://")):
+                                    try:
+                                        log.debug(
+                                            f"Downloading image from URL for Mistral: {url[:100]}..."
+                                        )
+                                        (
+                                            encoded_data,
+                                            image_format,
+                                        ) = await OpenAIStyleMixin._download_and_encode_image(
+                                            url
+                                        )
+                                        url = f"data:image/{image_format};base64,{encoded_data}"
+                                        log.debug(
+                                            "Image downloaded and encoded successfully"
+                                        )
+                                    except Exception as e:
+                                        log.error(
+                                            f"Failed to download image from {url}: {e}"
+                                        )
+                                        # Keep original URL and let Mistral handle the error
+
+                                mistral_content.append(
+                                    {
+                                        "type": ContentType.IMAGE_URL.value,
+                                        "image_url": url,
+                                    }
+                                )
+
+                    mistral_messages.append(
+                        {"role": MessageRole.USER.value, "content": mistral_content}
                     )
 
-                    if has_images and not self.supports_feature("vision"):
-                        log.debug(
-                            f"Vision content detected but {self.model} doesn't support vision - trying anyway"
-                        )
-                        # Extract only text content from both formats
-                        text_parts = []
-                        for item in content:
-                            if isinstance(item, dict) and item.get("type") == ContentType.TEXT.value:
-                                text_parts.append(item.get("text", ""))
-                            elif (
-                                hasattr(item, "type") and item.type == ContentType.TEXT
-                            ):
-                                text_parts.append(item.text)
-
-                        mistral_messages.append(
-                            {
-                                "role": MessageRole.USER.value,
-                                "content": " ".join(text_parts)
-                                or "[Image content removed - not supported by model]",
-                            }
-                        )
-                    else:
-                        # Process multimodal content normally (both dict and Pydantic)
-                        mistral_content = []
-                        for item in content:
-                            if isinstance(item, dict):
-                                # Dict-based content
-                                if item.get("type") == ContentType.TEXT.value:
-                                    mistral_content.append(
-                                        {"type": ContentType.TEXT.value, "text": item.get("text", "")}
-                                    )
-                                elif item.get("type") == ContentType.IMAGE_URL.value:
-                                    image_url = item.get("image_url", {})
-                                    url = (
-                                        image_url.get("url", "")
-                                        if isinstance(image_url, dict)
-                                        else str(image_url)
-                                    )
-
-                                    # Download HTTP(S) URLs and convert to base64
-                                    if url.startswith(("http://", "https://")):
-                                        try:
-                                            log.debug(
-                                                f"Downloading image from URL for Mistral: {url[:100]}..."
-                                            )
-                                            (
-                                                encoded_data,
-                                                image_format,
-                                            ) = await OpenAIStyleMixin._download_and_encode_image(
-                                                url
-                                            )
-                                            url = f"data:image/{image_format};base64,{encoded_data}"
-                                            log.debug(
-                                                "Image downloaded and encoded successfully"
-                                            )
-                                        except Exception as e:
-                                            log.error(
-                                                f"Failed to download image from {url}: {e}"
-                                            )
-                                            # Keep original URL and let Mistral handle the error
-
-                                    mistral_content.append(
-                                        {"type": ContentType.IMAGE_URL.value, "image_url": url}
-                                    )
-                            else:
-                                # Pydantic object-based content
-                                if (
-                                    hasattr(item, "type")
-                                    and item.type == ContentType.TEXT
-                                ):
-                                    mistral_content.append(
-                                        {"type": ContentType.TEXT.value, "text": item.text}
-                                    )
-                                elif (
-                                    hasattr(item, "type")
-                                    and item.type == ContentType.IMAGE_URL
-                                ):
-                                    image_url_data = item.image_url
-                                    url = (
-                                        image_url_data.get("url")
-                                        if isinstance(image_url_data, dict)
-                                        else image_url_data
-                                    )
-
-                                    # Download HTTP(S) URLs and convert to base64
-                                    if url and url.startswith(("http://", "https://")):
-                                        try:
-                                            log.debug(
-                                                f"Downloading image from URL for Mistral: {url[:100]}..."
-                                            )
-                                            (
-                                                encoded_data,
-                                                image_format,
-                                            ) = await OpenAIStyleMixin._download_and_encode_image(
-                                                url
-                                            )
-                                            url = f"data:image/{image_format};base64,{encoded_data}"
-                                            log.debug(
-                                                "Image downloaded and encoded successfully"
-                                            )
-                                        except Exception as e:
-                                            log.error(
-                                                f"Failed to download image from {url}: {e}"
-                                            )
-                                            # Keep original URL and let Mistral handle the error
-
-                                    mistral_content.append(
-                                        {"type": ContentType.IMAGE_URL.value, "image_url": url}
-                                    )
-
-                        mistral_messages.append(
-                            {"role": MessageRole.USER.value, "content": mistral_content}
-                        )
-
             elif role == MessageRole.ASSISTANT.value:
-                # Handle assistant messages with potential tool calls
+                # Handle assistant messages with potential tool calls - permissive approach
                 if msg.get("tool_calls"):
-                    # Check if tools are supported
-                    if self.supports_feature("tools"):
-                        # Convert tool calls to Mistral format
-                        # IMPORTANT: Sanitize tool names in conversation history
-                        tool_calls = []
-                        for tc in msg["tool_calls"]:
-                            original_name = tc["function"]["name"]
+                    # Convert tool calls to Mistral format
+                    # IMPORTANT: Sanitize tool names in conversation history
+                    tool_calls = []
+                    for tc in msg["tool_calls"]:
+                        original_name = tc["function"]["name"]
 
-                            # Apply sanitization to tool names in conversation history
-                            from chuk_llm.llm.providers._tool_compatibility import (
-                                ToolNameSanitizer,
-                            )
+                        # Apply sanitization to tool names in conversation history
+                        # Use inherited sanitizer from ToolCompatibilityMixin
+                        sanitized_name = self._sanitizer.sanitize_for_provider(
+                            original_name, self.provider_name
+                        )
 
-                            sanitizer = ToolNameSanitizer()
-                            sanitized_name = sanitizer.sanitize_for_provider(
-                                original_name, "mistral"
-                            )
-
-                            tool_calls.append(
-                                {
-                                    "id": tc.get("id"),
-                                    "type": tc.get("type", MessageRole.FUNCTION.value),
-                                    "function": {
-                                        "name": sanitized_name,  # Use sanitized name for API
-                                        "arguments": tc["function"]["arguments"],
-                                    },
-                                }
-                            )
-
-                        mistral_messages.append(
+                        tool_calls.append(
                             {
-                                "role": MessageRole.ASSISTANT.value,
-                                "content": content or "",
-                                "tool_calls": tool_calls,
+                                "id": tc.get("id"),
+                                "type": tc.get("type", MessageRole.FUNCTION.value),
+                                "function": {
+                                    "name": sanitized_name,  # Use sanitized name for API
+                                    "arguments": tc["function"]["arguments"],
+                                },
                             }
                         )
-                    else:
-                        log.warning(
-                            f"Tool calls detected but {self.model} doesn't support tools according to configuration"
-                        )
-                        # Convert to text response
-                        tool_text = f"{content or ''}\n\nNote: Tool calls were requested but not supported by this model."
-                        mistral_messages.append(
-                            {"role": MessageRole.ASSISTANT.value, "content": tool_text}
-                        )
+
+                    mistral_messages.append(
+                        {
+                            "role": MessageRole.ASSISTANT.value,
+                            "content": content or "",
+                            "tool_calls": tool_calls,
+                        }
+                    )
                 else:
                     mistral_messages.append(
                         {"role": MessageRole.ASSISTANT.value, "content": content or ""}
                     )
 
             elif role == MessageRole.TOOL.value:
-                # Tool response messages - only include if tools are supported
-                if self.supports_feature("tools"):
-                    mistral_messages.append(
-                        {
-                            "role": MessageRole.TOOL.value,
-                            "name": msg.get("name", ""),
-                            "content": content or "",
-                            "tool_call_id": msg.get("tool_call_id", ""),
-                        }
-                    )
-                else:
-                    # Convert tool response to user message
-                    mistral_messages.append(
-                        {"role": MessageRole.USER.value, "content": f"Tool result: {content or ''}"}
-                    )
+                # Tool response messages - permissive approach
+                # IMPORTANT: Sanitize tool name to match what was sent in assistant message
+                original_name = msg.get("name", "")
+                # Use inherited sanitizer from ToolCompatibilityMixin
+                sanitized_name = self._sanitizer.sanitize_for_provider(
+                    original_name, self.provider_name
+                )
+
+                mistral_messages.append(
+                    {
+                        "role": MessageRole.TOOL.value,
+                        "name": sanitized_name,  # Use sanitized name
+                        "content": content or "",
+                        "tool_call_id": msg.get("tool_call_id", ""),
+                    }
+                )
 
         return mistral_messages
 
@@ -378,26 +345,20 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
             content = getattr(message, "content", "") or ""
             tool_calls = []
 
-            # Extract tool calls if present and supported
+            # Extract tool calls if present - permissive approach
             if hasattr(message, "tool_calls") and message.tool_calls:
-                if self.supports_feature("tools"):
-                    from chuk_llm.core.enums import ToolType
+                from chuk_llm.core.enums import ToolType
 
-                    for tc in message.tool_calls:
-                        tool_calls.append(
-                            {
-                                "id": tc.id,
-                                "type": ToolType.FUNCTION,  # Always use enum value
-                                "function": {
-                                    "name": tc.function.name,
-                                    "arguments": tc.function.arguments,
-                                },
-                            }
-                        )
-                else:
-                    # If tools aren't supported but we got tool calls, log warning
-                    log.warning(
-                        f"Received tool calls from {self.model} but tools not supported according to configuration"
+                for tc in message.tool_calls:
+                    tool_calls.append(
+                        {
+                            "id": tc.id,
+                            "type": ToolType.FUNCTION,  # Always use enum value
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments,
+                            },
+                        }
                     )
 
             # Extract usage information if present
@@ -458,35 +419,12 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
         validated_stream = stream
         validated_kwargs = kwargs.copy()
 
-        # Check streaming support
-        if stream and not self.supports_feature("streaming"):
-            log.debug(
-                f"Streaming requested but {self.model} doesn't support streaming - trying anyway"
-            )
-            validated_stream = False
+        # Permissive approach: Let API handle streaming support
+        # Don't block based on capability checks
 
-        # Check tool support
-        if tools and not self.supports_feature("tools"):
-            log.debug(
-                f"Tools provided but {self.model} doesn't support tools - trying anyway"
-            )
-            validated_tools = None
-            # Remove tool-related parameters
-            validated_kwargs.pop("tool_choice", None)
-
-        # Check vision support (will be handled in message conversion)
-        has_vision = any(
-            isinstance(msg.get("content"), list)
-            and any(
-                isinstance(item, dict) and item.get("type") == ContentType.IMAGE_URL.value
-                for item in msg.get("content", [])
-            )
-            for msg in messages
-        )
-        if has_vision and not self.supports_feature("vision"):
-            log.info(
-                f"Vision content will be filtered - {self.model} doesn't support vision according to configuration"
-            )
+        # Permissive approach: Let Mistral API handle tool support
+        # Don't block based on capability checks
+        # Permissive approach: Pass all content to API (vision, audio, etc.)
 
         # Validate parameters using configuration
         validated_kwargs = self.validate_parameters(**validated_kwargs)
@@ -539,6 +477,7 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
         )
 
         # Apply universal tool name sanitization (stores mapping for restoration)
+        # Keep tools as Pydantic objects throughout
         name_mapping = {}
         if validated_tools:
             validated_tools = self._sanitize_tool_names(validated_tools)
@@ -591,6 +530,10 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
             request_params["messages"] = await self._convert_messages_to_mistral_format(
                 request_params["messages"]
             )
+
+            # Convert tools to dicts only at this final step (Pydantic-native until SDK call)
+            if "tools" in request_params and request_params["tools"]:
+                request_params["tools"] = self._tools_to_dicts(request_params["tools"])
 
             # Use Mistral's streaming endpoint
             stream = self.client.chat.stream(**request_params)
@@ -785,6 +728,10 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
             request_params["messages"] = await self._convert_messages_to_mistral_format(
                 request_params["messages"]
             )
+
+            # Convert tools to dicts only at this final step (Pydantic-native until SDK call)
+            if "tools" in request_params and request_params["tools"]:
+                request_params["tools"] = self._tools_to_dicts(request_params["tools"])
 
             def _sync_completion():
                 return self.client.chat.complete(**request_params)

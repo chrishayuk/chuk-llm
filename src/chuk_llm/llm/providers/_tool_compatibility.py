@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from chuk_llm.core.enums import Provider
+
 log = logging.getLogger(__name__)
 
 
@@ -87,7 +89,7 @@ class ProviderToolRequirements:
 
 # Provider-specific requirements
 PROVIDER_REQUIREMENTS = {
-    "mistral": ProviderToolRequirements(
+    Provider.MISTRAL.value: ProviderToolRequirements(
         pattern=r"^[a-zA-Z0-9_-]{1,64}$",
         max_length=64,
         compatibility_level=CompatibilityLevel.SANITIZED,
@@ -123,7 +125,7 @@ PROVIDER_REQUIREMENTS = {
             "~",
         },
     ),
-    "anthropic": ProviderToolRequirements(
+    Provider.ANTHROPIC.value: ProviderToolRequirements(
         pattern=r"^[a-zA-Z0-9_-]{1,128}$",
         max_length=128,
         compatibility_level=CompatibilityLevel.SANITIZED,
@@ -160,7 +162,7 @@ PROVIDER_REQUIREMENTS = {
         },
     ),
     # OpenAI actually requires sanitization - dots and colons are forbidden
-    "openai": ProviderToolRequirements(
+    Provider.OPENAI.value: ProviderToolRequirements(
         pattern=r"^[a-zA-Z0-9_-]{1,64}$",  # Same as Mistral - no dots or colons
         max_length=64,
         compatibility_level=CompatibilityLevel.SANITIZED,  # CHANGED from NATIVE to SANITIZED
@@ -197,7 +199,7 @@ PROVIDER_REQUIREMENTS = {
         },
     ),
     # Azure OpenAI should match OpenAI requirements
-    "azure_openai": ProviderToolRequirements(
+    Provider.AZURE_OPENAI.value: ProviderToolRequirements(
         pattern=r"^[a-zA-Z0-9_-]{1,64}$",  # Same as OpenAI
         max_length=64,
         compatibility_level=CompatibilityLevel.SANITIZED,  # CHANGED from NATIVE to SANITIZED
@@ -233,7 +235,7 @@ PROVIDER_REQUIREMENTS = {
             "~",
         },
     ),
-    "gemini": ProviderToolRequirements(
+    Provider.GEMINI.value: ProviderToolRequirements(
         pattern=r"^[a-zA-Z0-9_-]{1,64}$",
         max_length=64,
         compatibility_level=CompatibilityLevel.SANITIZED,
@@ -269,7 +271,7 @@ PROVIDER_REQUIREMENTS = {
             "~",
         },
     ),
-    "groq": ProviderToolRequirements(
+    Provider.GROQ.value: ProviderToolRequirements(
         pattern=r"^[a-zA-Z0-9_-]{1,64}$",
         max_length=64,
         compatibility_level=CompatibilityLevel.SANITIZED,
@@ -305,7 +307,7 @@ PROVIDER_REQUIREMENTS = {
             "~",
         },
     ),
-    "watsonx": ProviderToolRequirements(
+    Provider.WATSONX.value: ProviderToolRequirements(
         pattern=r"^[a-zA-Z0-9_-]{1,64}$",
         max_length=64,
         compatibility_level=CompatibilityLevel.ENTERPRISE,
@@ -341,7 +343,7 @@ PROVIDER_REQUIREMENTS = {
             "~",
         },
     ),
-    "ollama": ProviderToolRequirements(
+    Provider.OLLAMA.value: ProviderToolRequirements(
         pattern=r"^[a-zA-Z0-9_.-]{1,64}$",
         max_length=64,
         compatibility_level=CompatibilityLevel.NATIVE,  # Local deployment, usually flexible
@@ -427,7 +429,7 @@ class ToolNameSanitizer:
             return "unnamed_function"
 
         requirements = PROVIDER_REQUIREMENTS.get(
-            provider, PROVIDER_REQUIREMENTS["mistral"]
+            provider, PROVIDER_REQUIREMENTS[Provider.MISTRAL.value]
         )
 
         # For native providers, do minimal sanitization
@@ -569,7 +571,7 @@ class ToolCompatibilityMixin:
     def get_tool_requirements(self) -> ProviderToolRequirements:
         """Get tool naming requirements for this provider"""
         return PROVIDER_REQUIREMENTS.get(
-            self.provider_name, PROVIDER_REQUIREMENTS["mistral"]
+            self.provider_name, PROVIDER_REQUIREMENTS[Provider.MISTRAL.value]
         )
 
     def get_tool_compatibility_info(self) -> dict[str, Any]:
@@ -652,10 +654,17 @@ class ToolCompatibilityMixin:
         # Auto-convert dicts to Pydantic models using model_validate
         from chuk_llm.core.models import Tool as ToolModel
 
-        pydantic_tools = [
-            tool if isinstance(tool, ToolModel) else ToolModel.model_validate(tool)
-            for tool in tools
-        ]
+        pydantic_tools = []
+        for tool in tools:
+            if isinstance(tool, ToolModel):
+                pydantic_tools.append(tool)
+            else:
+                try:
+                    pydantic_tools.append(ToolModel.model_validate(tool))
+                except Exception as e:
+                    # Skip malformed tools with a warning
+                    log.warning(f"[{self.provider_name}] Skipping malformed tool: {e}")
+                    continue
 
         sanitized_tools, self._current_name_mapping = self._sanitize_tools_with_mapping(
             pydantic_tools
@@ -814,6 +823,40 @@ class ToolCompatibilityMixin:
                     issues.append(f"  Suggested: '{sanitized}'")
 
         return all_valid, issues
+
+    @staticmethod
+    def _tools_to_dicts(tools: list[Any] | None) -> list[dict[str, Any]] | None:
+        """
+        Convert Pydantic Tool objects to dicts for provider SDK calls.
+
+        This is the ONLY place where tools should be converted to dicts -
+        right before calling the provider SDK. Keep tools as Pydantic objects
+        throughout the internal pipeline for type safety and consistency.
+
+        Args:
+            tools: List of Tool objects (Pydantic) or None
+
+        Returns:
+            List of tool dicts or None
+        """
+        if not tools:
+            return tools
+
+        result = []
+        for tool in tools:
+            if hasattr(tool, "model_dump"):
+                # Pydantic v2
+                result.append(tool.model_dump())
+            elif hasattr(tool, "to_dict"):
+                # Custom to_dict method
+                result.append(tool.to_dict())
+            elif hasattr(tool, "dict"):
+                # Pydantic v1 (backward compatibility)
+                result.append(tool.dict())
+            else:
+                # Already a dict
+                result.append(tool)
+        return result
 
 
 # Comprehensive test framework

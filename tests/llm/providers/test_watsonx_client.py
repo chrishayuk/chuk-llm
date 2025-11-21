@@ -350,6 +350,12 @@ def client(mock_configuration, mock_env, monkeypatch):
         "text", "streaming", "tools", "system_messages", "json_mode", "reasoning"
     ]
 
+    # Mock validate_parameters to avoid issues with mocked configuration
+    cl.validate_parameters = lambda **kwargs: kwargs
+
+    # Mock _sanitize_tool_names - passthrough that returns tools unchanged
+    cl._sanitize_tool_names = lambda tools: tools
+
     # Initialize empty name mapping
     cl._current_name_mapping = {}
 
@@ -1658,33 +1664,6 @@ def test_format_messages_system_not_supported(client, monkeypatch):
     assert "System:" in formatted[0]["content"]
 
 
-def test_format_messages_tools_not_supported(client, monkeypatch):
-    """Test formatting tool messages when tools not supported."""
-    monkeypatch.setattr(client, "supports_feature", lambda feature: feature != "tools")
-
-    messages = [
-        {"role": "user", "content": "What's the weather?"},
-        {
-            "role": "assistant",
-            "tool_calls": [
-                {
-                    "id": "call_123",
-                    "type": "function",
-                    "function": {"name": "get_weather", "arguments": "{}"},
-                }
-            ],
-        },
-        {"role": "tool", "tool_call_id": "call_123", "content": "Sunny, 75°F"},
-    ]
-
-    formatted = client._format_messages_for_watsonx(messages)
-
-    # Tool calls should be converted to text
-    assert len(formatted) == 3
-    assert "Tool calls were requested but not supported" in formatted[1]["content"]
-    assert formatted[2]["role"] == "user"  # Tool response converted to user
-
-
 def test_format_messages_string_content_variants(client):
     """Test formatting messages with string content variants."""
     messages = [
@@ -2426,43 +2405,6 @@ def test_validate_request_with_config_comprehensive(client, monkeypatch):
     assert validated_kwargs["temperature"] == 0.8
 
 
-def test_validate_request_vision_content_warning(client, monkeypatch, caplog):
-    """Test validation warning for vision content when not supported."""
-    monkeypatch.setattr(client, "supports_feature", lambda feature: feature != "vision")
-
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "What's in this image?"},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": "data:image/png;base64,abc"},
-                },
-            ],
-        }
-    ]
-
-    with caplog.at_level(logging.WARNING):
-        client._validate_request_with_config(messages, None, False)
-
-    assert "vision" in caplog.text.lower()
-
-
-def test_validate_request_multimodal_info_logging(client, monkeypatch, caplog):
-    """Test validation info logging for multimodal content."""
-    monkeypatch.setattr(
-        client, "supports_feature", lambda feature: feature != "multimodal"
-    )
-
-    messages = [{"role": "user", "content": [{"type": "text", "text": "Hello"}]}]
-
-    with caplog.at_level(logging.INFO):
-        client._validate_request_with_config(messages, None, False)
-
-    assert "multimodal" in caplog.text.lower()
-
-
 # ---------------------------------------------------------------------------
 # Error scenarios and edge cases
 # ---------------------------------------------------------------------------
@@ -3009,7 +2951,16 @@ async def test_streaming_with_granite_template_integration(client):
     )
 
     messages = [{"role": "user", "content": "Hello"}]
-    tools = [{"function": {"name": "test_tool"}}]
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "test_tool",
+                "description": "Test tool",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
 
     # Mock the streaming response for template-based generation
     def mock_template_stream():

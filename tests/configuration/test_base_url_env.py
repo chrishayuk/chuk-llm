@@ -313,12 +313,12 @@ class TestBaseURLIntegration:
         """Test that gateway providers support environment base URLs."""
         config = get_config()
 
-        # Test gateway providers
+        # Test gateway providers that actually exist in config
         gateways = [
-            ("litellm", "LITELLM_API_BASE", "http://custom-litellm:4000"),
             ("openrouter", "OPENROUTER_API_BASE", "https://custom-router.ai/v1"),
-            ("vllm", "VLLM_API_BASE", "http://gpu-cluster:8000/v1"),
-            ("togetherai", "TOGETHERAI_API_BASE", "https://custom-together.ai/v1"),
+            ("openai_compatible", "OPENAI_COMPATIBLE_API_BASE", "http://custom-openai:8000/v1"),
+            ("ollama", "OLLAMA_API_BASE", "http://gpu-cluster:11434/v1"),
+            ("groq", "GROQ_API_BASE", "https://custom-groq.com/v1"),
         ]
 
         for provider_name, env_var, test_url in gateways:

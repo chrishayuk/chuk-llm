@@ -34,7 +34,7 @@ from typing import Any
 import openai
 
 from chuk_llm.configuration import get_config
-from chuk_llm.core.enums import ContentType, MessageRole
+from chuk_llm.core.enums import MessageRole
 
 # base
 from chuk_llm.llm.core.base import BaseLLMClient
@@ -118,10 +118,14 @@ class OpenAILLMClient(
         as a boolean value for all function definitions.
         """
         from chuk_llm.core.enums import ToolType
+
         modified_tools = []
         for tool in tools:
             tool_copy = tool.copy()
-            if tool_copy.get("type") == ToolType.FUNCTION.value and "function" in tool_copy:
+            if (
+                tool_copy.get("type") == ToolType.FUNCTION.value
+                and "function" in tool_copy
+            ):
                 # Make a copy of the function dict to avoid modifying the original
                 func_copy = tool_copy["function"].copy()
                 if "strict" not in func_copy:
@@ -140,7 +144,7 @@ class OpenAILLMClient(
     @staticmethod
     def _get_smart_default_features(model_name: str) -> set[str]:
         """Get smart default features for an OpenAI model based on naming patterns"""
-        model_lower = model_name.lower()
+        model_lower = str(model_name).lower()
 
         # Base features that ALL modern OpenAI models should have
         base_features = {"text", "streaming", "system_messages"}
@@ -180,7 +184,7 @@ class OpenAILLMClient(
     @staticmethod
     def _get_smart_default_parameters(model_name: str) -> dict[str, Any]:
         """Get smart default parameters for an OpenAI model"""
-        model_lower = model_name.lower()
+        model_lower = str(model_name).lower()
 
         # Reasoning model parameter handling
         if any(pattern in model_lower for pattern in ["o1", "o3", "o4", "o5", "gpt-5"]):
@@ -278,7 +282,7 @@ class OpenAILLMClient(
 
     def _is_reasoning_model(self, model_name: str) -> bool:
         """Check if model is a reasoning model that needs special parameter handling"""
-        model_lower = model_name.lower()
+        model_lower = str(model_name).lower()
 
         # Check for O-series reasoning models (o1, o3, o4, o5)
         if any(pattern in model_lower for pattern in ["o1-", "o3-", "o4-", "o5-"]):
@@ -294,7 +298,7 @@ class OpenAILLMClient(
 
     def _get_reasoning_model_generation(self, model_name: str) -> str:
         """Get reasoning model generation (o1, o3, o4, o5, gpt5)"""
-        model_lower = model_name.lower()
+        model_lower = str(model_name).lower()
         if "o1" in model_lower:
             return "o1"
         elif "o3" in model_lower:
@@ -589,11 +593,20 @@ class OpenAILLMClient(
             except Exception as e:
                 log.debug(f"Message wrapper access failed: {e}")
 
-        # Try dict access
+        # Try dict access with Pydantic validation
         if content is None:
             try:
-                if isinstance(msg, dict) and "content" in msg:
-                    content = msg["content"]
+                if isinstance(msg, dict):
+                    from chuk_llm.core import Message
+
+                    # Try to validate as Pydantic Message
+                    try:
+                        validated_msg = Message.model_validate(msg)
+                        content = validated_msg.content
+                    except Exception:
+                        # Fallback to direct dict access if validation fails
+                        if "content" in msg:
+                            content = msg["content"]
             except Exception as e:
                 log.debug(f"Dict content access failed: {e}")
 
@@ -610,7 +623,15 @@ class OpenAILLMClient(
             ):
                 raw_tool_calls = msg.message.tool_calls
             elif isinstance(msg, dict) and msg.get("tool_calls"):
-                raw_tool_calls = msg["tool_calls"]
+                # Try Pydantic validation first
+                from chuk_llm.core import Message
+
+                try:
+                    validated_msg = Message.model_validate(msg)
+                    raw_tool_calls = validated_msg.tool_calls
+                except Exception:
+                    # Fallback to dict access
+                    raw_tool_calls = msg["tool_calls"]
 
             if raw_tool_calls:
                 for tc in raw_tool_calls:
@@ -637,6 +658,7 @@ class OpenAILLMClient(
                                 args_j = "{}"
 
                             from chuk_llm.core.enums import ToolType
+
                             tool_calls.append(
                                 {
                                     "id": tc_id,
@@ -823,6 +845,7 @@ class OpenAILLMClient(
                                                     from chuk_llm.core.enums import (
                                                         ToolType,
                                                     )
+
                                                     completed_tool_calls.append(
                                                         {
                                                             "id": tool_call_data["id"],
@@ -932,19 +955,8 @@ class OpenAILLMClient(
                 # Log when using smart defaults for tool support
                 log.info(f"Using smart default: assuming {self.model} supports tools")
 
-        # Check vision support
-        has_vision = any(
-            isinstance(msg.get("content"), list)
-            and any(
-                isinstance(item, dict) and item.get("type") == ContentType.IMAGE_URL.value
-                for item in msg.get("content", [])
-            )
-            for msg in messages
-        )
-        if has_vision and not self.supports_feature("vision"):
-            log.debug(
-                f"Vision content detected but {self.detected_provider}/{self.model} doesn't support vision - trying anyway"
-            )
+        # Permissive approach: Pass all content to API (vision, audio, etc.)
+        # Let OpenAI API handle unsupported cases
 
         # Check JSON mode
         if kwargs.get("response_format", {}).get("type") == "json_object":

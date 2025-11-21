@@ -1,6 +1,6 @@
 # chuk-llm
 
-**One library, all LLMs.** Production-ready Python library with automatic model discovery, real-time streaming, and zero-config session tracking.
+**The intelligent model capability engine.** Production-ready Python library with dynamic model discovery, capability-based selection, real-time streaming, and Pydantic-native architecture.
 
 ```python
 from chuk_llm import quick_question
@@ -9,25 +9,32 @@ print(quick_question("What is 2+2?"))  # "2 + 2 equals 4."
 
 ## ✨ What's New in v0.12.7
 
-**Major Performance Improvements:**
-- ⚡ **52x faster imports** - Lazy loading reduces import time from 735ms to 14ms
-- 🚀 **112x faster client creation** - Automatic thread-safe caching for repeated operations
-- 🏎️ **2x faster initialization** - Async-native architecture eliminates duplicate clients
-- 📊 **<0.015% overhead** - Total library overhead is negligible compared to API latency
-- 🔒 **Session isolation** - Guaranteed conversation state isolation with stateless clients
-- 🎯 **Pydantic V2** - Modern type-safe models with improved validation
+**Revolutionary Registry System:**
+- 🧠 **Dynamic Model Discovery** - No more hardcoded model lists, automatic capability detection
+- 🎯 **Intelligent Selection** - Find models by capabilities, cost, and quality tier
+- 🔍 **Smart Queries** - `find_best(requires_tools=True, quality_tier="cheap")`
+- 🏗️ **Pydantic V2 Native** - Type-safe models throughout, no dictionary goop
+- ⚡ **Async-First Architecture** - True async/await with sync wrappers for convenience
+- 📊 **Layered Capability Resolution** - Heuristics → YAML cache → Provider APIs
+- 🚀 **Zero-Config** - Pull a new Ollama model, use it immediately
 
-See [PERFORMANCE_OPTIMIZATIONS.md](PERFORMANCE_OPTIMIZATIONS.md) and [OPTIMIZATION_SUMMARY.md](OPTIMIZATION_SUMMARY.md) for details.
+**Performance:**
+- ⚡ **52x faster imports** - Lazy loading reduces import time from 735ms to 14ms
+- 🚀 **112x faster client creation** - Automatic thread-safe caching
+- 📊 **<0.015% overhead** - Negligible library overhead vs API latency
+
+See [REGISTRY_COMPLETE.md](REGISTRY_COMPLETE.md) for architecture details.
 
 ## Why chuk-llm?
 
+- **🧠 Intelligent**: Dynamic registry selects models by capabilities, not names
 - **⚡ Lightning Fast**: 52x faster imports (14ms), 112x faster client creation (cached)
-- **🚀 Instant Setup**: Works out of the box with any LLM provider
-- **🔍 Auto-Discovery**: Detects new models automatically (especially Ollama)
-- **🛠️ Clean Tools API**: Function calling without the complexity - tools are just parameters
-- **🏎️ High Performance**: Groq achieves 526 tokens/sec vs OpenAI's 68 tokens/sec
+- **🔍 Auto-Discovery**: Pull new models, use immediately - no configuration needed
+- **🛠️ Clean Tools API**: Function calling without complexity - tools are just parameters
+- **🏗️ Type-Safe**: Pydantic V2 models throughout, no dictionary goop
+- **⚡ Async-Native**: True async/await with sync wrappers when needed
 - **📊 Built-in Analytics**: Automatic cost and usage tracking with session isolation
-- **🎯 Production-Ready**: Thread-safe client caching, connection pooling, <0.015% overhead
+- **🎯 Production-Ready**: Thread-safe caching, connection pooling, <0.015% overhead
 
 ## Quick Start
 
@@ -108,6 +115,68 @@ chuk-llm stream_ollama_mistral "Write a long story"
 chuk-llm discover ollama
 ```
 
+## 🧠 Dynamic Registry System
+
+The **registry** is the intelligent core of chuk-llm. Instead of hardcoding model names, it dynamically discovers models and their capabilities, then selects the best one for your needs.
+
+### Intelligent Model Selection
+
+```python
+from chuk_llm.registry import get_registry
+
+# Get the registry (auto-discovers all available models)
+registry = await get_registry()
+
+# Find the best cheap model with tool support
+model = await registry.find_best(
+    requires_tools=True,
+    quality_tier="cheap"
+)
+print(f"Selected: {model.spec.provider}:{model.spec.name}")
+# Selected: groq:llama-3.3-70b-versatile
+
+# Find best model for vision with large context
+model = await registry.find_best(
+    requires_vision=True,
+    min_context=128_000,
+    quality_tier="balanced"
+)
+# Returns: openai:gpt-4o-mini or gemini:gemini-2.0-flash-exp
+
+# Custom queries with multiple requirements
+from chuk_llm.registry import ModelQuery
+
+results = await registry.query(ModelQuery(
+    requires_tools=True,
+    requires_vision=True,
+    min_context=100_000,
+    max_cost_per_1m_input=2.0,
+    quality_tier="balanced"
+))
+```
+
+### How It Works
+
+**3-Tier Capability Resolution:**
+
+1. **Heuristic Resolver** - Infers capabilities from model name patterns (e.g., "gpt-4" → likely supports tools)
+2. **YAML Cache** - Tested capabilities stored in `registry/capabilities/*.yaml` for fast, reliable access
+3. **Provider APIs** - Queries provider APIs dynamically (Ollama `/api/tags`, Gemini models API, etc.)
+
+**Dynamic Discovery Sources:**
+- OpenAI `/v1/models` API
+- Anthropic known models
+- Google Gemini models API
+- Ollama `/api/tags` (local models)
+- Groq, Mistral, DeepSeek, and more
+
+**Benefits:**
+- ✅ **No hardcoded model lists** - Pull new Ollama models, use immediately
+- ✅ **Capability-based selection** - Declare requirements, not model names
+- ✅ **Cost-aware** - Find cheapest model that meets requirements
+- ✅ **Quality tiers** - BEST, BALANCED, CHEAP classification
+- ✅ **Extensible** - Add custom sources and resolvers via protocols
+
 ## Key Features
 
 ### 🔍 Automatic Model Discovery
@@ -173,21 +242,27 @@ responses = await asyncio.gather(
 
 ## Supported Providers
 
-| Provider | Models | Special Features | Status |
-|----------|--------|-----------------|--------|
-| **OpenAI** | GPT-4o, GPT-4o-mini, o1, o1-mini | Industry standard, reasoning models | ✅ Complete |
-| **Azure OpenAI** | GPT-4o, GPT-3.5 (Enterprise) | SOC2, HIPAA compliant, VNet, multi-region | ✅ Complete |
-| **Anthropic** | Claude 3.5 Sonnet, Haiku, Opus | Advanced reasoning, 200K context | ✅ Complete |
-| **Google** | Gemini 2.0 Flash, 1.5 Pro | Multimodal, vision, video | ✅ Complete |
-| **Groq** | Llama 3.3, Mixtral, Gemma | Ultra-fast (526 tokens/sec) | ✅ Complete |
-| **Ollama** | Any local model | Auto-discovery, offline, privacy | ✅ Complete |
-| **IBM watsonx** | Granite 3.3, Llama 4 | Enterprise, on-prem, compliance | ✅ Complete |
-| **Perplexity** | Sonar, Sonar Pro | Real-time web search, citations | ✅ Complete |
-| **Mistral** | Large, Medium, Small, Codestral | European sovereignty, code models | ✅ Complete |
+All providers are **dynamically discovered** via the registry system - no hardcoded model lists!
 
-All providers support:
+| Provider | Discovery Method | Special Features | Status |
+|----------|-----------------|-----------------|--------|
+| **OpenAI** | `/v1/models` API | GPT-5, o1/o3 reasoning, industry standard | ✅ Dynamic |
+| **Azure OpenAI** | Deployment config | SOC2, HIPAA compliant, VNet, multi-region | ✅ Dynamic |
+| **Anthropic** | Known models | Claude 3.5 Sonnet, advanced reasoning, 200K context | ✅ Static |
+| **Google Gemini** | Models API | Gemini 2.0 Flash, multimodal, vision, video | ✅ Dynamic |
+| **Groq** | `/v1/models` API | Llama 3.3, ultra-fast (526 tokens/sec) | ✅ Dynamic |
+| **Ollama** | `/api/tags` | Any local model, auto-discovery, offline, privacy | ✅ Dynamic |
+| **IBM watsonx** | Known models | Granite 3.3, enterprise, on-prem, compliance | ✅ Static |
+| **Perplexity** | Known models | Sonar, real-time web search, citations | ✅ Static |
+| **Mistral** | Known models | Large, Medium, Small, Codestral, European sovereignty | ✅ Static |
+| **DeepSeek** | Known models | DeepSeek V3, efficient, cost-effective | ✅ Static |
+| **OpenRouter** | Known models | Access to 100+ models via single API | ✅ Static |
+
+**Capabilities** (auto-detected by registry):
 - ✅ Streaming responses
 - ✅ Function calling / tool use
+- ✅ Vision / multimodal inputs
+- ✅ JSON mode / structured outputs
 - ✅ Async and sync interfaces
 - ✅ Automatic client caching
 - ✅ Session tracking
@@ -471,15 +546,16 @@ uv run python benchmarks/llm_benchmark.py
 
 ## Architecture
 
-ChukLLM uses a **stateless, async-native architecture** optimized for production use:
+ChukLLM uses a **registry-driven, async-native architecture** optimized for production use:
 
 ### 🏗️ Core Design Principles
 
-1. **Stateless Clients** - Clients don't store conversation history; your application manages state
-2. **Lazy Loading** - Modules load on-demand for instant imports (14ms)
-3. **Automatic Caching** - Thread-safe client registry eliminates duplicate initialization
-4. **Async-Native** - Built on asyncio with sync wrappers for convenience
-5. **Pydantic V2** - Type-safe models with validation at boundaries
+1. **Dynamic Registry** - Models discovered and selected by capabilities, not names
+2. **Pydantic V2 Native** - Type-safe models throughout, no dictionary goop
+3. **Async-First** - Built on asyncio with sync wrappers for convenience
+4. **Stateless Clients** - Clients don't store conversation history; your application manages state
+5. **Lazy Loading** - Modules load on-demand for instant imports (14ms)
+6. **Automatic Caching** - Thread-safe client registry eliminates duplicate initialization
 
 ### 🔄 Request Flow
 
@@ -538,15 +614,22 @@ See [CONVERSATION_ISOLATION.md](CONVERSATION_ISOLATION.md) for detailed architec
 
 ```
 chuk-llm/
-├── api/              # Public API (ask, stream, conversation)
+├── api/                      # Public API (ask, stream, conversation)
+├── registry/                 # ⭐ Dynamic model registry (THE BRAIN)
+│   ├── core.py              # ModelRegistry orchestrator
+│   ├── models.py            # Pydantic models (ModelSpec, ModelCapabilities)
+│   ├── sources/             # Discovery sources (OpenAI, Ollama, Gemini, etc.)
+│   └── resolvers/           # Capability resolvers (Heuristic, YAML, APIs)
+├── core/                     # Pydantic V2 models (Message, Tool, ContentPart)
+│   ├── models.py            # Core Pydantic models
+│   ├── enums.py             # Type-safe enums (Provider, Feature, etc.)
+│   └── constants.py         # Constants
 ├── llm/
-│   ├── providers/    # 9 provider implementations
-│   ├── discovery/    # Auto-discovery engine
-│   └── core/         # Base classes
-├── core/             # Pydantic models, types, JSON utils
-├── configuration/    # YAML + env config management
-├── registry/         # Model registry & capability resolution
-└── client_registry   # Thread-safe client caching
+│   ├── providers/           # 15+ provider implementations
+│   ├── client.py            # Client factory with registry integration
+│   └── features.py          # Feature detection
+├── configuration/           # Unified configuration system
+└── client_registry.py       # Thread-safe client caching
 ```
 
 ## Documentation

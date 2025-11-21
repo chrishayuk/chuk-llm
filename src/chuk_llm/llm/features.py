@@ -83,14 +83,11 @@ class ProviderAdapter:
     def enable_streaming(
         provider: str, model: str | None, kwargs: dict[str, Any]
     ) -> dict[str, Any]:
-        """Enable streaming with feature validation"""
+        """Enable streaming - let the provider handle unsupported cases"""
         kwargs = kwargs.copy()
 
-        if not ProviderAdapter.supports_feature(provider, Feature.STREAMING, model):
-            logger.warning(f"{provider}/{model} doesn't support streaming")
-            kwargs["stream"] = False
-            return kwargs
-
+        # Don't check capabilities here - models can be dynamic
+        # Let the provider itself handle streaming support
         kwargs["stream"] = True
         return kwargs
 
@@ -460,9 +457,7 @@ async def find_best_provider_for_task(
     feature_set.add(Feature.TEXT)
 
     # Find best provider
-    best_provider = CapabilityChecker.get_best_provider_for_features(
-        feature_set, exclude=set(exclude_providers)
-    )
+    best_provider = CapabilityChecker.get_best_provider_for_features(list(feature_set))
 
     if not best_provider:
         return None

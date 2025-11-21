@@ -78,6 +78,9 @@ async def main():
         "--skip-vision", action="store_true", help="Skip vision demo"
     )
     parser.add_argument(
+        "--skip-audio", action="store_true", help="Skip audio demo"
+    )
+    parser.add_argument(
         "--demo",
         type=int,
         choices=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
@@ -128,7 +131,8 @@ async def main():
             "anthropic",
             args.model,
             skip_tools=args.skip_tools,
-            skip_vision=args.skip_vision
+            skip_vision=args.skip_vision,
+            skip_audio=args.skip_audio
         )
 
     print("\n" + "=" * 70)
@@ -138,6 +142,7 @@ async def main():
     print("  - Use --demo N to run specific demo")
     print("  - Use --skip-tools to skip function calling")
     print("  - Use --skip-vision to skip vision demo")
+    print("  - Use --skip-audio to skip audio demo")
     print("=" * 70)
 
 

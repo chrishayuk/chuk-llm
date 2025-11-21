@@ -522,26 +522,6 @@ def test_validate_request_with_config(client):
     assert "logit_bias" not in validated_kwargs  # Should be removed
 
 
-def test_validate_request_unsupported_features(client):
-    """Test request validation when features are not supported."""
-    messages = [{"role": "user", "content": "Hello"}]
-    tools = [{"type": "function", "function": {"name": "test_tool"}}]
-
-    # Mock configuration to not support streaming or tools
-    client.supports_feature = lambda feature: False
-
-    validated_messages, validated_tools, validated_stream, validated_kwargs = (
-        client._validate_request_with_config(
-            messages, tools, stream=True, temperature=0.7
-        )
-    )
-
-    assert validated_messages == messages
-    assert validated_tools is None  # Should be None when not supported
-    assert validated_stream is False  # Should be False when not supported
-    assert "temperature" in validated_kwargs
-
-
 # ---------------------------------------------------------------------------
 # Message preparation tests
 # ---------------------------------------------------------------------------
@@ -612,33 +592,6 @@ def test_prepare_ollama_messages_with_vision(client):
     assert prepared[0]["role"] == "user"
     assert "images" in prepared[0]
     assert len(prepared[0]["images"]) == 1
-
-
-def test_prepare_ollama_messages_vision_not_supported(client):
-    """Test message preparation when vision is not supported."""
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Look at this"},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": "data:image/png;base64,..."},
-                },
-            ],
-        }
-    ]
-
-    # Mock no vision support
-    client.supports_feature = lambda feature: feature != "vision"
-
-    prepared = client._prepare_ollama_messages(messages)
-
-    assert len(prepared) == 1
-    assert prepared[0]["role"] == "user"
-    # Should only have text content
-    assert "Look at this" in prepared[0]["content"]
-    assert "images" not in prepared[0]
 
 
 def test_prepare_ollama_messages_multi_turn_tools(client):
@@ -1316,45 +1269,6 @@ async def test_configuration_feature_validation(client):
     # Test with tools - should be filtered out
     result = client.create_completion(messages, tools=tools, stream=True)
     assert hasattr(result, "__aiter__")  # Should still return stream
-
-
-@pytest.mark.asyncio
-async def test_unsupported_features_graceful_handling(client):
-    """Test graceful handling when features are not supported."""
-    # Mock all features as unsupported
-    client.supports_feature = lambda feature: False
-
-    messages = [
-        {"role": "system", "content": "System message"},
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Text with image"},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": "data:image/png;base64,..."},
-                },
-            ],
-        },
-    ]
-
-    tools = [{"function": {"name": "test_tool", "parameters": {}}}]
-
-    # Mock completion
-    async def mock_completion(messages, tools, **kwargs):
-        # Verify that unsupported features were handled gracefully
-        assert tools is None  # Should be None when not supported
-        return {"response": "Features handled gracefully", "tool_calls": []}
-
-    client._regular_completion = mock_completion
-
-    result = await client.create_completion(
-        messages,
-        tools=tools,
-        stream=False,  # Should be converted to False when not supported
-    )
-
-    assert result["response"] == "Features handled gracefully"
 
 
 # ---------------------------------------------------------------------------

@@ -162,6 +162,7 @@ class ResponseKey(str, Enum):
     ERROR_MESSAGE = "error_message"
     TYPE = "type"
     DATA = "data"  # For /v1/models response
+    RESULT = "result"  # For tool execution results
 
 
 # ================================================================
@@ -256,6 +257,9 @@ class ConfigKey(str, Enum):
     ACTIVE_PROVIDER = "active_provider"
     GLOBAL = "__global__"
     GLOBAL_ALIASES = "__global_aliases__"
+    SYSTEM_PROMPT = "system_prompt"
+    TEMPERATURE = "temperature"
+    MAX_TOKENS = "max_tokens"
 
 
 class CapabilityKey(str, Enum):
@@ -290,6 +294,7 @@ class ToolParam(str, Enum):
     PARAMETERS = "parameters"
     FUNCTION = "function"
     ARGUMENTS = "arguments"
+    TOOL_CALL_ID = "tool_call_id"
 
 
 # ================================================================

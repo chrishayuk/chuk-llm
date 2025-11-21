@@ -92,7 +92,9 @@ class YamlCapabilityResolver(BaseCapabilityResolver):
             if model_name == spec.name:
                 continue
             # If this model is in the same family, use as template
-            if "inherits_from" in model_data and spec.family == model_data.get("inherits_from"):
+            if "inherits_from" in model_data and spec.family == model_data.get(
+                "inherits_from"
+            ):
                 # Found a family member - use as baseline
                 return self._parse_model_capabilities(model_data)
 
@@ -113,7 +115,9 @@ class YamlCapabilityResolver(BaseCapabilityResolver):
         """
         try:
             # Convert known_params from list to set if present
-            if "known_params" in cap_data and isinstance(cap_data["known_params"], list):
+            if "known_params" in cap_data and isinstance(
+                cap_data["known_params"], list
+            ):
                 cap_data["known_params"] = set(cap_data["known_params"])
 
             # Parse quality_tier enum if it's a string

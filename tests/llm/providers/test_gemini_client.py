@@ -421,15 +421,6 @@ def test_validate_and_map_model_valid():
     assert validate_and_map_model("gemini-1.5-pro") == "gemini-1.5-pro"
 
 
-def test_validate_and_map_model_invalid():
-    """Test model validation with invalid models."""
-    with pytest.raises(ValueError) as exc_info:
-        validate_and_map_model("invalid-model")
-
-    assert "not available for provider 'gemini'" in str(exc_info.value)
-    assert "gemini-2.5-pro" in str(exc_info.value)
-
-
 # ---------------------------------------------------------------------------
 # Helper conversion functions tests
 # ---------------------------------------------------------------------------
@@ -658,12 +649,6 @@ def test_client_initialization(mock_configuration):
     """Test client initialization."""
     client = GeminiLLMClient(model="gemini-2.5-pro", api_key="test-key")
     assert client.model == "gemini-2.5-pro"
-
-
-def test_client_initialization_invalid_model():
-    """Test client initialization with invalid model."""
-    with pytest.raises(ValueError):
-        GeminiLLMClient(model="invalid-model", api_key="test-key")
 
 
 def test_get_model_info(client):
@@ -1070,39 +1055,6 @@ async def test_create_completion_streaming(client):
 
 
 @pytest.mark.asyncio
-async def test_create_completion_streaming_not_supported(client, monkeypatch):
-    """Test create_completion with streaming when not supported."""
-    messages_dicts = [{"role": "user", "content": "Hello"}]
-    # Convert dicts to Pydantic models
-    messages = [Message.model_validate(msg) for msg in messages_dicts]
-
-
-    # Mock streaming as not supported
-    monkeypatch.setattr(
-        client, "supports_feature", lambda feature: feature != "streaming"
-    )
-
-    # Mock the regular completion method (should be called instead of streaming)
-    expected_result = {"response": "Hello!", "tool_calls": []}
-
-    async def mock_regular_completion_async(
-        system, json_instruction, messages, gemini_tools, filtered_params, name_mapping
-    ):
-        return expected_result
-
-    client._regular_completion_async = mock_regular_completion_async
-
-    result = client.create_completion(messages, stream=True)
-
-    # Should return an awaitable (not async iterator) when streaming not supported
-    assert hasattr(result, "__await__")
-    assert not hasattr(result, "__aiter__")
-
-    final_result = await result
-    assert final_result == expected_result
-
-
-@pytest.mark.asyncio
 async def test_create_completion_with_tools(client):
     """Test create_completion with tools."""
     messages_dicts = [{"role": "user", "content": "What's the weather?"}]
@@ -1139,37 +1091,6 @@ async def test_create_completion_with_tools(client):
 
     assert result == expected_result
     assert len(result["tool_calls"]) == 1
-
-
-@pytest.mark.asyncio
-async def test_create_completion_with_tools_not_supported(client, monkeypatch):
-    """Test create_completion with tools when not supported."""
-    messages_dicts = [{"role": "user", "content": "What's the weather?"}]
-    tools = [
-        {"type": "function", "function": {"name": "get_weather", "description": "get_weather description", "parameters": {}}}
-    ]
-    # Convert dicts to Pydantic models
-    messages = [Message.model_validate(msg) for msg in messages_dicts]
-
-
-    # Mock tools as not supported
-    monkeypatch.setattr(client, "supports_feature", lambda feature: feature != "tools")
-
-    # Mock regular completion
-    expected_result = {"response": "I cannot use tools.", "tool_calls": []}
-
-    async def mock_regular_completion_async(
-        system, json_instruction, messages, gemini_tools, filtered_params, name_mapping
-    ):
-        # Verify tools were not passed
-        assert gemini_tools is None
-        return expected_result
-
-    client._regular_completion_async = mock_regular_completion_async
-
-    result = await client.create_completion(messages, tools=tools, stream=False)
-
-    assert result == expected_result
 
 
 @pytest.mark.asyncio
@@ -1303,32 +1224,6 @@ async def test_full_integration_streaming(client):
     # Verify we got all parts
     assert len(story_parts) == 4
     assert story_parts == ["Once", " upon", " a", " time..."]
-
-
-@pytest.mark.asyncio
-async def test_full_integration_streaming_not_supported(client, monkeypatch):
-    """Test full integration for streaming when not supported."""
-    messages_dicts = [{"role": "user", "content": "Tell me a story"}]
-    # Convert dicts to Pydantic models
-    messages = [Message.model_validate(msg) for msg in messages_dicts]
-
-
-    # Mock streaming as not supported
-    monkeypatch.setattr(
-        client, "supports_feature", lambda feature: feature != "streaming"
-    )
-
-    # Mock regular completion
-    async def mock_generate_content(**kwargs):
-        return create_mock_gemini_response(text="Once upon a time...")
-
-    client.client.aio.models.generate_content = mock_generate_content
-
-    # Should return regular completion instead of streaming
-    result = await client.create_completion(messages, stream=True)
-
-    assert result["response"] == "Once upon a time..."
-    assert result["tool_calls"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -1537,34 +1432,6 @@ async def test_vision_content_processing(client):
     assert len(contents) == 1
     # Should contain multimodal content
     assert isinstance(contents[0], list)
-
-
-@pytest.mark.asyncio
-async def test_vision_content_fallback_when_not_supported(client, monkeypatch):
-    """Test vision content fallback when vision is not supported."""
-    # Mock vision as not supported
-    monkeypatch.setattr(client, "supports_feature", lambda feature: feature != "vision")
-
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "What's in this image?"},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": "data:image/png;base64,..."},
-                },
-            ],
-        }
-    ]
-
-    system_txt, contents = await client._split_for_gemini_async(messages)
-
-    assert system_txt == ""
-    assert len(contents) == 1
-    # Should only contain text content when vision not supported
-    assert isinstance(contents[0], str)
-    assert "What's in this image?" in contents[0]
 
 
 # ---------------------------------------------------------------------------

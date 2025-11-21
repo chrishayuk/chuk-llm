@@ -774,8 +774,8 @@ class TestUtilityFunctions:
     def mock_config(self):
         """Mock configuration."""
         return {
-            "provider": "openai", 
-            "model": "gpt-4",
+            "provider": "openai",
+            "model": "gpt-4o",  # Use gpt-4o which definitely supports tools
             "api_key": "sk-test123",
             "api_base": "https://api.openai.com/v1"
         }
@@ -794,7 +794,8 @@ class TestUtilityFunctions:
             ),
         ):
             mock_client = MagicMock()
-            mock_client.create_completion = AsyncMock(return_value={"response": "Tool response"})
+            mock_client.create_completion = AsyncMock(return_value={"response": "Tool response", "tool_calls": []})
+            mock_client.supports_feature = MagicMock(return_value=True)  # Mock to support all features including tools
             mock_get_client.return_value = mock_client
 
             result = await ask("Use a tool", tools=tools, temperature=0.8)

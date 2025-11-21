@@ -47,19 +47,18 @@ class PerplexityModelSource(BaseModelSource):
         Returns:
             List of known Perplexity model specs
         """
+        return self._get_known_models()
+
+    def _get_known_models(self) -> list[ModelSpec]:
+        """
+        Get the static list of known Perplexity models.
+
+        Returns:
+            List of known Perplexity model specs
+        """
         models = []
         for model_name in self.KNOWN_MODELS:
-            # Extract family from model name
-            family = None
-            if "sonar" in model_name:
-                if "reasoning" in model_name:
-                    family = "sonar-reasoning"
-                elif "research" in model_name:
-                    family = "sonar-research"
-                else:
-                    family = "sonar"
-            elif "llama" in model_name:
-                family = "llama-sonar"
+            family = self._extract_family(model_name)
 
             models.append(
                 ModelSpec(
@@ -70,3 +69,30 @@ class PerplexityModelSource(BaseModelSource):
             )
 
         return models
+
+    def _extract_family(self, model_id: str) -> str | None:
+        """
+        Extract model family from model ID.
+
+        Args:
+            model_id: Model ID
+
+        Returns:
+            Model family name or None if not recognized
+        """
+        model_lower = model_id.lower()
+
+        # Sonar models
+        if "sonar" in model_lower:
+            if "reasoning" in model_lower:
+                return "sonar-reasoning"
+            elif "research" in model_lower:
+                return "sonar-research"
+            else:
+                return "sonar"
+
+        # Llama models
+        if "llama" in model_lower:
+            return "llama"
+
+        return None

@@ -13,7 +13,7 @@ import logging
 import os
 from typing import Any
 
-from chuk_llm.configuration.unified_config import ConfigValidator, Feature, get_config
+from chuk_llm.configuration import ConfigValidator, Feature, get_config
 from chuk_llm.llm.core.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
@@ -142,24 +142,24 @@ def _create_client_internal(
     elif target_model:
         # For non-Azure providers, validate the model exists
         # Try to ensure model is available (triggers discovery if needed)
-        resolved_model = config_manager._ensure_model_available(provider, target_model)
-        if resolved_model:
-            target_model = resolved_model
-        elif (
-            target_model not in provider_config.models
-            and "*" not in provider_config.models
-        ):
-            # Check if it's an alias
-            resolved_model = provider_config.model_aliases.get(target_model)
-            if resolved_model and resolved_model in provider_config.models:
-                target_model = resolved_model
-            else:
-                # Model not found after discovery attempt
-                available = provider_config.models[:5]  # Show first 5
-                raise ValueError(
-                    f"Model '{target_model}' not available for provider '{provider}'. "
-                    f"Available: {available}{'...' if len(provider_config.models) > 5 else ''}"
-                )
+        model_available = config_manager._ensure_model_available(provider, target_model)
+        if not model_available:
+            # Model not found, check if it's an alias
+            if (
+                target_model not in provider_config.models
+                and "*" not in provider_config.models
+            ):
+                # Check if it's an alias
+                resolved_model = provider_config.model_aliases.get(target_model)
+                if resolved_model and resolved_model in provider_config.models:
+                    target_model = resolved_model
+                else:
+                    # Model not found after discovery attempt
+                    available = provider_config.models[:5]  # Show first 5
+                    raise ValueError(
+                        f"Model '{target_model}' not available for provider '{provider}'. "
+                        f"Available: {available}{'...' if len(provider_config.models) > 5 else ''}"
+                    )
 
     if not target_model:
         raise ValueError(
@@ -379,7 +379,7 @@ def list_available_providers() -> dict[str, dict[str, Any]]:
             if discovery_data and discovery_data.get("enabled"):
                 discovery_enabled = True
                 # Get discovery stats if available
-                cached_data = config_manager._discovery_cache.get(provider_name)
+                cached_data = config_manager._discovery_cache.get(provider_name)  # type: ignore[attr-defined]
                 if cached_data:
                     discovery_stats = {
                         "total_models": len(provider_config.models),
@@ -429,7 +429,7 @@ def get_provider_info(provider: str, model: str | None = None) -> dict[str, Any]
         # Check if model was discovered dynamically
         is_discovered = False
         discovery_info = {}
-        cached_data = config_manager._discovery_cache.get(provider)
+        cached_data = config_manager._discovery_cache.get(provider)  # type: ignore[attr-defined]
         if cached_data and target_model in cached_data.get("models", []):
             # Check if this model was added by discovery
             static_models = set()
@@ -526,7 +526,7 @@ def validate_provider_setup(provider: str) -> dict[str, Any]:
     discovery_data = provider_config.extra.get("dynamic_discovery")
     if discovery_data and discovery_data.get("enabled"):
         discovery_enabled = True
-        cached_data = config_manager._discovery_cache.get(provider)
+        cached_data = config_manager._discovery_cache.get(provider)  # type: ignore[attr-defined]
         if cached_data:
             discovery_stats = {
                 "total_models": len(provider_config.models),
@@ -578,11 +578,10 @@ def find_best_provider_for_request(
     from chuk_llm.configuration.unified_config import CapabilityChecker
 
     if required_features:
-        feature_set = {Feature.from_string(f) for f in required_features}
-        exclude_set = set(exclude_providers or [])
+        feature_list = [Feature.from_string(f) for f in required_features]
 
         best_provider = CapabilityChecker.get_best_provider_for_features(
-            feature_set, model_name=model_pattern, exclude=exclude_set
+            feature_list, model=model_pattern
         )
 
         if best_provider:

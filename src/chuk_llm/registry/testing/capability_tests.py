@@ -76,7 +76,11 @@ async def test_tools(client: Any) -> bool:
 
     except Exception as e:
         error_msg = str(e).lower()
-        if "tool" in error_msg or "function" in error_msg or "not supported" in error_msg:
+        if (
+            "tool" in error_msg
+            or "function" in error_msg
+            or "not supported" in error_msg
+        ):
             return False
         # Other errors might not be tool-related
         return False
@@ -100,7 +104,9 @@ async def test_vision(client: Any) -> bool:
             Message(
                 role=MessageRole.USER,
                 content=[
-                    TextContent(type=ContentType.TEXT, text="What color is this image?"),
+                    TextContent(
+                        type=ContentType.TEXT, text="What color is this image?"
+                    ),
                     ImageUrlContent(
                         type=ContentType.IMAGE_URL,
                         image_url={"url": f"data:image/png;base64,{RED_SQUARE_PNG}"},
@@ -114,8 +120,10 @@ async def test_vision(client: Any) -> bool:
         # Check if response contains an error
         if isinstance(response, dict) and response.get("error"):
             pass  # Try alternative format
-        elif response and isinstance(response, dict) and (
-            response.get("response") or response.get("choices")
+        elif (
+            response
+            and isinstance(response, dict)
+            and (response.get("response") or response.get("choices"))
         ):
             return True  # Success with image_url format
         else:
@@ -137,7 +145,9 @@ async def test_vision(client: Any) -> bool:
             Message(
                 role=MessageRole.USER,
                 content=[
-                    TextContent(type=ContentType.TEXT, text="What color is this image?"),
+                    TextContent(
+                        type=ContentType.TEXT, text="What color is this image?"
+                    ),
                     ImageDataContent(
                         type=ContentType.IMAGE_DATA,
                         image_data=RED_SQUARE_PNG,
@@ -152,8 +162,10 @@ async def test_vision(client: Any) -> bool:
         if isinstance(response, dict) and response.get("error"):
             return False
 
-        if response and isinstance(response, dict) and (
-            response.get("response") or response.get("choices")
+        if (
+            response
+            and isinstance(response, dict)
+            and (response.get("response") or response.get("choices"))
         ):
             return True
 
@@ -334,8 +346,10 @@ async def test_text(client: Any) -> bool:
             return False
 
         # Check if response has content
-        if response and isinstance(response, dict) and (
-            response.get("response") or response.get("choices")
+        if (
+            response
+            and isinstance(response, dict)
+            and (response.get("response") or response.get("choices"))
         ):
             return True
 

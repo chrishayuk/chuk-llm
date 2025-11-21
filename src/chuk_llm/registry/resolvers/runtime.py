@@ -71,9 +71,7 @@ class RuntimeTestingResolver(BaseCapabilityResolver):
             )
 
         # Runtime testing is enabled - test the model
-        log.info(
-            f"Runtime testing {spec.provider}/{spec.name} (may incur API costs)"
-        )
+        log.info(f"Runtime testing {spec.provider}/{spec.name} (may incur API costs)")
 
         try:
             tester = RuntimeCapabilityTester(spec.provider)
@@ -90,9 +88,7 @@ class RuntimeTestingResolver(BaseCapabilityResolver):
             return capabilities
 
         except Exception as e:
-            log.warning(
-                f"Runtime testing failed for {spec.provider}/{spec.name}: {e}"
-            )
+            log.warning(f"Runtime testing failed for {spec.provider}/{spec.name}: {e}")
             # Return empty capabilities on failure
             return ModelCapabilities(
                 source="runtime_test_failed",
