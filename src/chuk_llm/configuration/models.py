@@ -16,6 +16,7 @@ class Feature(str, Enum):
     STREAMING = "streaming"  # Streaming response capability
     TOOLS = "tools"  # Function calling/tools
     VISION = "vision"  # Image/visual input processing
+    AUDIO_INPUT = "audio_input"  # Audio input processing
     JSON_MODE = "json_mode"  # Structured JSON output
     PARALLEL_CALLS = "parallel_calls"  # Multiple simultaneous function calls
     SYSTEM_MESSAGES = "system_messages"  # System message support

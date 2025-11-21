@@ -427,8 +427,8 @@ class TestAzureOpenAIContextMemory:
         validated_messages, _, _, _ = client._validate_request_with_config(messages)
 
         assert len(validated_messages) == 6
-        assert validated_messages[1]["content"] == "My name is Alice"
-        assert validated_messages[5]["content"] == "What's my name?"
+        assert validated_messages[1].content == "My name is Alice"
+        assert validated_messages[5].content == "What's my name?"
 
     def test_context_with_tool_calls_and_responses(self, client):
         """Test context preservation with tool calls and responses."""
@@ -464,17 +464,15 @@ class TestAzureOpenAIContextMemory:
         assert len(validated_messages) == 5
 
         # Check tool call is preserved
-        assert (
-            validated_messages[1]["tool_calls"][0]["function"]["name"] == "calculator"
-        )
+        assert validated_messages[1].tool_calls[0].function.name == "calculator"
 
         # Check tool response is preserved
-        assert validated_messages[2]["role"] == "tool"
-        assert validated_messages[2]["content"] == "4"
+        assert validated_messages[2].role == "tool"
+        assert validated_messages[2].content == "4"
 
         # Check final question that requires context
         assert (
-            validated_messages[4]["content"] == "What did I just ask you to calculate?"
+            validated_messages[4].content == "What did I just ask you to calculate?"
         )
 
     def test_context_with_vision_content(self, client):
@@ -504,15 +502,15 @@ class TestAzureOpenAIContextMemory:
         assert len(validated_messages) == 5
 
         # Check early context is preserved
-        assert validated_messages[0]["content"] == "I'm Bob"
+        assert validated_messages[0].content == "I'm Bob"
 
         # Check multimodal content is preserved
-        assert isinstance(validated_messages[2]["content"], list)
-        assert validated_messages[2]["content"][0]["type"] == "text"
-        assert validated_messages[2]["content"][1]["type"] == "image_url"
+        assert isinstance(validated_messages[2].content, list)
+        assert validated_messages[2].content[0].type == "text"
+        assert validated_messages[2].content[1].type == "image_url"
 
         # Check final question
-        assert validated_messages[4]["content"] == "What's my name again?"
+        assert validated_messages[4].content == "What's my name again?"
 
     @pytest.mark.asyncio
     async def test_streaming_preserves_context(self, client):
@@ -617,16 +615,14 @@ class TestAzureOpenAIContextMemory:
         assert len(validated_messages) == 12
 
         # Verify Paris is mentioned in the context
-        assert "Paris" in validated_messages[3]["content"]
+        assert "Paris" in validated_messages[3].content
 
         # Verify tool calls are preserved
         assert (
-            validated_messages[4]["tool_calls"][0]["function"]["name"]
-            == "search_destination"
+            validated_messages[4].tool_calls[0].function.name == "search_destination"
         )
         assert (
-            validated_messages[8]["tool_calls"][0]["function"]["name"]
-            == "search_hotels"
+            validated_messages[8].tool_calls[0].function.name == "search_hotels"
         )
 
     @pytest.mark.asyncio
@@ -746,6 +742,7 @@ class TestAzureOpenAISmartDefaults:
 class TestAzureOpenAIDeploymentDiscovery:
     """Test Azure OpenAI deployment discovery"""
 
+    @pytest.mark.skip(reason="Discovery module has been removed - use registry instead")
     @pytest.mark.asyncio
     async def test_test_deployment_availability(self, mock_configuration, mock_env):
         """Test deployment availability checking."""
@@ -803,7 +800,7 @@ class TestAzureOpenAIErrorHandling:
         """Test handling of deployment not found errors."""
         messages_dicts = [{"role": "user", "content": "Hello"}]
         # Convert dicts to Pydantic models
-        messages = [Message.model_validate(msg) for msg in messages_dicts]
+        messages = messages_dicts  # _validate_request_with_config handles conversion
 
 
         # Mock deployment not found error
@@ -831,7 +828,7 @@ class TestAzureOpenAIErrorHandling:
         """Test handling of max tokens exceeded error."""
         messages_dicts = [{"role": "user", "content": "Hello"}]
         # Convert dicts to Pydantic models
-        messages = [Message.model_validate(msg) for msg in messages_dicts]
+        messages = messages_dicts  # _validate_request_with_config handles conversion
 
 
         # Mock max tokens error
@@ -858,7 +855,7 @@ class TestAzureOpenAIErrorHandling:
         """Test streaming with deployment errors."""
         messages_dicts = [{"role": "user", "content": "Hello"}]
         # Convert dicts to Pydantic models
-        messages = [Message.model_validate(msg) for msg in messages_dicts]
+        messages = messages_dicts  # _validate_request_with_config handles conversion
 
 
         # Mock deployment error in streaming
@@ -1249,10 +1246,12 @@ class TestAzureOpenAIPydanticMessages:
     def test_validate_request_with_pydantic_vision_content(self, client):
         """Test validation with Pydantic content objects for vision."""
 
-        # Create mock Pydantic-like content objects
+        # Create mock Pydantic-like content objects with proper structure
         class PydanticContent:
-            def __init__(self, content_type):
+            def __init__(self, content_type, **kwargs):
                 self.type = content_type
+                for k, v in kwargs.items():
+                    setattr(self, k, v)
 
         class PydanticMessage:
             def __init__(self, role, content):
@@ -1260,8 +1259,10 @@ class TestAzureOpenAIPydanticMessages:
                 self.content = content
 
         # Create message with Pydantic image content
-        image_content = PydanticContent("image_url")
-        text_content = PydanticContent("text")
+        image_content = PydanticContent(
+            "image_url", image_url={"url": "https://example.com/image.jpg"}
+        )
+        text_content = PydanticContent("text", text="Look at this image")
 
         messages = [PydanticMessage("user", [text_content, image_content])]
 
@@ -1399,7 +1400,7 @@ class TestAzureOpenAIArgumentFormatting:
 
         messages_dicts = [{"role": "user", "content": "Test"}]
         # Convert dicts to Pydantic models
-        messages = [Message.model_validate(msg) for msg in messages_dicts]
+        messages = messages_dicts  # _validate_request_with_config handles conversion
 
 
         chunks = []
@@ -1451,7 +1452,7 @@ class TestAzureOpenAIJsonErrorHandling:
 
         messages_dicts = [{"role": "user", "content": "Test"}]
         # Convert dicts to Pydantic models
-        messages = [Message.model_validate(msg) for msg in messages_dicts]
+        messages = messages_dicts  # _validate_request_with_config handles conversion
 
 
         chunks = []
@@ -1480,7 +1481,7 @@ class TestAzureOpenAIJsonErrorHandling:
 
         messages_dicts = [{"role": "user", "content": "Test"}]
         # Convert dicts to Pydantic models
-        messages = [Message.model_validate(msg) for msg in messages_dicts]
+        messages = messages_dicts  # _validate_request_with_config handles conversion
 
 
         chunks = []
@@ -1500,7 +1501,7 @@ class TestAzureOpenAIJsonErrorHandling:
 
         messages_dicts = [{"role": "user", "content": "Test"}]
         # Convert dicts to Pydantic models
-        messages = [Message.model_validate(msg) for msg in messages_dicts]
+        messages = messages_dicts  # _validate_request_with_config handles conversion
 
 
         chunks = []
@@ -1526,7 +1527,7 @@ class TestAzureOpenAIRegularCompletionErrors:
         """Test deployment not found error in regular completion."""
         messages_dicts = [{"role": "user", "content": "Hello"}]
         # Convert dicts to Pydantic models
-        messages = [Message.model_validate(msg) for msg in messages_dicts]
+        messages = messages_dicts  # _validate_request_with_config handles conversion
 
 
         client.async_client.chat.completions.create = AsyncMock(
@@ -1545,7 +1546,7 @@ class TestAzureOpenAIRegularCompletionErrors:
         """Test tool naming error in regular completion."""
         messages_dicts = [{"role": "user", "content": "Hello"}]
         # Convert dicts to Pydantic models
-        messages = [Message.model_validate(msg) for msg in messages_dicts]
+        messages = messages_dicts  # _validate_request_with_config handles conversion
 
 
         client.async_client.chat.completions.create = AsyncMock(
@@ -1723,7 +1724,7 @@ class TestAzureOpenAIAdditionalCoverage:
 
         messages_dicts = [{"role": "user", "content": "Test"}]
         # Convert dicts to Pydantic models
-        messages = [Message.model_validate(msg) for msg in messages_dicts]
+        messages = messages_dicts  # _validate_request_with_config handles conversion
 
 
         chunks = []
@@ -1750,7 +1751,7 @@ class TestAzureOpenAIAdditionalCoverage:
         messages_dicts = [{"role": "user", "content": "Hello"}]
         tools = [{"type": "function", "function": {"name": "test_tool", "description": "test_tool description", "parameters": {}}}]
         # Convert dicts to Pydantic models
-        messages = [Message.model_validate(msg) for msg in messages_dicts]
+        messages = messages_dicts  # _validate_request_with_config handles conversion
 
 
         # This should trigger smart defaults path in validation
@@ -1758,7 +1759,8 @@ class TestAzureOpenAIAdditionalCoverage:
             client._validate_request_with_config(messages, tools, stream=False)
         )
 
-        assert validated_messages == messages
+        # _validate_request_with_config returns Pydantic objects
+        assert len(validated_messages) == len(messages)
         assert validated_tools is not None  # Smart defaults allow tools
 
     def test_adjust_parameters_exception_fallback(self, mock_configuration, mock_env):
@@ -1834,7 +1836,7 @@ class TestAzureOpenAIAdditionalCoverage:
 
         messages_dicts = [{"role": "user", "content": "Test"}]
         # Convert dicts to Pydantic models
-        messages = [Message.model_validate(msg) for msg in messages_dicts]
+        messages = messages_dicts  # _validate_request_with_config handles conversion
 
 
         chunks = []
@@ -1863,7 +1865,7 @@ class TestAzureOpenAIAdditionalCoverage:
 
         messages_dicts = [{"role": "user", "content": "Test"}]
         # Convert dicts to Pydantic models
-        messages = [Message.model_validate(msg) for msg in messages_dicts]
+        messages = messages_dicts  # _validate_request_with_config handles conversion
 
 
         chunks = []
@@ -1887,7 +1889,7 @@ class TestAzureOpenAIAdditionalCoverage:
 
         messages_dicts = [{"role": "user", "content": "Test"}]
         # Convert dicts to Pydantic models
-        messages = [Message.model_validate(msg) for msg in messages_dicts]
+        messages = messages_dicts  # _validate_request_with_config handles conversion
 
 
         chunks = []
@@ -2015,7 +2017,7 @@ class TestAzureOpenAIEdgeCases:
         messages_dicts = [{"role": "user", "content": "Hello"}]
         tools = [{"type": "function", "function": {"name": "test.tool", "description": "test.tool description", "parameters": {}}}]
         # Convert dicts to Pydantic models
-        messages = [Message.model_validate(msg) for msg in messages_dicts]
+        messages = messages_dicts  # _validate_request_with_config handles conversion
 
 
         # Mock the sanitization to create a mapping
@@ -2058,7 +2060,7 @@ class TestAzureOpenAIEdgeCases:
         messages_dicts = [{"role": "user", "content": "Hello"}]
         kwargs = {"response_format": {"type": "json_object"}}
         # Convert dicts to Pydantic models
-        messages = [Message.model_validate(msg) for msg in messages_dicts]
+        messages = messages_dicts  # _validate_request_with_config handles conversion
 
 
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
@@ -2074,11 +2076,9 @@ class TestAzureOpenAIEdgeCases:
         # Mock client to not support streaming
         client.supports_feature = lambda feature: feature != "streaming"
 
-        messages_dicts = [{"role": "user", "content": "Hello"}]
-        # Convert dicts to Pydantic models
-        messages = [Message.model_validate(msg) for msg in messages_dicts]
+        messages = [{"role": "user", "content": "Hello"}]
 
-
+        # _validate_request_with_config now handles conversion internally
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
             client._validate_request_with_config(messages, None, True)
         )
@@ -2095,7 +2095,7 @@ class TestAzureOpenAIEdgeCases:
         messages_dicts = [{"role": "user", "content": "Hello"}]
         tools = [{"type": "function", "function": {"name": "test_tool", "description": "test_tool description", "parameters": {}}}]
         # Convert dicts to Pydantic models
-        messages = [Message.model_validate(msg) for msg in messages_dicts]
+        messages = messages_dicts  # _validate_request_with_config handles conversion
 
 
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
@@ -2164,7 +2164,7 @@ class TestAzureOpenAIEdgeCases:
         """Test generic error handling in regular completion."""
         messages_dicts = [{"role": "user", "content": "Hello"}]
         # Convert dicts to Pydantic models
-        messages = [Message.model_validate(msg) for msg in messages_dicts]
+        messages = messages_dicts  # _validate_request_with_config handles conversion
 
 
         client.async_client.chat.completions.create = AsyncMock(
@@ -2289,7 +2289,7 @@ class TestAzureOpenAINormalizeMessageComprehensive:
 
         messages_dicts = [{"role": "user", "content": "Test"}]
         # Convert dicts to Pydantic models
-        messages = [Message.model_validate(msg) for msg in messages_dicts]
+        messages = messages_dicts  # _validate_request_with_config handles conversion
 
 
         chunks = []

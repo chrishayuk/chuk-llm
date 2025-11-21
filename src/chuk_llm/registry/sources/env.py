@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 
+from chuk_llm.core.enums import Provider
 from chuk_llm.registry.models import ModelSpec
 from chuk_llm.registry.sources.base import BaseModelSource
 
@@ -23,32 +24,32 @@ class EnvProviderSource(BaseModelSource):
 
     # Map of provider name -> (env_var, default_model, family, fallback_env_var)
     PROVIDER_DEFAULTS = {
-        "openai": ("OPENAI_API_KEY", "gpt-4o-mini", "gpt-4o", None),
-        "anthropic": (
+        Provider.OPENAI.value: ("OPENAI_API_KEY", "gpt-4o-mini", "gpt-4o", None),
+        Provider.ANTHROPIC.value: (
             "ANTHROPIC_API_KEY",
             "claude-3-5-sonnet-20241022",
             "claude-3",
             None,
         ),
-        "groq": ("GROQ_API_KEY", "llama-3.3-70b-versatile", "llama-3", None),
-        "deepseek": ("DEEPSEEK_API_KEY", "deepseek-chat", "deepseek", None),
-        "together": (
+        Provider.GROQ.value: ("GROQ_API_KEY", "llama-3.3-70b-versatile", "llama-3", None),
+        Provider.DEEPSEEK.value: ("DEEPSEEK_API_KEY", "deepseek-chat", "deepseek", None),
+        Provider.TOGETHER.value: (
             "TOGETHER_API_KEY",
             "meta-llama/Llama-3.3-70B-Instruct-Turbo",
             "llama-3",
             None,
         ),
-        "perplexity": (
+        Provider.PERPLEXITY.value: (
             "PERPLEXITY_API_KEY",
             "llama-3.1-sonar-small-128k-online",
             "llama-3",
             None,
         ),
-        "mistral": ("MISTRAL_API_KEY", "mistral-small-latest", "mistral", None),
-        "gemini": ("GEMINI_API_KEY", "gemini-2.0-flash", "gemini", "GOOGLE_API_KEY"),
-        "watsonx": ("WATSONX_API_KEY", "ibm/granite-3-8b-instruct", "granite", None),
-        "azure_openai": ("AZURE_OPENAI_API_KEY", "gpt-4o", "gpt-4o", None),
-        "advantage": (
+        Provider.MISTRAL.value: ("MISTRAL_API_KEY", "mistral-small-latest", "mistral", None),
+        Provider.GEMINI.value: ("GEMINI_API_KEY", "gemini-2.0-flash", "gemini", "GOOGLE_API_KEY"),
+        Provider.WATSONX.value: ("WATSONX_API_KEY", "ibm/granite-3-8b-instruct", "granite", None),
+        Provider.AZURE_OPENAI.value: ("AZURE_OPENAI_API_KEY", "gpt-4o", "gpt-4o", None),
+        Provider.ADVANTAGE.value: (
             "ADVANTAGE_API_KEY",
             "meta-llama/llama-3-3-70b-instruct",
             "llama-3",
@@ -97,7 +98,7 @@ class EnvProviderSource(BaseModelSource):
         if self.include_ollama:
             specs.append(
                 ModelSpec(
-                    provider="ollama",
+                    provider=Provider.OLLAMA.value,
                     name="llama3.2:latest",  # Common default
                     family="llama-3",
                 )

@@ -50,6 +50,10 @@ try:
         demo_structured_outputs,
         demo_conversation,
         demo_model_discovery,
+        demo_audio_input,
+        demo_parameters,
+        demo_model_comparison,
+        demo_dynamic_model_call,
         demo_error_handling,
         run_all_demos,
     )
@@ -76,8 +80,8 @@ async def main():
     parser.add_argument(
         "--demo",
         type=int,
-        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-        help="Run specific demo (1=basic, 2=streaming, 3=tools, 4=vision, 5=json, 6=reasoning, 7=structured, 8=conversation, 9=discovery, 10=errors)",
+        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+        help="Run specific demo (1=basic, 2=streaming, 3=tools, 4=vision, 5=json, 6=reasoning, 7=structured, 8=conversation, 9=discovery, 10=audio, 11=parameters, 12=comparison, 13=dynamic, 14=errors)",
     )
 
     args = parser.parse_args()
@@ -103,7 +107,11 @@ async def main():
             7: ("Structured Outputs", demo_structured_outputs(client, "advantage", args.model)),
             8: ("Conversation", demo_conversation(client, "advantage", args.model)),
             9: ("Model Discovery", demo_model_discovery(client, "advantage", args.model)),
-            10: ("Error Handling", demo_error_handling(client, "advantage", args.model)),
+            10: ("Audio Input", demo_audio_input(client, "advantage", args.model)),
+            11: ("Parameters", demo_parameters(client, "advantage", args.model)),
+            12: ("Model Comparison", demo_model_comparison("advantage", ['advantage-small', 'advantage-medium'])),
+            13: ("Dynamic Model Call", demo_dynamic_model_call("advantage")),
+            14: ("Error Handling", demo_error_handling(client, "advantage", args.model)),
         }
 
         name, demo_coro = demo_map[args.demo]

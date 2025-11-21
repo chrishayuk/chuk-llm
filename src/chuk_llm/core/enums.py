@@ -26,6 +26,7 @@ class Provider(str, Enum):
     TOGETHER = "together"
     ANYSCALE = "anyscale"
     OPENAI_COMPATIBLE = "openai_compatible"
+    OPENROUTER = "openrouter"
 
 
 class Feature(str, Enum):
@@ -66,6 +67,9 @@ class ContentType(str, Enum):
     TEXT = "text"
     IMAGE_URL = "image_url"
     IMAGE_DATA = "image_data"
+    INPUT_AUDIO = "input_audio"
+    AUDIO_URL = "audio_url"
+    AUDIO_DATA = "audio_data"
 
 
 class ToolType(str, Enum):

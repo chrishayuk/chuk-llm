@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from chuk_llm.configuration.discovery import ConfigDiscoveryMixin
+from chuk_llm.configuration.registry_integration import RegistryIntegrationMixin
 
 # Import the modules to test
 from chuk_llm.configuration.models import (
@@ -43,6 +43,7 @@ class TestFeature:
             "system_messages",
             "multimodal",
             "reasoning",
+            "audio_input",
         }
         actual_features = {f.value for f in Feature}
         assert actual_features == expected_features
@@ -801,87 +802,69 @@ class TestCapabilityChecker:
             assert "Test error" in info["error"]
 
 
-class TestConfigDiscoveryMixin:
-    """Test ConfigDiscoveryMixin functionality"""
+class TestRegistryIntegrationMixin:
+    """Test RegistryIntegrationMixin functionality"""
 
     def setup_method(self):
         """Setup for each test"""
         reset_config()
 
-    def test_parse_discovery_config_enabled(self):
-        """Test parsing enabled discovery config"""
-        mixin = ConfigDiscoveryMixin()
+    def test_get_discovered_models_empty(self):
+        """Test getting discovered models when none exist"""
+        mixin = RegistryIntegrationMixin()
+        # When no models have been cached, should return empty set
+        models = mixin.get_discovered_models("nonexistent_provider")
+        assert models == set()
 
-        provider_data = {
-            "extra": {
-                "dynamic_discovery": {
-                    "enabled": True,
-                    "discoverer_type": "openai",
-                    "cache_timeout": 600,
+    def test_get_all_available_models(self):
+        """Test getting all available models (static + discovered)"""
+
+        class MockManager(RegistryIntegrationMixin):
+            def __init__(self):
+                super().__init__()
+                self.providers = {
+                    "test": ProviderConfig(
+                        name="test",
+                        models=["model-1", "model-2"],
+                    )
                 }
-            }
-        }
 
-        config = mixin._parse_discovery_config(provider_data)
+        manager = MockManager()
 
-        assert config is not None
-        assert config.enabled is True
-        assert config.discoverer_type == "openai"
-        assert config.cache_timeout == 600
+        # Should return static models
+        all_models = manager.get_all_available_models("test")
+        assert "model-1" in all_models
+        assert "model-2" in all_models
 
-    def test_parse_discovery_config_disabled(self):
-        """Test parsing disabled discovery config"""
-        mixin = ConfigDiscoveryMixin()
+    def test_is_model_available_static(self):
+        """Test checking model availability from static config"""
 
-        provider_data = {"extra": {"dynamic_discovery": {"enabled": False}}}
-
-        config = mixin._parse_discovery_config(provider_data)
-        assert config is None
-
-    def test_parse_discovery_config_missing(self):
-        """Test parsing missing discovery config"""
-        mixin = ConfigDiscoveryMixin()
-
-        provider_data = {"extra": {}}
-        config = mixin._parse_discovery_config(provider_data)
-        assert config is None
-
-    def test_reload_clears_discovery_state(self):
-        """Test that reload clears discovery state"""
-        mixin = ConfigDiscoveryMixin()
-        mixin._discovery_managers["test"] = Mock()
-        mixin._discovery_cache["test"] = {"data": "test"}
-
-        mixin.reload()
-
-        assert mixin._discovery_managers == {}
-        assert mixin._discovery_cache == {}
-
-    def test_discovery_config_integration(self):
-        """Test discovery configuration integration"""
-
-        class MockManager(ConfigDiscoveryMixin):
+        class MockManager(RegistryIntegrationMixin):
             def __init__(self):
                 super().__init__()
                 self.providers = {
                     "test": ProviderConfig(
                         name="test",
                         models=["model-1"],
-                        extra={
-                            "dynamic_discovery": {
-                                "enabled": True,
-                                "discoverer_type": "test",
-                            }
-                        },
+                        model_aliases={},
                     )
                 }
 
         manager = MockManager()
 
-        # Test that discovery config is properly integrated
-        provider = manager.providers["test"]
-        assert "dynamic_discovery" in provider.extra
-        assert provider.extra["dynamic_discovery"]["enabled"] is True
+        assert manager._is_model_available("test", "model-1") is True
+        assert manager._is_model_available("test", "model-nonexistent") is False
+
+    def test_reload_clears_registry_cache(self):
+        """Test that reload clears registry cache"""
+        mixin = RegistryIntegrationMixin()
+        mixin._registry_cache["test"] = {"model-1"}
+        mixin._registry_cache_time["test"] = 123.456
+
+        mixin.reload()
+
+        assert mixin._registry_cache == {}
+        assert mixin._registry_cache_time == {}
 
 
 class TestGlobalFunctions:

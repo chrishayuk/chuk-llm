@@ -31,6 +31,8 @@ from chuk_llm.core import (
     Message,
     MessageRole,
 )
+from chuk_llm.core.constants import ApiBaseUrl
+from chuk_llm.core.enums import Provider
 
 logger = logging.getLogger(__name__)
 
@@ -61,11 +63,17 @@ def get_modern_client(
     provider_lower = provider.lower()
 
     # OpenAI and compatible providers
-    if provider_lower in ["openai", "groq", "deepseek", "together", "perplexity"]:
+    if provider_lower in [
+        Provider.OPENAI.value,
+        Provider.GROQ.value,
+        Provider.DEEPSEEK.value,
+        Provider.TOGETHER.value,
+        Provider.PERPLEXITY.value,
+    ]:
         # Get API key from kwargs, env, or raise
         if not api_key:
             api_key = os.getenv(EnvVar.OPENAI_API_KEY.value)
-            if not api_key and provider_lower != "openai":
+            if not api_key and provider_lower != Provider.OPENAI.value:
                 # Try provider-specific env var
                 api_key = os.getenv(f"{provider_lower.upper()}_API_KEY")
 
@@ -79,21 +87,21 @@ def get_modern_client(
         # Get base URL
         if not api_base:
             base_urls = {
-                "groq": "https://api.groq.com/openai/v1",
-                "deepseek": "https://api.deepseek.com/v1",
-                "together": "https://api.together.xyz/v1",
-                "perplexity": "https://api.perplexity.ai",
+                Provider.GROQ.value: ApiBaseUrl.GROQ.value,
+                Provider.DEEPSEEK.value: ApiBaseUrl.DEEPSEEK.value,
+                Provider.TOGETHER.value: ApiBaseUrl.TOGETHER.value,
+                Provider.PERPLEXITY.value: ApiBaseUrl.PERPLEXITY.value,
             }
-            api_base = base_urls.get(provider_lower, "https://api.openai.com/v1")
+            api_base = base_urls.get(provider_lower, ApiBaseUrl.OPENAI.value)
 
         # Default models
         if not model:
             default_models = {
-                "openai": "gpt-4o-mini",
-                "groq": "llama-3.3-70b-versatile",
-                "deepseek": "deepseek-chat",
-                "together": "meta-llama/Llama-3-70b-chat-hf",
-                "perplexity": "llama-3.1-sonar-small-128k-online",
+                Provider.OPENAI.value: "gpt-4o-mini",
+                Provider.GROQ.value: "llama-3.3-70b-versatile",
+                Provider.DEEPSEEK.value: "deepseek-chat",
+                Provider.TOGETHER.value: "meta-llama/Llama-3-70b-chat-hf",
+                Provider.PERPLEXITY.value: "llama-3.1-sonar-small-128k-online",
             }
             model = default_models.get(provider_lower, "gpt-4o-mini")
 
@@ -105,7 +113,7 @@ def get_modern_client(
         )
 
     # Anthropic
-    elif provider_lower == "anthropic":
+    elif provider_lower == Provider.ANTHROPIC.value:
         if not api_key:
             api_key = os.getenv(EnvVar.ANTHROPIC_API_KEY.value)
 
@@ -121,7 +129,7 @@ def get_modern_client(
         return AnthropicClient(
             model=model,
             api_key=api_key,
-            base_url=api_base or "https://api.anthropic.com/v1",
+            base_url=api_base or f"{ApiBaseUrl.ANTHROPIC.value}/v1",
             **kwargs,
         )
 

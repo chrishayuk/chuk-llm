@@ -34,7 +34,7 @@ from typing import Any
 import openai
 
 from chuk_llm.configuration import get_config
-from chuk_llm.core.enums import MessageRole
+from chuk_llm.core.enums import ContentType, MessageRole
 
 # base
 from chuk_llm.llm.core.base import BaseLLMClient
@@ -88,7 +88,10 @@ class OpenAILLMClient(
             return "openai"
 
         api_base_lower = api_base.lower()
-        if "deepseek" in api_base_lower:
+        # Check for OpenAI first (most common)
+        if "api.openai.com" in api_base_lower:
+            return "openai"
+        elif "deepseek" in api_base_lower:
             return "deepseek"
         elif "groq" in api_base_lower:
             return "groq"
@@ -114,10 +117,11 @@ class OpenAILLMClient(
         Some OpenAI-compatible APIs require tools.function.strict to be present
         as a boolean value for all function definitions.
         """
+        from chuk_llm.core.enums import ToolType
         modified_tools = []
         for tool in tools:
             tool_copy = tool.copy()
-            if tool_copy.get("type") == "function" and "function" in tool_copy:
+            if tool_copy.get("type") == ToolType.FUNCTION.value and "function" in tool_copy:
                 # Make a copy of the function dict to avoid modifying the original
                 func_copy = tool_copy["function"].copy()
                 if "strict" not in func_copy:
@@ -632,10 +636,11 @@ class OpenAILLMClient(
                             except json.JSONDecodeError:
                                 args_j = "{}"
 
+                            from chuk_llm.core.enums import ToolType
                             tool_calls.append(
                                 {
                                     "id": tc_id,
-                                    "type": "function",
+                                    "type": ToolType.FUNCTION.value,
                                     "function": {
                                         "name": func_name,
                                         "arguments": args_j,
@@ -815,10 +820,13 @@ class OpenAILLMClient(
                                                     tool_call_data["complete"] = True
 
                                                     # Add to completed tool calls for this chunk
+                                                    from chuk_llm.core.enums import (
+                                                        ToolType,
+                                                    )
                                                     completed_tool_calls.append(
                                                         {
                                                             "id": tool_call_data["id"],
-                                                            "type": "function",
+                                                            "type": ToolType.FUNCTION.value,
                                                             "function": {
                                                                 "name": tool_call_data[
                                                                     "name"
@@ -905,16 +913,16 @@ class OpenAILLMClient(
 
         # Check streaming support (use smart defaults if needed)
         if stream and not self.supports_feature("streaming"):
-            log.warning(
-                f"Streaming requested but {self.detected_provider}/{self.model} doesn't support streaming"
+            log.debug(
+                f"Streaming requested but {self.detected_provider}/{self.model} doesn't support streaming - trying anyway"
             )
             # Don't disable streaming - let the API handle it
 
         # Check tool support (use smart defaults for unknown models)
         if tools:
             if not self.supports_feature("tools"):
-                log.warning(
-                    f"Tools provided but {self.detected_provider}/{self.model} doesn't support tools"
+                log.debug(
+                    f"Tools provided but {self.detected_provider}/{self.model} doesn't support tools - trying anyway"
                 )
                 validated_tools = None
             elif (
@@ -928,21 +936,21 @@ class OpenAILLMClient(
         has_vision = any(
             isinstance(msg.get("content"), list)
             and any(
-                isinstance(item, dict) and item.get("type") == "image_url"
+                isinstance(item, dict) and item.get("type") == ContentType.IMAGE_URL.value
                 for item in msg.get("content", [])
             )
             for msg in messages
         )
         if has_vision and not self.supports_feature("vision"):
-            log.warning(
-                f"Vision content detected but {self.detected_provider}/{self.model} doesn't support vision"
+            log.debug(
+                f"Vision content detected but {self.detected_provider}/{self.model} doesn't support vision - trying anyway"
             )
 
         # Check JSON mode
         if kwargs.get("response_format", {}).get("type") == "json_object":
             if not self.supports_feature("json_mode"):
-                log.warning(
-                    f"JSON mode requested but {self.detected_provider}/{self.model} doesn't support JSON mode"
+                log.debug(
+                    f"JSON mode requested but {self.detected_provider}/{self.model} doesn't support JSON mode - trying anyway"
                 )
                 validated_kwargs = {
                     k: v for k, v in kwargs.items() if k != "response_format"

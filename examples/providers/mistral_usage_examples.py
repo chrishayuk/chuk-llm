@@ -50,6 +50,10 @@ try:
         demo_structured_outputs,
         demo_conversation,
         demo_model_discovery,
+        demo_audio_input,
+        demo_parameters,
+        demo_model_comparison,
+        demo_dynamic_model_call,
         demo_error_handling,
         run_all_demos,
     )
@@ -64,8 +68,8 @@ async def main():
     parser = argparse.ArgumentParser(description="Mistral AI Provider Examples")
     parser.add_argument(
         "--model",
-        default="mistral-medium-2505",
-        help="Model to use (default: mistral-medium-2505)",
+        default="mistral-medium-latest",
+        help="Model to use (default: mistral-medium-latest)",
     )
     parser.add_argument(
         "--skip-tools", action="store_true", help="Skip function calling demo"
@@ -76,8 +80,8 @@ async def main():
     parser.add_argument(
         "--demo",
         type=int,
-        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-        help="Run specific demo (1=basic, 2=streaming, 3=tools, 4=vision, 5=json, 6=reasoning, 7=structured, 8=conversation, 9=discovery, 10=errors)",
+        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+        help="Run specific demo (1=basic, 2=streaming, 3=tools, 4=vision, 5=json, 6=reasoning, 7=structured, 8=conversation, 9=discovery, 10=audio, 11=parameters, 12=comparison, 13=dynamic, 14=errors)",
     )
 
     args = parser.parse_args()
@@ -103,7 +107,11 @@ async def main():
             7: ("Structured Outputs", demo_structured_outputs(client, "mistral", args.model)),
             8: ("Conversation", demo_conversation(client, "mistral", args.model)),
             9: ("Model Discovery", demo_model_discovery(client, "mistral", args.model)),
-            10: ("Error Handling", demo_error_handling(client, "mistral", args.model)),
+            10: ("Audio Input", demo_audio_input(client, "mistral", args.model)),
+            11: ("Parameters", demo_parameters(client, "mistral", args.model)),
+            12: ("Model Comparison", demo_model_comparison("mistral", ["mistral-small-latest", "mistral-medium-latest"])),
+            13: ("Dynamic Model Call", demo_dynamic_model_call("mistral")),
+            14: ("Error Handling", demo_error_handling(client, "mistral", args.model)),
         }
 
         name, demo_coro = demo_map[args.demo]

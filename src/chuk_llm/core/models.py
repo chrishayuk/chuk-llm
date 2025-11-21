@@ -54,7 +54,35 @@ class ImageDataContent(BaseModel):
     model_config = ConfigDict(frozen=True)
 
 
-ContentPart = TextContent | ImageUrlContent | ImageDataContent
+class InputAudioContent(BaseModel):
+    """Audio input content part (OpenAI format)."""
+
+    type: Literal[ContentType.INPUT_AUDIO] = ContentType.INPUT_AUDIO
+    input_audio: dict[str, str]  # {"data": base64, "format": "wav"}
+
+    model_config = ConfigDict(frozen=True)
+
+
+class AudioUrlContent(BaseModel):
+    """Audio URL content part."""
+
+    type: Literal[ContentType.AUDIO_URL] = ContentType.AUDIO_URL
+    audio_url: str | dict[str, str]  # URL or {"url": "...", "format": "wav"}
+
+    model_config = ConfigDict(frozen=True)
+
+
+class AudioDataContent(BaseModel):
+    """Base64 audio data content part."""
+
+    type: Literal[ContentType.AUDIO_DATA] = ContentType.AUDIO_DATA
+    audio_data: str  # base64 encoded
+    mime_type: str = "audio/wav"
+
+    model_config = ConfigDict(frozen=True)
+
+
+ContentPart = TextContent | ImageUrlContent | ImageDataContent | InputAudioContent | AudioUrlContent | AudioDataContent
 
 
 # ================================================================
@@ -154,7 +182,7 @@ class Message(BaseModel):
             return v
         if isinstance(v, list):
             if not all(
-                isinstance(part, (TextContent, ImageUrlContent, ImageDataContent))
+                isinstance(part, (TextContent, ImageUrlContent, ImageDataContent, InputAudioContent, AudioUrlContent, AudioDataContent))
                 for part in v
             ):
                 raise ValueError("All content parts must be valid ContentPart types")

@@ -379,24 +379,25 @@ class AnthropicLLMClient(
         out: list[dict[str, Any]] = []
 
         for msg in messages:
-            role = msg.get("role")
+            role = _safe_get(msg, "role")
 
             if role == MessageRole.SYSTEM:
-                sys_txt.append(msg.get("content", ""))
+                sys_txt.append(_safe_get(msg, "content", ""))
                 continue
 
             # assistant function calls → tool_use blocks
-            if role == MessageRole.ASSISTANT and msg.get("tool_calls"):
+            if role == MessageRole.ASSISTANT and _safe_get(msg, "tool_calls"):
+                tool_calls = _safe_get(msg, "tool_calls")
                 blocks = [
                     {
                         "type": "tool_use",
-                        "id": tc["id"],
-                        "name": tc["function"][
-                            "name"
-                        ],  # Should contain sanitized names
-                        "input": json.loads(tc["function"].get("arguments", "{}")),
+                        "id": _safe_get(tc, "id"),
+                        "name": _safe_get(_safe_get(tc, "function"), "name"),
+                        "input": json.loads(
+                            _safe_get(_safe_get(tc, "function"), "arguments", "{}")
+                        ),
                     }
-                    for tc in msg["tool_calls"]
+                    for tc in tool_calls
                 ]
                 out.append({"role": MessageRole.ASSISTANT, "content": blocks})
                 continue
@@ -409,9 +410,9 @@ class AnthropicLLMClient(
                         "content": [
                             {
                                 "type": "tool_result",
-                                "tool_use_id": msg.get("tool_call_id")
-                                or msg.get("id", f"tr_{uuid.uuid4().hex[:8]}"),
-                                "content": msg.get("content") or "",
+                                "tool_use_id": _safe_get(msg, "tool_call_id")
+                                or _safe_get(msg, "id", f"tr_{uuid.uuid4().hex[:8]}"),
+                                "content": _safe_get(msg, "content") or "",
                             }
                         ],
                     }
@@ -420,7 +421,7 @@ class AnthropicLLMClient(
 
             # normal / multimodal messages with universal vision support
             if role in {MessageRole.USER, MessageRole.ASSISTANT}:
-                cont = msg.get("content")
+                cont = _safe_get(msg, "content")
                 if cont is None:
                     continue
 
@@ -432,8 +433,7 @@ class AnthropicLLMClient(
                 elif isinstance(cont, list):
                     # Multimodal content - check if vision is supported
                     has_vision_content = any(
-                        isinstance(item, dict) and item.get("type") == "image_url"
-                        for item in cont
+                        _safe_get(item, "type") == "image_url" for item in cont
                     )
 
                     if has_vision_content and not self.supports_feature("vision"):
@@ -444,10 +444,7 @@ class AnthropicLLMClient(
                         text_only_content = [
                             item
                             for item in cont
-                            if not (
-                                isinstance(item, dict)
-                                and item.get("type") == "image_url"
-                            )
+                            if _safe_get(item, "type") != "image_url"
                         ]
                         if text_only_content:
                             out.append({"role": role, "content": text_only_content})
@@ -456,23 +453,30 @@ class AnthropicLLMClient(
                     # Process multimodal content - convert universal format to Anthropic
                     anthropic_content = []
                     for item in cont:
-                        if isinstance(item, dict):
-                            if item.get("type") == "text":
+                        item_type = _safe_get(item, "type")
+                        if item_type == "text":
+                            # Convert Pydantic object to dict if needed
+                            if isinstance(item, dict):
                                 anthropic_content.append(item)
-                            elif item.get("type") == "image_url":
-                                # Convert universal image_url to Anthropic format with async support
-                                anthropic_item = await self._convert_universal_vision_to_anthropic_async(
-                                    item
-                                )
-                                anthropic_content.append(anthropic_item)
                             else:
-                                # Pass through other formats
-                                anthropic_content.append(item)
-                        else:
-                            # Handle non-dict items
-                            anthropic_content.append(
-                                {"type": "text", "text": str(item)}
+                                anthropic_content.append(
+                                    {"type": "text", "text": _safe_get(item, "text")}
+                                )
+                        elif item_type == "image_url":
+                            # Convert universal image_url to Anthropic format with async support
+                            anthropic_item = await self._convert_universal_vision_to_anthropic_async(
+                                item
                             )
+                            anthropic_content.append(anthropic_item)
+                        else:
+                            # Pass through other formats - convert to dict if needed
+                            if isinstance(item, dict):
+                                anthropic_content.append(item)
+                            else:
+                                # Handle non-dict items (Pydantic objects)
+                                anthropic_content.append(
+                                    {"type": "text", "text": str(item)}
+                                )
 
                     out.append({"role": role, "content": anthropic_content})
                 else:
@@ -555,16 +559,15 @@ class AnthropicLLMClient(
         messages = _ensure_pydantic_messages(messages)
         tools = _ensure_pydantic_tools(tools)
 
-        # Convert Pydantic to dicts using built-in .to_dict() method
+        # Convert messages to dicts
         dict_messages = [msg.to_dict() for msg in messages]
-        dict_tools = [tool.to_dict() for tool in tools] if tools else None
 
-        # Validate capabilities using configuration
-        if dict_tools and not self.supports_feature("tools"):
+        # Validate capabilities using configuration (keep tools as Pydantic for now)
+        if tools and not self.supports_feature("tools"):
             log.warning(
                 f"Tools provided but model {self.model} doesn't support tools according to configuration"
             )
-            dict_tools = None
+            tools = None
 
         if stream and not self.supports_feature("streaming"):
             log.warning(
@@ -574,14 +577,21 @@ class AnthropicLLMClient(
 
         # Apply universal tool name sanitization (stores mapping for restoration)
         name_mapping = {}
-        if dict_tools:
+        dict_tools = None
+        if tools:
             from chuk_llm.core.models import Tool as ToolModel
 
-            sanitized_tools = self._sanitize_tool_names(dict_tools)
+            sanitized_tools = self._sanitize_tool_names(tools)
             # After sanitization, tools are always Pydantic Tool models
-            assert isinstance(sanitized_tools, list) and all(
-                isinstance(t, ToolModel) for t in sanitized_tools
-            )
+            if not isinstance(sanitized_tools, list):
+                raise ValueError(
+                    f"Expected sanitized_tools to be a list, got {type(sanitized_tools)}"
+                )
+            for i, t in enumerate(sanitized_tools):
+                if not isinstance(t, ToolModel):
+                    raise ValueError(
+                        f"Expected tool at index {i} to be ToolModel, got {type(t)}: {t}"
+                    )
 
             name_mapping = self._current_name_mapping
             log.debug(

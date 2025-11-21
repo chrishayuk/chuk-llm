@@ -50,6 +50,10 @@ try:
         demo_structured_outputs,
         demo_conversation,
         demo_model_discovery,
+        demo_audio_input,
+        demo_parameters,
+        demo_model_comparison,
+        demo_dynamic_model_call,
         demo_error_handling,
         run_all_demos,
     )
@@ -76,8 +80,8 @@ async def main():
     parser.add_argument(
         "--demo",
         type=int,
-        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-        help="Run specific demo (1=basic, 2=streaming, 3=tools, 4=vision, 5=json, 6=reasoning, 7=structured, 8=conversation, 9=discovery, 10=errors)",
+        choices=[1, 2, 4, 5, 6, 7, 8, 9, 11, 13, 14],
+        help="Run specific demo (1=basic, 2=streaming, 4=vision, 5=json, 6=reasoning, 7=structured, 8=conversation, 9=discovery, 11=parameters, 13=dynamic, 14=errors)",
     )
 
     args = parser.parse_args()
@@ -103,7 +107,11 @@ async def main():
             7: ("Structured Outputs", demo_structured_outputs(client, "perplexity", args.model)),
             8: ("Conversation", demo_conversation(client, "perplexity", args.model)),
             9: ("Model Discovery", demo_model_discovery(client, "perplexity", args.model)),
-            10: ("Error Handling", demo_error_handling(client, "perplexity", args.model)),
+            10: ("Audio Input", demo_audio_input(client, "perplexity", args.model)),
+            11: ("Parameters", demo_parameters(client, "perplexity", args.model)),
+            12: ("Model Comparison", demo_model_comparison("perplexity", ['llama-3.1-sonar-small-128k-online', 'llama-3.1-sonar-large-128k-online'])),
+            13: ("Dynamic Model Call", demo_dynamic_model_call("perplexity")),
+            14: ("Error Handling", demo_error_handling(client, "perplexity", args.model)),
         }
 
         name, demo_coro = demo_map[args.demo]
@@ -114,23 +122,44 @@ async def main():
             import traceback
             traceback.print_exc()
     else:
-        # Run all demos
-        # Note: Perplexity doesn't support function calling or standard JSON mode
-        await run_all_demos(
-            client,
-            "perplexity",
-            args.model,
-            skip_tools=True,  # Perplexity doesn't support tool calling
-            skip_vision=args.skip_vision
-        )
+        # Run all demos - Perplexity handles requests gracefully even for unsupported features
+        demos = [
+            ("Basic Completion", demo_basic_completion(client, "perplexity", args.model)),
+            ("Streaming", demo_streaming(client, "perplexity", args.model)),
+            # Skip function calling - Perplexity doesn't support tools
+        ]
+
+        if not args.skip_vision:
+            demos.append(("Vision", demo_vision(client, "perplexity", args.model)))
+
+        demos.extend([
+            ("JSON Mode", demo_json_mode(client, "perplexity", args.model)),
+            ("Reasoning", demo_reasoning(client, "perplexity", args.model)),
+            ("Structured Outputs", demo_structured_outputs(client, "perplexity", args.model)),
+            ("Conversation", demo_conversation(client, "perplexity", args.model)),
+            ("Model Discovery", demo_model_discovery(client, "perplexity", args.model)),
+            # Skip audio - causes API errors
+            ("Parameters", demo_parameters(client, "perplexity", args.model)),
+            # Skip model comparison for now
+            ("Dynamic Model Call", demo_dynamic_model_call("perplexity")),
+            ("Error Handling", demo_error_handling(client, "perplexity", args.model)),
+        ])
+
+        for name, demo_coro in demos:
+            try:
+                await demo_coro
+            except Exception as e:
+                print(f"\n❌ Error in {name}: {e}")
+                import traceback
+                traceback.print_exc()
 
     print("\n" + "=" * 70)
     print("✅ All demos completed!")
     print("=" * 70)
     print("\nℹ️  Tips:")
     print("  - Use --demo N to run specific demo")
-    print("  - Use --skip-tools to skip function calling")
-    print("  - Use --skip-vision to skip vision demo")
+    print("  - Perplexity specializes in search-grounded responses with citations")
+    print("  - Demos 3 (tools), 10 (audio), 12 (comparison) skipped - not supported")
     print("=" * 70)
 
 

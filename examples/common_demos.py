@@ -62,10 +62,6 @@ async def demo_streaming(client, provider: str, model: str):
     print("Demo 2: Streaming")
     print(f"{'='*70}")
 
-    config = get_config()
-    if not config.supports_feature(provider, Feature.STREAMING, model):
-        print(f"⚠️  Model {model} doesn't support streaming")
-        return None
 
     messages = [
         Message(
@@ -108,11 +104,6 @@ async def demo_function_calling(client, provider: str, model: str):
     print(f"\n{'='*70}")
     print("Demo 3: Function Calling")
     print(f"{'='*70}")
-
-    config = get_config()
-    if not config.supports_feature(provider, Feature.TOOLS, model):
-        print(f"⚠️  Model {model} doesn't support function calling")
-        return None
 
     tools = [
         Tool(
@@ -172,11 +163,21 @@ async def demo_function_calling(client, provider: str, model: str):
 
     response = await client.create_completion(messages, tools=tools)
 
-    if response.get("tool_calls"):
-        print(f"\n🔧 Model called {len(response['tool_calls'])} function(s):")
+    # Handle multiple rounds of tool calling (some models call tools sequentially)
+    max_rounds = 5
+    round_num = 0
+
+    while response.get("tool_calls") and round_num < max_rounds:
+        round_num += 1
+        tool_calls = response["tool_calls"]
+
+        if round_num == 1:
+            print(f"\n🔧 Model called {len(tool_calls)} function(s):")
+        else:
+            print(f"\n🔧 Round {round_num}: Model called {len(tool_calls)} more function(s):")
 
         tool_results = []
-        for tool_call in response["tool_calls"]:
+        for tool_call in tool_calls:
             func_name = tool_call["function"]["name"]
             func_args = json.loads(tool_call["function"]["arguments"])
 
@@ -220,13 +221,14 @@ async def demo_function_calling(client, provider: str, model: str):
                 )
             )
 
-        print("\n⏳ Getting final response...")
-        final_response = await client.create_completion(messages, tools=tools)
+        print(f"\n⏳ Getting {'final ' if round_num > 0 else ''}response...")
+        response = await client.create_completion(messages, tools=tools)
 
+    # Now we have the final response (no more tool calls)
+    if round_num > 0:
         print(f"\n✅ Final Response:")
-        print(f"{final_response['response']}")
-
-        return final_response
+        print(f"{response['response']}")
+        return response
     else:
         print(f"\n✅ Response (no function calls):")
         print(f"{response['response']}")
@@ -242,11 +244,6 @@ async def demo_vision(client, provider: str, model: str):
     print(f"\n{'='*70}")
     print("Demo 4: Vision/Multimodal")
     print(f"{'='*70}")
-
-    config = get_config()
-    if not config.supports_feature(provider, Feature.VISION, model):
-        print(f"⚠️  Model {model} doesn't support vision")
-        return None
 
     # Simple 16x16 red square image (properly encoded PNG)
     red_square_base64 = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAIElEQVR4nGP8z0AaYCJRPcOoBmIAE1GqkMCoBmIAyRoAQC4BH1m1rqAAAAAASUVORK5CYII="
@@ -291,10 +288,6 @@ async def demo_vision_url(client, provider: str, model: str):
     print("Demo 4b: Vision with Public URL")
     print(f"{'='*70}")
 
-    config = get_config()
-    if not config.supports_feature(provider, Feature.VISION, model):
-        print(f"⚠️  Model {model} doesn't support vision")
-        return None
 
     # Use a stable, public domain image - Unsplash logo (public API)
     # This is a direct image link that allows programmatic access
@@ -347,10 +340,6 @@ async def demo_json_mode(client, provider: str, model: str):
     print("Demo 5: JSON Mode")
     print(f"{'='*70}")
 
-    config = get_config()
-    if not config.supports_feature(provider, Feature.JSON_MODE, model):
-        print(f"⚠️  Model {model} doesn't support JSON mode")
-        return None
 
     messages = [
         Message(
@@ -473,10 +462,6 @@ async def demo_structured_outputs(client, provider: str, model: str):
     print("Demo 7: Structured Outputs (JSON Schema)")
     print(f"{'='*70}")
 
-    config = get_config()
-    if not config.supports_feature(provider, Feature.JSON_MODE, model):
-        print(f"⚠️  Model {model} doesn't support structured outputs/JSON mode")
-        return None
 
     # Define a JSON schema for structured output
     schema = {
@@ -568,7 +553,7 @@ Output ONLY these fields, no additional properties."""
 async def demo_conversation(client, provider: str, model: str):
     """Multi-turn conversation with context memory"""
     print(f"\n{'='*70}")
-    print("Demo 7: Multi-turn Conversation")
+    print("Demo 8: Multi-turn Conversation")
     print(f"{'='*70}")
 
     conversation = [
@@ -613,95 +598,18 @@ async def demo_model_discovery(client, provider: str, model: str):
     print(f"{'='*70}")
 
     try:
-        # Try to import the appropriate discoverer
-        discoverer = None
-
-        if provider == "openai":
-            from chuk_llm.llm.discovery.openai_discoverer import OpenAIModelDiscoverer
-            import os
-            discoverer = OpenAIModelDiscoverer(
-                provider_name="openai",
-                api_key=os.getenv("OPENAI_API_KEY")
-            )
-        elif provider == "anthropic":
-            from chuk_llm.llm.discovery.anthropic_discoverer import AnthropicModelDiscoverer
-            import os
-            discoverer = AnthropicModelDiscoverer(
-                provider_name="anthropic",
-                api_key=os.getenv("ANTHROPIC_API_KEY")
-            )
-        elif provider == "ollama":
-            from chuk_llm.llm.discovery.ollama_discoverer import OllamaModelDiscoverer
-            discoverer = OllamaModelDiscoverer(provider_name="ollama")
-        elif provider == "azure_openai":
-            from chuk_llm.llm.discovery.azure_openai_discoverer import AzureOpenAIModelDiscoverer
-            import os
-            discoverer = AzureOpenAIModelDiscoverer(
-                provider_name="azure_openai",
-                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT")
-            )
-        elif provider == "mistral":
-            from chuk_llm.llm.discovery.mistral_discoverer import MistralModelDiscoverer
-            import os
-            discoverer = MistralModelDiscoverer(
-                provider_name="mistral",
-                api_key=os.getenv("MISTRAL_API_KEY")
-            )
-        elif provider == "watsonx":
-            from chuk_llm.llm.discovery.watsonx_discoverer import WatsonXModelDiscoverer
-            import os
-            discoverer = WatsonXModelDiscoverer(
-                provider_name="watsonx",
-                api_key=os.getenv("WATSONX_API_KEY"),
-                project_id=os.getenv("WATSONX_PROJECT_ID")
-            )
-        elif provider == "gemini":
-            from chuk_llm.llm.discovery.gemini_discoverer import GeminiModelDiscoverer
-            import os
-            discoverer = GeminiModelDiscoverer(
-                provider_name="gemini",
-                api_key=os.getenv("GOOGLE_API_KEY")
-            )
-        elif provider in ["deepseek", "groq", "openrouter", "perplexity"]:
-            # OpenAI-compatible providers can use OpenAI discoverer
-            from chuk_llm.llm.discovery.openai_discoverer import OpenAIModelDiscoverer
-            import os
-
-            api_key_map = {
-                "deepseek": "DEEPSEEK_API_KEY",
-                "groq": "GROQ_API_KEY",
-                "openrouter": "OPENROUTER_API_KEY",
-                "perplexity": "PERPLEXITY_API_KEY",
-            }
-
-            api_base_map = {
-                "deepseek": "https://api.deepseek.com",
-                "groq": "https://api.groq.com/openai",
-                "openrouter": "https://openrouter.ai/api",
-                "perplexity": "https://api.perplexity.ai",
-            }
-
-            discoverer = OpenAIModelDiscoverer(
-                provider_name=provider,
-                api_key=os.getenv(api_key_map[provider]),
-                api_base=api_base_map[provider]
-            )
-        else:
-            print(f"⚠️  Model discovery not available for {provider}")
-            print(f"   Supported providers: openai, anthropic, ollama, azure_openai, mistral, watsonx, gemini, deepseek, groq, openrouter, perplexity")
-            return None
+        from chuk_llm.api.discovery import discover_models
 
         print(f"⏳ Discovering models from {provider}...")
 
-        models = await discoverer.discover_models()
+        models = await discover_models(provider, force_refresh=True)
 
         print(f"\n✅ Found {len(models)} models\n")
 
         # Show first 10 models
         print("Available models:")
         for model_info in models[:10]:
-            model_id = model_info.get("id", model_info.get("name", "unknown"))
+            model_id = model_info.get("name", model_info.get("id", "unknown"))
             print(f"  • {model_id}")
 
         if len(models) > 10:
@@ -715,13 +623,258 @@ async def demo_model_discovery(client, provider: str, model: str):
 
 
 # =============================================================================
-# Demo 10: Error Handling
+# Demo 10: Audio Input (Multimodal)
+# =============================================================================
+
+async def demo_audio_input(client, provider: str, model: str):
+    """Audio input - works with providers that support it"""
+    print(f"\n{'='*70}")
+    print("Demo 10: Audio Input (Multimodal)")
+    print(f"{'='*70}")
+
+
+    print(f"Provider: {provider}")
+    print(f"Model: {model}")
+    print(f"User: Listen to this audio and describe what you hear")
+
+    # Generate a minimal WAV file with synthesized audio (440Hz sine wave = musical note A)
+    import wave
+    import struct
+    import math
+    import tempfile
+    import os
+    import base64
+
+    # Generate 1 second of 440Hz sine wave (musical note A)
+    sample_rate = 16000  # 16kHz
+    duration = 1.0
+    frequency = 440.0
+
+    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+        wav_file = f.name
+
+    with wave.open(wav_file, 'w') as wav:
+        wav.setnchannels(1)  # Mono
+        wav.setsampwidth(2)  # 16-bit
+        wav.setframerate(sample_rate)
+
+        for i in range(int(sample_rate * duration)):
+            value = int(32767 * math.sin(2 * math.pi * frequency * i / sample_rate))
+            wav.writeframes(struct.pack('<h', value))
+
+    # Read and encode the audio
+    with open(wav_file, 'rb') as audio_file:
+        audio_data = base64.b64encode(audio_file.read()).decode('utf-8')
+
+    # Clean up temp file
+    os.unlink(wav_file)
+
+    try:
+        from chuk_llm.core.models import InputAudioContent
+
+        messages = [
+            Message(
+                role=MessageRole.USER,
+                content=[
+                    TextContent(type=ContentType.TEXT, text="What do you hear in this audio? It's a musical note."),
+                    InputAudioContent(
+                        type=ContentType.INPUT_AUDIO,
+                        input_audio={
+                            "data": audio_data,
+                            "format": "wav"
+                        }
+                    )
+                ]
+            )
+        ]
+
+        print("Audio: [1 second of 440Hz sine wave - musical note A]")
+        print("\n⏳ Analyzing audio...")
+
+        start = time.time()
+        response = await client.create_completion(messages, stream=False)
+        elapsed = time.time() - start
+
+        print(f"\n✅ Response ({elapsed:.2f}s):")
+        print(response['response'])
+
+        return response
+
+    except ImportError:
+        print("⚠️  InputAudioContent not available in this version")
+        return None
+    except Exception as e:
+        print(f"⚠️  Audio demo failed: {e}")
+        print("    Audio models may require special access or different API format")
+        return None
+
+
+# =============================================================================
+# Demo 11: Temperature and Sampling Parameters
+# =============================================================================
+
+async def demo_parameters(client, provider: str, model: str):
+    """Temperature and sampling parameters demonstration"""
+    print(f"\n{'='*70}")
+    print("Demo 11: Temperature and Sampling Parameters")
+    print(f"{'='*70}")
+
+    print(f"Provider: {provider}")
+    print(f"Model: {model}")
+    print(f"Prompt: Write the first sentence of a story about a robot.\n")
+
+    temperatures = [0.0, 0.5, 1.0, 1.5]
+
+    for temp in temperatures:
+        messages = [
+            Message(
+                role=MessageRole.USER,
+                content="Write the first sentence of a story about a robot."
+            ),
+        ]
+
+        try:
+            response = await client.create_completion(
+                messages,
+                temperature=temp,
+                max_tokens=100
+            )
+
+            print(f"Temperature {temp}:")
+            print(f"  {response['response']}\n")
+
+        except Exception as e:
+            print(f"Temperature {temp}: ⚠️  Error - {e}\n")
+
+    print("✅ Lower temperature = more deterministic")
+    print("   Higher temperature = more creative/random")
+
+    return None
+
+
+# =============================================================================
+# Demo 12: Model Comparison
+# =============================================================================
+
+async def demo_model_comparison(provider: str, models: list[str]):
+    """Compare multiple models side by side"""
+    print(f"\n{'='*70}")
+    print("Demo 12: Model Comparison")
+    print(f"{'='*70}")
+
+    from chuk_llm.llm.client import get_client
+
+    prompt = "Explain quantum entanglement in one sentence."
+
+    print(f"Provider: {provider}")
+    print(f"Comparing {len(models)} models")
+    print(f"Prompt: {prompt}\n")
+
+    for model in models:
+        try:
+            client = get_client(provider, model=model)
+            messages = [
+                Message(
+                    role=MessageRole.USER,
+                    content=prompt
+                )
+            ]
+
+            start_time = time.time()
+            response = await client.create_completion(messages, max_tokens=100)
+            duration = time.time() - start_time
+
+            print(f"{model} ({duration:.2f}s):")
+            print(f"  {response['response']}\n")
+
+        except Exception as e:
+            print(f"{model}: ❌ Error - {e}\n")
+
+    return None
+
+
+# =============================================================================
+# Demo 13: Dynamic Model Call (Discovery + Usage)
+# =============================================================================
+
+async def demo_dynamic_model_call(provider: str):
+    """Discover models and call one of them dynamically"""
+    print(f"\n{'='*70}")
+    print("Demo 13: Call Dynamically Discovered Model")
+    print(f"{'='*70}")
+
+    try:
+        from chuk_llm.api.discovery import discover_models
+        from chuk_llm.llm.client import get_client
+
+        print(f"⏳ Step 1: Discovering available models from {provider}...")
+
+        models = await discover_models(provider, force_refresh=True)
+
+        if not models:
+            print(f"❌ No models found for provider {provider}")
+            return None
+
+        # Find a suitable chat model (skip TTS/audio/image models)
+        target_model = None
+        skip_patterns = ["tts", "whisper", "audio", "realtime", "dall-e", "sora", "embedding", "moderation"]
+
+        for model in models:
+            model_id = model.get("name", model.get("id", ""))
+            if any(x in model_id.lower() for x in skip_patterns):
+                continue
+            target_model = model_id
+            break
+
+        if not target_model:
+            print(f"❌ No suitable chat model found")
+            return None
+
+        print(f"✅ Found {len(models)} models")
+        print(f"🎯 Selected model: {target_model}")
+
+        print(f"\n⏳ Step 2: Creating client for discovered model...")
+
+        client = get_client(provider, model=target_model)
+
+        print(f"✅ Client created")
+
+        print(f"\n⏳ Step 3: Making request to dynamically discovered model...")
+
+        messages = [
+            Message(
+                role=MessageRole.USER,
+                content="In one sentence, what makes you special?"
+            )
+        ]
+
+        response = await client.create_completion(messages, max_tokens=100)
+
+        print(f"\n✅ Response from {target_model}:")
+        print(f"{response['response']}")
+
+        print(f"\n💡 Dynamic Model Flow:")
+        print(f"   1. Discovered {len(models)} models from API")
+        print(f"   2. Selected '{target_model}' programmatically")
+        print(f"   3. Created client and made successful request")
+        print(f"   ✅ No hardcoded model names needed!")
+
+        return response
+    except Exception as e:
+        print(f"❌ Error in dynamic model call: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+# =============================================================================
+# Demo 14: Error Handling
 # =============================================================================
 
 async def demo_error_handling(client, provider: str, model: str):
     """Demonstrate error handling"""
     print(f"\n{'='*70}")
-    print("Demo 10: Error Handling")
+    print("Demo 14: Error Handling")
     print(f"{'='*70}")
 
     # Test 1: Invalid max_tokens
@@ -729,20 +882,18 @@ async def demo_error_handling(client, provider: str, model: str):
     try:
         messages = [Message(role=MessageRole.USER, content="Hello")]
         response = await client.create_completion(messages, max_tokens=-1)
-        print("  ✅ Request succeeded (provider accepted -1)")
+        print("  ✅ No exception raised (provider may have handled it)")
     except Exception as e:
-        print(f"  ✅ Caught error: {type(e).__name__}")
-        print(f"     {str(e)[:100]}")
+        print(f"  ✅ Exception raised and caught: {type(e).__name__}")
 
     # Test 2: Empty message
     print("\nTest 2: Handling empty messages")
     try:
         messages = []
         response = await client.create_completion(messages)
-        print("  ✅ Request succeeded with empty messages")
+        print("  ✅ No exception raised (provider may have handled it)")
     except Exception as e:
-        print(f"  ✅ Caught error: {type(e).__name__}")
-        print(f"     {str(e)[:100]}")
+        print(f"  ✅ Exception raised and caught: {type(e).__name__}")
 
     # Test 3: Very long input (might hit context limit)
     print("\nTest 3: Handling context limits")
@@ -750,10 +901,9 @@ async def demo_error_handling(client, provider: str, model: str):
         long_text = "Hello " * 50000  # Very long text
         messages = [Message(role=MessageRole.USER, content=long_text)]
         response = await client.create_completion(messages, max_tokens=10)
-        print("  ✅ Request succeeded (provider handled long input)")
+        print("  ✅ Provider handled very long input")
     except Exception as e:
-        print(f"  ✅ Caught error: {type(e).__name__}")
-        print(f"     Error handled gracefully")
+        print(f"  ✅ Exception raised and caught: {type(e).__name__}")
 
     print("\n✅ Error handling demonstration complete")
     return None
@@ -763,7 +913,7 @@ async def demo_error_handling(client, provider: str, model: str):
 # Demo Runner Helper
 # =============================================================================
 
-async def run_all_demos(client, provider: str, model: str, skip_tools=False, skip_vision=False, skip_discovery=False):
+async def run_all_demos(client, provider: str, model: str, skip_tools=False, skip_vision=False, skip_discovery=False, skip_audio=False, skip_parameters=False, skip_comparison=False, comparison_models=None):
     """Run all demos for a provider"""
     demos = [
         ("Basic Completion", demo_basic_completion(client, provider, model)),
@@ -786,6 +936,22 @@ async def run_all_demos(client, provider: str, model: str, skip_tools=False, ski
 
     if not skip_discovery:
         demos.append(("Model Discovery", demo_model_discovery(client, provider, model)))
+
+    # Audio input demo (may not be supported by all providers/models)
+    if not skip_audio:
+        demos.append(("Audio Input", demo_audio_input(client, provider, model)))
+
+    # Temperature/parameters demo
+    if not skip_parameters:
+        demos.append(("Parameters", demo_parameters(client, provider, model)))
+
+    # Model comparison (if models provided)
+    if not skip_comparison and comparison_models:
+        demos.append(("Model Comparison", demo_model_comparison(provider, comparison_models)))
+
+    # Dynamic model call
+    if not skip_discovery:
+        demos.append(("Dynamic Model Call", demo_dynamic_model_call(provider)))
 
     demos.append(("Error Handling", demo_error_handling(client, provider, model)))
 

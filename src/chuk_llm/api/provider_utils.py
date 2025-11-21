@@ -4,6 +4,8 @@
 import os
 from typing import Any, cast
 
+from chuk_llm.core.enums import Provider
+
 
 def get_provider_default_model(provider: str) -> str | None:
     """Get the default model for a provider from YAML configuration.
@@ -186,15 +188,15 @@ def get_all_providers() -> list[str]:
 
     # Fallback to common providers
     return [
-        "openai",
-        "anthropic",
-        "gemini",
-        "groq",
-        "mistral",
-        "ollama",
-        "deepseek",
-        "perplexity",
-        "watsonx",
+        Provider.OPENAI.value,
+        Provider.ANTHROPIC.value,
+        Provider.GEMINI.value,
+        Provider.GROQ.value,
+        Provider.MISTRAL.value,
+        Provider.OLLAMA.value,
+        Provider.DEEPSEEK.value,
+        Provider.PERPLEXITY.value,
+        Provider.WATSONX.value,
     ]
 
 

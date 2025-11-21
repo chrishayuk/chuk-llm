@@ -77,7 +77,10 @@ class ModelCapabilities(BaseModel):
     supports_vision: bool | None = Field(None, description="Image/vision input support")
     supports_audio: bool | None = Field(None, description="Audio input support")
     supports_json_mode: bool | None = Field(
-        None, description="Structured JSON output mode"
+        None, description="Basic JSON output mode (response_format={type: json_object})"
+    )
+    supports_structured_outputs: bool | None = Field(
+        None, description="Structured outputs with JSON Schema (response_format={type: json_schema})"
     )
     supports_streaming: bool | None = Field(
         None, description="Streaming response support"
@@ -92,20 +95,12 @@ class ModelCapabilities(BaseModel):
         description="Supported parameters (e.g., {'temperature', 'top_p', 'max_tokens'})",
     )
 
-    # Pricing (from provider APIs or static data)
-    input_cost_per_1m: float | None = Field(
-        None, description="Cost per 1M input tokens (USD)"
-    )
-    output_cost_per_1m: float | None = Field(
-        None, description="Cost per 1M output tokens (USD)"
-    )
-
-    # Soft capabilities (inferred or measured)
+    # Performance metrics (measured via testing)
     quality_tier: QualityTier = Field(
         QualityTier.UNKNOWN, description="Quality tier classification"
     )
-    speed_hint_tps: float | None = Field(
-        None, description="Typical tokens per second (measured or estimated)"
+    tokens_per_second: float | None = Field(
+        None, description="Measured tokens per second from benchmarks"
     )
 
     # Metadata
@@ -173,10 +168,10 @@ class ModelQuery(BaseModel):
     requires_json_mode: bool = False
 
     min_context: int | None = None
-    max_context: int | None = None  # For cost optimization
+    max_context: int | None = None
 
     quality_tier: QualityTier | Literal["any"] = "any"
-    max_cost_per_1m_input: float | None = None
+    min_speed_tps: float | None = None  # Minimum tokens per second
 
     provider: str | None = None  # Filter to specific provider
     family: str | None = None  # Filter to model family
@@ -209,9 +204,9 @@ class ModelQuery(BaseModel):
         ):
             return False
 
-        # Cost constraints
-        if self.max_cost_per_1m_input and caps.input_cost_per_1m:
-            if caps.input_cost_per_1m > self.max_cost_per_1m_input:
+        # Speed constraints
+        if self.min_speed_tps and caps.tokens_per_second:
+            if caps.tokens_per_second < self.min_speed_tps:
                 return False
 
         # Quality tier

@@ -34,6 +34,7 @@ except ImportError as e:
     ) from e
 
 # Base imports
+from chuk_llm.core.enums import ContentType, MessageRole
 from chuk_llm.llm.core.base import BaseLLMClient
 from chuk_llm.llm.providers._config_mixin import ConfigAwareProviderMixin
 from chuk_llm.llm.providers._mixins import OpenAIStyleMixin
@@ -158,30 +159,19 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
             content = msg.get("content")
 
             # Handle different message types
-            if role == "system":
-                # Check if system messages are supported
-                if self.supports_feature("system_messages"):
-                    mistral_messages.append({"role": "system", "content": content})
-                else:
-                    # Fallback: convert to user message
-                    log.warning(
-                        f"System messages not supported by {self.model}, converting to user message"
-                    )
-                    mistral_messages.append(
-                        {"role": "user", "content": f"System: {content}"}
-                    )
+            if role == MessageRole.SYSTEM.value:
+                # Always try system messages - let API handle if not supported
+                mistral_messages.append({"role": MessageRole.SYSTEM.value, "content": content})
 
-            elif role == "user":
+            elif role == MessageRole.USER.value:
                 if isinstance(content, str):
                     # Simple text message
-                    mistral_messages.append({"role": "user", "content": content})
+                    mistral_messages.append({"role": MessageRole.USER.value, "content": content})
                 elif isinstance(content, list):
                     # Multimodal message (text + images) - both dict and Pydantic
-                    from chuk_llm.core.enums import ContentType
-
                     # Check if vision is supported before processing (both formats)
                     has_images = any(
-                        (isinstance(item, dict) and item.get("type") == "image_url")
+                        (isinstance(item, dict) and item.get("type") == ContentType.IMAGE_URL.value)
                         or (
                             hasattr(item, "type")
                             and item.type
@@ -191,13 +181,13 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                     )
 
                     if has_images and not self.supports_feature("vision"):
-                        log.warning(
-                            f"Vision content detected but {self.model} doesn't support vision according to configuration"
+                        log.debug(
+                            f"Vision content detected but {self.model} doesn't support vision - trying anyway"
                         )
                         # Extract only text content from both formats
                         text_parts = []
                         for item in content:
-                            if isinstance(item, dict) and item.get("type") == "text":
+                            if isinstance(item, dict) and item.get("type") == ContentType.TEXT.value:
                                 text_parts.append(item.get("text", ""))
                             elif (
                                 hasattr(item, "type") and item.type == ContentType.TEXT
@@ -206,7 +196,7 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
 
                         mistral_messages.append(
                             {
-                                "role": "user",
+                                "role": MessageRole.USER.value,
                                 "content": " ".join(text_parts)
                                 or "[Image content removed - not supported by model]",
                             }
@@ -217,11 +207,11 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                         for item in content:
                             if isinstance(item, dict):
                                 # Dict-based content
-                                if item.get("type") == "text":
+                                if item.get("type") == ContentType.TEXT.value:
                                     mistral_content.append(
-                                        {"type": "text", "text": item.get("text", "")}
+                                        {"type": ContentType.TEXT.value, "text": item.get("text", "")}
                                     )
-                                elif item.get("type") == "image_url":
+                                elif item.get("type") == ContentType.IMAGE_URL.value:
                                     image_url = item.get("image_url", {})
                                     url = (
                                         image_url.get("url", "")
@@ -252,7 +242,7 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                                             # Keep original URL and let Mistral handle the error
 
                                     mistral_content.append(
-                                        {"type": "image_url", "image_url": url}
+                                        {"type": ContentType.IMAGE_URL.value, "image_url": url}
                                     )
                             else:
                                 # Pydantic object-based content
@@ -261,7 +251,7 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                                     and item.type == ContentType.TEXT
                                 ):
                                     mistral_content.append(
-                                        {"type": "text", "text": item.text}
+                                        {"type": ContentType.TEXT.value, "text": item.text}
                                     )
                                 elif (
                                     hasattr(item, "type")
@@ -297,14 +287,14 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                                             # Keep original URL and let Mistral handle the error
 
                                     mistral_content.append(
-                                        {"type": "image_url", "image_url": url}
+                                        {"type": ContentType.IMAGE_URL.value, "image_url": url}
                                     )
 
                         mistral_messages.append(
-                            {"role": "user", "content": mistral_content}
+                            {"role": MessageRole.USER.value, "content": mistral_content}
                         )
 
-            elif role == "assistant":
+            elif role == MessageRole.ASSISTANT.value:
                 # Handle assistant messages with potential tool calls
                 if msg.get("tool_calls"):
                     # Check if tools are supported
@@ -328,7 +318,7 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                             tool_calls.append(
                                 {
                                     "id": tc.get("id"),
-                                    "type": tc.get("type", "function"),
+                                    "type": tc.get("type", MessageRole.FUNCTION.value),
                                     "function": {
                                         "name": sanitized_name,  # Use sanitized name for API
                                         "arguments": tc["function"]["arguments"],
@@ -338,7 +328,7 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
 
                         mistral_messages.append(
                             {
-                                "role": "assistant",
+                                "role": MessageRole.ASSISTANT.value,
                                 "content": content or "",
                                 "tool_calls": tool_calls,
                             }
@@ -350,19 +340,19 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                         # Convert to text response
                         tool_text = f"{content or ''}\n\nNote: Tool calls were requested but not supported by this model."
                         mistral_messages.append(
-                            {"role": "assistant", "content": tool_text}
+                            {"role": MessageRole.ASSISTANT.value, "content": tool_text}
                         )
                 else:
                     mistral_messages.append(
-                        {"role": "assistant", "content": content or ""}
+                        {"role": MessageRole.ASSISTANT.value, "content": content or ""}
                     )
 
-            elif role == "tool":
+            elif role == MessageRole.TOOL.value:
                 # Tool response messages - only include if tools are supported
                 if self.supports_feature("tools"):
                     mistral_messages.append(
                         {
-                            "role": "tool",
+                            "role": MessageRole.TOOL.value,
                             "name": msg.get("name", ""),
                             "content": content or "",
                             "tool_call_id": msg.get("tool_call_id", ""),
@@ -371,7 +361,7 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
                 else:
                     # Convert tool response to user message
                     mistral_messages.append(
-                        {"role": "user", "content": f"Tool result: {content or ''}"}
+                        {"role": MessageRole.USER.value, "content": f"Tool result: {content or ''}"}
                     )
 
         return mistral_messages
@@ -470,15 +460,15 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
 
         # Check streaming support
         if stream and not self.supports_feature("streaming"):
-            log.warning(
-                f"Streaming requested but {self.model} doesn't support streaming according to configuration"
+            log.debug(
+                f"Streaming requested but {self.model} doesn't support streaming - trying anyway"
             )
             validated_stream = False
 
         # Check tool support
         if tools and not self.supports_feature("tools"):
-            log.warning(
-                f"Tools provided but {self.model} doesn't support tools according to configuration"
+            log.debug(
+                f"Tools provided but {self.model} doesn't support tools - trying anyway"
             )
             validated_tools = None
             # Remove tool-related parameters
@@ -488,7 +478,7 @@ class MistralLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLM
         has_vision = any(
             isinstance(msg.get("content"), list)
             and any(
-                isinstance(item, dict) and item.get("type") == "image_url"
+                isinstance(item, dict) and item.get("type") == ContentType.IMAGE_URL.value
                 for item in msg.get("content", [])
             )
             for msg in messages

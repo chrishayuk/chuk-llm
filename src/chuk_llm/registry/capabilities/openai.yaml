@@ -1,0 +1,1011 @@
+# Auto-generated capability cache for openai
+# Last updated: 2025-11-21T08:22:39.523669
+# DO NOT EDIT MANUALLY - Run: python scripts/update_capabilities.py
+
+provider: openai
+last_updated: '2025-11-21T08:22:39.523669'
+families: {}
+models:
+  chatgpt-4o-latest:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:13:09.252310'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: true
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 115.05068830655138
+  gpt-3.5-turbo:
+    inherits_from: gpt-3.5
+    tested_at: '2025-11-21T08:13:16.483122'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 88.07585897322193
+  gpt-3.5-turbo-0125:
+    inherits_from: gpt-3.5
+    tested_at: '2025-11-21T08:13:22.886873'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 88.56205827461257
+  gpt-3.5-turbo-1106:
+    inherits_from: gpt-3.5
+    tested_at: '2025-11-21T08:13:29.800383'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 110.98205108858764
+  gpt-3.5-turbo-16k:
+    inherits_from: gpt-3.5
+    tested_at: '2025-11-21T08:13:37.889561'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 52.03241170496827
+  gpt-4:
+    inherits_from: gpt-4
+    tested_at: '2025-11-21T08:13:45.710777'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 34.90456145487501
+  gpt-4-0125-preview:
+    inherits_from: gpt-4
+    tested_at: '2025-11-21T08:13:59.717734'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 47.17495999994089
+  gpt-4-0613:
+    inherits_from: gpt-4
+    tested_at: '2025-11-21T08:14:10.290554'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 28.536082326862992
+  gpt-4-1106-preview:
+    inherits_from: gpt-4
+    tested_at: '2025-11-21T08:14:25.227834'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 44.415088453499976
+  gpt-4-turbo:
+    inherits_from: gpt-4
+    tested_at: '2025-11-21T08:14:37.715110'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: true
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 34.39681963821297
+  gpt-4-turbo-2024-04-09:
+    inherits_from: gpt-4
+    tested_at: '2025-11-21T08:14:54.039265'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: true
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 27.38663598051566
+  gpt-4-turbo-preview:
+    inherits_from: gpt-4
+    tested_at: '2025-11-21T08:15:08.904993'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 38.8005658131117
+  gpt-4.1:
+    inherits_from: gpt-4
+    tested_at: '2025-11-21T08:15:20.612855'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: true
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 49.463632808613745
+  gpt-4.1-2025-04-14:
+    inherits_from: gpt-4
+    tested_at: '2025-11-21T08:15:30.894786'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: true
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 41.4577174130888
+  gpt-4.1-mini:
+    inherits_from: gpt-4
+    tested_at: '2025-11-21T08:15:40.337367'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: true
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 54.08961859418932
+  gpt-4.1-mini-2025-04-14:
+    inherits_from: gpt-4
+    tested_at: '2025-11-21T08:15:50.453488'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: true
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 46.46415366516513
+  gpt-4.1-nano:
+    inherits_from: gpt-4
+    tested_at: '2025-11-21T08:16:01.231693'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: true
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 86.73173836664427
+  gpt-4.1-nano-2025-04-14:
+    inherits_from: gpt-4
+    tested_at: '2025-11-21T08:16:08.517564'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: true
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 56.90096874808303
+  gpt-4o:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:16:17.595036'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: true
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 28.113186196435155
+  gpt-4o-2024-05-13:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:16:29.723650'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: true
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 94.12165763846835
+  gpt-4o-2024-08-06:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:16:37.044160'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: true
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 35.294495498602515
+  gpt-4o-2024-11-20:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:16:48.558457'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: true
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 83.0168208310961
+  gpt-4o-audio-preview:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:16:57.849204'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: true
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 93.7344178383737
+  gpt-4o-audio-preview-2024-10-01:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:17:01.480214'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: true
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 46.15832942288882
+  gpt-4o-audio-preview-2024-12-17:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:17:06.880175'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: true
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 49.99949932599743
+  gpt-4o-audio-preview-2025-06-03:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:17:11.037415'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: true
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 45.263282850193065
+  gpt-4o-mini:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:17:15.844907'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: true
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 47.144317838609595
+  gpt-4o-mini-2024-07-18:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:17:30.568083'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: true
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 62.4632107887326
+  gpt-4o-mini-audio-preview:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:17:41.282181'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: true
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 48.162671008724686
+  gpt-4o-mini-audio-preview-2024-12-17:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:17:45.431359'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: true
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 86.18720954508616
+  gpt-4o-mini-realtime-preview:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:17:49.836563'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 75.4689584553327
+  gpt-4o-mini-realtime-preview-2024-12-17:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:17:54.861423'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 73.96499793193888
+  gpt-4o-mini-search-preview:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:17:59.668070'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 21.59422422591531
+  gpt-4o-mini-search-preview-2025-03-11:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:18:22.380549'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 25.47006435036107
+  gpt-4o-mini-transcribe:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:18:43.004100'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 143.4216052497692
+  gpt-4o-realtime-preview:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:18:46.216005'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 124.39585359233702
+  gpt-4o-realtime-preview-2024-10-01:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:18:50.028796'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 45.940656734965366
+  gpt-4o-realtime-preview-2024-12-17:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:18:55.226260'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 67.22946959393822
+  gpt-4o-realtime-preview-2025-06-03:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:19:01.359887'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 67.18199057883612
+  gpt-4o-search-preview:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:19:05.151750'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 24.539102134406658
+  gpt-4o-search-preview-2025-03-11:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:19:38.760164'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 17.39074623873443
+  gpt-4o-transcribe:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:20:18.471631'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 134.6867316882351
+  gpt-4o-transcribe-diarize:
+    inherits_from: gpt-4o
+    tested_at: '2025-11-21T08:20:21.515952'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 7.238741948820799
+  gpt-5-chat-latest:
+    inherits_from: gpt-5
+    tested_at: '2025-11-21T08:20:56.556539'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: true
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 80.26956165610476
+  gpt-5-codex:
+    inherits_from: gpt-5
+    tested_at: '2025-11-21T08:21:04.077356'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 90.58588774592867
+  gpt-5-pro:
+    inherits_from: gpt-5
+    tested_at: '2025-11-21T08:21:11.607669'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 78.80660056085038
+  gpt-5-pro-2025-10-06:
+    inherits_from: gpt-5
+    tested_at: '2025-11-21T08:21:15.826542'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 93.6227700681082
+  gpt-5-search-api:
+    inherits_from: gpt-5
+    tested_at: '2025-11-21T08:21:20.483108'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 69.42997249008165
+  gpt-5-search-api-2025-10-14:
+    inherits_from: gpt-5
+    tested_at: '2025-11-21T08:21:42.331198'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 71.94708601727523
+  gpt-5.1-codex:
+    inherits_from: gpt-5
+    tested_at: '2025-11-21T08:22:03.905049'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 118.16655596629472
+  gpt-5.1-codex-mini:
+    inherits_from: gpt-5
+    tested_at: '2025-11-21T08:22:07.160117'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 105.71532569987114
+  o1:
+    inherits_from: o1
+    tested_at: '2025-11-21T08:22:10.970268'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 112.06793913607599
+  o1-pro:
+    inherits_from: o1
+    tested_at: '2025-11-21T08:22:14.745955'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 91.53904968372503
+  o1-pro-2025-03-19:
+    inherits_from: o1
+    tested_at: '2025-11-21T08:22:17.930360'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 112.29917501966231
+  o3:
+    inherits_from: o3
+    tested_at: '2025-11-21T08:22:21.028986'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 95.66147142862356
+  o3-deep-research:
+    inherits_from: o3
+    tested_at: '2025-11-21T08:22:25.056030'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 73.89916243995798
+  o3-deep-research-2025-06-26:
+    inherits_from: o3
+    tested_at: '2025-11-21T08:22:28.348336'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 106.90039982796247
+  o3-pro:
+    inherits_from: o3
+    tested_at: '2025-11-21T08:22:33.012226'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 144.07534568831633
+  o3-pro-2025-06-10:
+    inherits_from: o3
+    tested_at: '2025-11-21T08:22:36.223268'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 144.3840448636503

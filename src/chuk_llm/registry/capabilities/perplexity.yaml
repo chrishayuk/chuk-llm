@@ -1,0 +1,114 @@
+# Perplexity Model Capabilities
+# Perplexity doesn't have a /models endpoint, so this is a static list
+
+provider: perplexity
+last_updated: '2025-01-21'
+families: {}
+models:
+  # Search Models - Real-time web search with citations
+  "sonar":
+    tested_at: '2025-01-21'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: 128000
+    max_output_tokens: 4096
+
+  "sonar-pro":
+    tested_at: '2025-01-21'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: 128000
+    max_output_tokens: 4096
+
+  # Reasoning Models - Real-time reasoning with search
+  "sonar-reasoning":
+    tested_at: '2025-01-21'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: 128000
+    max_output_tokens: 32768
+
+  "sonar-reasoning-pro":
+    tested_at: '2025-01-21'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: 128000
+    max_output_tokens: 32768
+
+  # Research Model - Long-form reports
+  "sonar-deep-research":
+    tested_at: '2025-01-21'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: 128000
+    max_output_tokens: 100000
+
+  # Deprecated but may still work
+  "llama-3.1-sonar-small-128k-online":
+    tested_at: '2025-01-21'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: 128000
+    max_output_tokens: 4096
+
+  "llama-3.1-sonar-large-128k-online":
+    tested_at: '2025-01-21'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: 128000
+    max_output_tokens: 4096
+
+  "llama-3.1-sonar-huge-128k-online":
+    tested_at: '2025-01-21'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: 128000
+    max_output_tokens: 4096

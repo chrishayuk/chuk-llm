@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 from typing import cast
 
+from chuk_llm.registry.cache import RegistryCache
 from chuk_llm.registry.models import (
     ModelCapabilities,
     ModelQuery,
@@ -34,7 +35,7 @@ class ModelRegistry:
         ```python
         registry = ModelRegistry(
             sources=[EnvProviderSource(), OllamaSource()],
-            resolvers=[StaticCapabilityResolver(), OllamaCapabilityResolver()]
+            resolvers=[YamlCapabilityResolver(), OllamaCapabilityResolver()]
         )
 
         models = await registry.get_models()
@@ -46,17 +47,22 @@ class ModelRegistry:
         self,
         sources: list[ModelSource],
         resolvers: list[CapabilityResolver],
+        enable_persistent_cache: bool = True,
+        cache_ttl_hours: int = 24,
     ):
         """
         Initialize the model registry.
 
         Args:
             sources: Model discovery sources (e.g., EnvProviderSource, OllamaSource)
-            resolvers: Capability resolvers (e.g., StaticCapabilityResolver)
+            resolvers: Capability resolvers (e.g., YamlCapabilityResolver, InferenceCapabilityResolver)
+            enable_persistent_cache: Enable persistent disk caching
+            cache_ttl_hours: Cache time-to-live in hours
         """
         self.sources = sources
         self.resolvers = resolvers
-        self._cache: dict[tuple[str, str], ModelWithCapabilities] | None = None
+        self._memory_cache: dict[tuple[str, str], ModelWithCapabilities] | None = None
+        self._disk_cache = RegistryCache(ttl_hours=cache_ttl_hours) if enable_persistent_cache else None
 
     async def get_models(
         self, *, force_refresh: bool = False
@@ -64,24 +70,44 @@ class ModelRegistry:
         """
         Get all available models with capabilities.
 
+        Caching strategy:
+        1. Check memory cache (fastest)
+        2. Check disk cache (~/.cache/chuk-llm/, 24h TTL)
+        3. Discover + resolve (slowest)
+
         Args:
-            force_refresh: If True, bypass cache and re-discover
+            force_refresh: If True, bypass all caches and re-discover
 
         Returns:
             List of models with capabilities
         """
-        # Check cache
-        if self._cache is not None and not force_refresh:
-            return list(self._cache.values())
+        # Check memory cache
+        if self._memory_cache is not None and not force_refresh:
+            return list(self._memory_cache.values())
 
         # Discover models from all sources
         specs = await self._discover_all_sources()
 
-        # Resolve capabilities for each model
-        models = await self._resolve_all_capabilities(specs)
+        # Resolve capabilities for each model (with disk caching)
+        models = []
+        for spec in specs:
+            # Try disk cache first
+            if self._disk_cache and not force_refresh:
+                cached_model = self._disk_cache.get_model(spec.provider, spec.name)
+                if cached_model:
+                    models.append(cached_model)
+                    continue
 
-        # Update cache
-        self._cache = {(m.spec.provider, m.spec.name): m for m in models}
+            # Resolve from resolvers
+            model = await self._resolve_capabilities(spec)
+            models.append(model)
+
+            # Save to disk cache
+            if self._disk_cache:
+                self._disk_cache.set_capabilities(spec, model.capabilities)
+
+        # Update memory cache
+        self._memory_cache = {(m.spec.provider, m.spec.name): m for m in models}
 
         return models
 
@@ -266,19 +292,12 @@ class ModelRegistry:
         """
         score = 0.0
 
-        # Prefer models with lower input cost
-        if model.capabilities.input_cost_per_1m is not None:
-            # Inverse cost (lower cost = higher score)
-            # Cap at 100 to avoid division by zero
-            cost = max(model.capabilities.input_cost_per_1m, 0.01)
-            score += 1000.0 / cost
-
         # Prefer larger context windows
         if model.capabilities.max_context is not None:
             score += model.capabilities.max_context / 1000.0
 
-        # Prefer faster models
-        if model.capabilities.speed_hint_tps is not None:
-            score += model.capabilities.speed_hint_tps / 100.0
+        # Prefer faster models (measured tokens per second)
+        if model.capabilities.tokens_per_second is not None:
+            score += model.capabilities.tokens_per_second / 10.0
 
         return score

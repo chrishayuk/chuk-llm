@@ -371,7 +371,9 @@ def test_supports_feature_string_input(basic_mixin):
     """Test supports_feature with string input"""
     assert basic_mixin.supports_feature("text") is True
     assert basic_mixin.supports_feature("streaming") is True
-    assert basic_mixin.supports_feature("tools") is False
+    # Registry data overrides config - gpt-4 supports tools according to registry
+    assert basic_mixin.supports_feature("tools") is True
+    # gpt-4 doesn't support vision according to registry
     assert basic_mixin.supports_feature("vision") is False
 
 
@@ -379,7 +381,8 @@ def test_supports_feature_enum_input(basic_mixin):
     """Test supports_feature with enum input"""
     assert basic_mixin.supports_feature(MockFeature.TEXT) is True
     assert basic_mixin.supports_feature(MockFeature.STREAMING) is True
-    assert basic_mixin.supports_feature(MockFeature.TOOLS) is False
+    # Registry data overrides config - gpt-4 supports tools according to registry
+    assert basic_mixin.supports_feature(MockFeature.TOOLS) is True
 
 
 def test_supports_feature_advanced_model(advanced_mixin):
@@ -392,9 +395,10 @@ def test_supports_feature_advanced_model(advanced_mixin):
 def test_supports_feature_no_capabilities():
     """Test supports_feature when capabilities are not available"""
     with patch("chuk_llm.configuration.get_config", side_effect=Exception("No config")):
-        mixin = ConfigAwareProviderMixin("openai", "gpt-4")
+        # Use a provider/model that doesn't exist in registry to test fallback behavior
+        mixin = ConfigAwareProviderMixin("fake_provider", "fake-model")
 
-        # Returns False when no configuration is available
+        # Returns False when no configuration or registry data is available
         assert mixin.supports_feature("text") is False
         assert mixin.supports_feature("streaming") is False
 
@@ -407,8 +411,8 @@ def test_supports_feature_invalid_feature(basic_mixin):
 def test_supports_feature_exception_handling(basic_mixin, monkeypatch):
     """Test supports_feature handles exceptions gracefully"""
     monkeypatch.setattr(basic_mixin, "_get_model_capabilities", lambda: None)
-    # Returns False when capabilities are not available
-    assert basic_mixin.supports_feature("text") is False
+    # Registry data still available for openai/gpt-4, so returns True
+    assert basic_mixin.supports_feature("text") is True
 
 
 # ---------------------------------------------------------------------------

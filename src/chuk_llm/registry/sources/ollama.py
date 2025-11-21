@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 
+from chuk_llm.core.enums import Provider
 from chuk_llm.registry.models import ModelSpec
 from chuk_llm.registry.sources.base import BaseModelSource
 
@@ -61,7 +62,7 @@ class OllamaSource(BaseModelSource):
 
                     specs.append(
                         ModelSpec(
-                            provider="ollama",
+                            provider=Provider.OLLAMA.value,
                             name=name,
                             family=family,
                         )

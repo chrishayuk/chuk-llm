@@ -7,6 +7,8 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from chuk_llm.core.constants import ResponseKey, ToolParam
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,9 +25,9 @@ class ToolExecutor:
     def register_multiple(self, tools: list[dict[str, Any]]) -> None:
         """Register multiple tools from OpenAI format with functions"""
         for tool in tools:
-            if isinstance(tool, dict) and tool.get("type") == "function":
-                func_def = tool.get("function", {})
-                name = func_def.get("name")
+            if isinstance(tool, dict) and tool.get(ToolParam.TYPE.value) == ToolParam.FUNCTION.value:
+                func_def = tool.get(ToolParam.FUNCTION.value, {})
+                name = func_def.get(ToolParam.NAME.value)
                 # Check if there's an associated callable
                 if hasattr(tool, "_func"):
                     self.tools[name] = tool._func
@@ -34,13 +36,13 @@ class ToolExecutor:
         """Execute a single tool call"""
         try:
             # Extract tool information
-            if tool_call.get("type") == "function":
-                func_info = tool_call.get("function", {})
+            if tool_call.get(ToolParam.TYPE.value) == ToolParam.FUNCTION.value:
+                func_info = tool_call.get(ToolParam.FUNCTION.value, {})
             else:
                 func_info = tool_call
 
-            name = func_info.get("name")
-            arguments = func_info.get("arguments", {})
+            name = func_info.get(ToolParam.NAME.value)
+            arguments = func_info.get(ToolParam.ARGUMENTS.value, {})
 
             # Parse arguments if they're a string
             if isinstance(arguments, str):
@@ -55,21 +57,21 @@ class ToolExecutor:
                 func = self.tools[name]
                 result = func(**arguments)
                 return {
-                    "tool_call_id": tool_call.get("id", "unknown"),
-                    "name": name,
+                    "tool_call_id": tool_call.get(ToolParam.ID.value, "unknown"),
+                    ToolParam.NAME.value: name,
                     "result": result,
                 }
             else:
                 logger.warning(f"Tool {name} not found in executor")
                 return {
-                    "tool_call_id": tool_call.get("id", "unknown"),
-                    "name": name,
-                    "error": f"Tool {name} not registered",
+                    "tool_call_id": tool_call.get(ToolParam.ID.value, "unknown"),
+                    ToolParam.NAME.value: name,
+                    ResponseKey.ERROR.value: f"Tool {name} not registered",
                 }
 
         except Exception as e:
             logger.error(f"Error executing tool {tool_call}: {e}")
-            return {"tool_call_id": tool_call.get("id", "unknown"), "error": str(e)}
+            return {"tool_call_id": tool_call.get(ToolParam.ID.value, "unknown"), ResponseKey.ERROR.value: str(e)}
 
     def execute_all(self, tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Execute multiple tool calls"""
@@ -97,7 +99,7 @@ async def execute_tool_calls(
     Returns:
         Formatted string with tool execution results
     """
-    if not response.get("tool_calls"):
+    if not response.get(ResponseKey.TOOL_CALLS.value):
         return response.get("response", "")
 
     # Create executor and register functions
@@ -110,11 +112,11 @@ async def execute_tool_calls(
 
     # Try to extract functions from tool definitions
     for tool in tools:
-        if hasattr(tool, "_func") and hasattr(tool, "name"):
+        if hasattr(tool, "_func") and hasattr(tool, ToolParam.NAME.value):
             executor.register(tool.name, tool._func)
 
     # Execute all tool calls
-    tool_calls = response.get("tool_calls", [])
+    tool_calls = response.get(ResponseKey.TOOL_CALLS.value, [])
     results = executor.execute_all(tool_calls)
 
     # Format results
@@ -130,9 +132,9 @@ async def execute_tool_calls(
 
     # Add tool results
     for result in results:
-        if "error" in result:
+        if ResponseKey.ERROR.value in result:
             response_parts.append(
-                f"Error calling {result.get('name', 'tool')}: {result['error']}"
+                f"Error calling {result.get(ToolParam.NAME.value, 'tool')}: {result[ResponseKey.ERROR.value]}"
             )
         else:
             tool_result = result.get("result", "")

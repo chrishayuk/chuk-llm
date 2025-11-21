@@ -853,32 +853,35 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
         contents: list[Any] = []
 
         for msg in messages:
-            role = msg.get("role")
+            role = _safe_get(msg, "role")
 
             if role == "system":
-                sys_txt.append(msg.get("content", ""))
+                sys_txt.append(_safe_get(msg, "content", ""))
                 continue
 
             # assistant function calls → need to be handled in tool result flow
-            if role == "assistant" and msg.get("tool_calls"):
+            if role == "assistant" and _safe_get(msg, "tool_calls"):
                 # Convert to text description for now
                 tool_text = "Assistant called functions: "
-                for tc in msg["tool_calls"]:
-                    fn = tc["function"]
-                    tool_text += f"{fn['name']}({fn.get('arguments', '{}')}) "
+                tool_calls = _safe_get(msg, "tool_calls")
+                for tc in tool_calls:
+                    fn = _safe_get(tc, "function")
+                    fn_name = _safe_get(fn, "name")
+                    fn_args = _safe_get(fn, "arguments", "{}")
+                    tool_text += f"{fn_name}({fn_args}) "
                 contents.append(tool_text)
                 continue
 
             # tool response → convert to user message
             if role == "tool":
-                tool_result = msg.get("content") or ""
-                fn_name = msg.get("name", "tool")
+                tool_result = _safe_get(msg, "content") or ""
+                fn_name = _safe_get(msg, "name", "tool")
                 contents.append(f"Tool {fn_name} returned: {tool_result}")
                 continue
 
             # normal / multimodal messages with universal vision support
             if role in {"user", "assistant"}:
-                cont = msg.get("content")
+                cont = _safe_get(msg, "content")
                 if cont is None:
                     continue
 
@@ -888,8 +891,7 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
                 elif isinstance(cont, list):
                     # Multimodal content - check if vision is supported
                     has_vision_content = any(
-                        isinstance(item, dict) and item.get("type") == "image_url"
-                        for item in cont
+                        _safe_get(item, "type") == "image_url" for item in cont
                     )
 
                     if has_vision_content and not self.supports_feature("vision"):
@@ -898,12 +900,9 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
                         )
                         # Convert to text-only by filtering out images
                         text_only_content = [
-                            item.get("text", str(item))
+                            _safe_get(item, "text", str(item))
                             for item in cont
-                            if not (
-                                isinstance(item, dict)
-                                and item.get("type") == "image_url"
-                            )
+                            if _safe_get(item, "type") != "image_url"
                         ]
                         if text_only_content:
                             contents.append(" ".join(text_only_content))
@@ -912,74 +911,30 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
                     # Process multimodal content with proper Gemini format
                     gemini_parts = []
                     for item in cont:
-                        if isinstance(item, dict):
-                            # Dict-based content
-                            if item.get("type") == "text":
-                                gemini_parts.append(item.get("text", ""))
-                            elif item.get("type") == "image_url":
-                                # Convert to Gemini format
-                                try:
-                                    gemini_image = await self._convert_universal_vision_to_gemini_async(
-                                        item
-                                    )
-                                    if "inline_data" in gemini_image:
-                                        gemini_parts.append(gemini_image)
-                                    else:
-                                        # Fallback to text if conversion failed
-                                        gemini_parts.append(
-                                            gemini_image.get(
-                                                "text", "[Image processing failed]"
-                                            )
+                        item_type = _safe_get(item, "type")
+                        if item_type == "text":
+                            gemini_parts.append(_safe_get(item, "text", ""))
+                        elif item_type == "image_url":
+                            # Convert to Gemini format
+                            try:
+                                gemini_image = await self._convert_universal_vision_to_gemini_async(
+                                    item
+                                )
+                                if "inline_data" in gemini_image:
+                                    gemini_parts.append(gemini_image)
+                                else:
+                                    # Fallback to text if conversion failed
+                                    gemini_parts.append(
+                                        gemini_image.get(
+                                            "text", "[Image processing failed]"
                                         )
-                                except Exception as e:
-                                    log.warning(f"Failed to convert image: {e}")
-                                    gemini_parts.append("[Image conversion failed]")
-                            else:
-                                gemini_parts.append(str(item))
+                                    )
+                            except Exception as e:
+                                log.warning(f"Failed to convert image: {e}")
+                                gemini_parts.append("[Image conversion failed]")
                         else:
-                            # Pydantic object-based content
-                            from chuk_llm.core.enums import ContentType
-
-                            if hasattr(item, "type") and hasattr(item, "text"):
-                                # TextContent
-                                if item.type == ContentType.TEXT:
-                                    gemini_parts.append(item.text)
-                            elif hasattr(item, "type") and hasattr(item, "image_url"):
-                                # ImageUrlContent - convert to dict for processing
-                                if item.type == ContentType.IMAGE_URL:
-                                    image_url_data = item.image_url
-                                    url = (
-                                        image_url_data.get("url")
-                                        if isinstance(image_url_data, dict)
-                                        else image_url_data
-                                    )
-
-                                    try:
-                                        gemini_image = await self._convert_universal_vision_to_gemini_async(
-                                            {
-                                                "type": "image_url",
-                                                "image_url": (
-                                                    {"url": url}
-                                                    if isinstance(url, str)
-                                                    else url
-                                                ),
-                                            }
-                                        )
-                                        if "inline_data" in gemini_image:
-                                            gemini_parts.append(gemini_image)
-                                        else:
-                                            gemini_parts.append(
-                                                gemini_image.get(
-                                                    "text", "[Image processing failed]"
-                                                )
-                                            )
-                                    except Exception as e:
-                                        log.warning(
-                                            f"Failed to convert Pydantic image: {e}"
-                                        )
-                                        gemini_parts.append("[Image conversion failed]")
-                            else:
-                                gemini_parts.append(str(item))
+                            # Other content types - pass through (shouldn't reach here normally)
+                            gemini_parts.append(str(item))
 
                     # Add the multimodal content as a structured message
                     if gemini_parts:
@@ -1030,14 +985,13 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
 
         # Convert Pydantic to dicts
         dict_messages = [msg.to_dict() for msg in messages]
-        dict_tools = [tool.to_dict() for tool in tools] if tools else None
 
-        # Validate capabilities using configuration
-        if dict_tools and not self.supports_feature("tools"):
+        # Validate capabilities using configuration (keep tools as Pydantic for now)
+        if tools and not self.supports_feature("tools"):
             log.warning(
                 f"Tools provided but model {self.model} doesn't support tools according to configuration"
             )
-            dict_tools = None
+            tools = None
 
         if stream and not self.supports_feature("streaming"):
             log.warning(
@@ -1046,11 +1000,13 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
             stream = False
 
         # Apply universal tool name sanitization (stores mapping for restoration)
+        # Keep tools as Pydantic models through sanitization, then convert to dicts
         name_mapping = {}
-        if dict_tools:
+        dict_tools = None
+        if tools:
             from chuk_llm.core.models import Tool as ToolModel
 
-            sanitized_tools = self._sanitize_tool_names(dict_tools)
+            sanitized_tools = self._sanitize_tool_names(tools)
             # After sanitization, tools are always Pydantic Tool models
             assert isinstance(sanitized_tools, list) and all(
                 isinstance(t, ToolModel) for t in sanitized_tools

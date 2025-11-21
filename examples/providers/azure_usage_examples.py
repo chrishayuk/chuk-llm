@@ -58,6 +58,10 @@ try:
         demo_structured_outputs,
         demo_conversation,
         demo_model_discovery,
+        demo_audio_input,
+        demo_parameters,
+        demo_model_comparison,
+        demo_dynamic_model_call,
         demo_error_handling,
         run_all_demos,
     )
@@ -84,8 +88,8 @@ async def main():
     parser.add_argument(
         "--demo",
         type=int,
-        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-        help="Run specific demo (1=basic, 2=streaming, 3=tools, 4=vision, 5=json, 6=reasoning, 7=structured, 8=conversation, 9=discovery, 10=errors)",
+        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+        help="Run specific demo (1=basic, 2=streaming, 3=tools, 4=vision, 5=json, 6=reasoning, 7=structured, 8=conversation, 9=discovery, 10=audio, 11=parameters, 12=comparison, 13=dynamic, 14=errors)",
     )
 
     args = parser.parse_args()

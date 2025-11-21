@@ -48,12 +48,15 @@ from .enums import (
 )
 from .json_utils import dumps, get_json_library, get_performance_info, loads
 from .models import (
+    AudioDataContent,
+    AudioUrlContent,
     CompletionRequest,
     CompletionResponse,
     ContentPart,
     FunctionCall,
     ImageDataContent,
     ImageUrlContent,
+    InputAudioContent,
     LLMError,
     Message,
     StreamChunk,
@@ -97,6 +100,9 @@ __all__ = [
     "TextContent",
     "ImageUrlContent",
     "ImageDataContent",
+    "InputAudioContent",
+    "AudioUrlContent",
+    "AudioDataContent",
     "ContentPart",
     "ToolCall",
     "FunctionCall",

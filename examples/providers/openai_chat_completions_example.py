@@ -388,6 +388,105 @@ async def demo_vision(model: str):
 
 
 # =============================================================================
+# Demo 4.5: Audio Input (Multimodal)
+# =============================================================================
+
+async def demo_audio_input():
+    """Audio input with gpt-4o-audio-preview models"""
+    print(f"\n{'='*70}")
+    print("Demo 4.5: Audio Input (Multimodal)")
+    print(f"{'='*70}")
+
+    # Try gpt-4o-audio-preview first, fallback to gpt-4o-mini-audio-preview
+    try:
+        client = get_client("openai", model="gpt-4o-audio-preview")
+        model_name = "gpt-4o-audio-preview"
+    except:
+        try:
+            client = get_client("openai", model="gpt-4o-mini-audio-preview")
+            model_name = "gpt-4o-mini-audio-preview"
+        except:
+            print("⚠️  Audio preview models not available, skipping audio demo")
+            return None
+
+    print(f"Model: {model_name}")
+    print("User: Listen to this audio and transcribe it")
+
+    # Create a minimal WAV file with synthesized audio (440Hz sine wave = musical note A)
+    # This is a simple test - in production you'd use real audio files
+    import wave
+    import struct
+    import math
+    import tempfile
+
+    # Generate 1 second of 440Hz sine wave (musical note A)
+    sample_rate = 16000  # 16kHz
+    duration = 1.0
+    frequency = 440.0
+
+    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+        wav_file = f.name
+
+    with wave.open(wav_file, 'w') as wav:
+        wav.setnchannels(1)  # Mono
+        wav.setsampwidth(2)  # 16-bit
+        wav.setframerate(sample_rate)
+
+        for i in range(int(sample_rate * duration)):
+            value = int(32767 * math.sin(2 * math.pi * frequency * i / sample_rate))
+            wav.writeframes(struct.pack('<h', value))
+
+    # Read and encode the audio
+    with open(wav_file, 'rb') as audio_file:
+        audio_data = base64.b64encode(audio_file.read()).decode('utf-8')
+
+    # Clean up temp file
+    import os
+    os.unlink(wav_file)
+
+    # Note: Audio input support in Chat Completions API
+    # Uses InputAudioContent type for audio input
+    try:
+        from chuk_llm.core.models import InputAudioContent
+
+        messages = [
+            Message(
+                role=MessageRole.USER,
+                content=[
+                    TextContent(type=ContentType.TEXT, text="What do you hear in this audio? It's a musical note."),
+                    InputAudioContent(
+                        type=ContentType.INPUT_AUDIO,
+                        input_audio={
+                            "data": audio_data,
+                            "format": "wav"
+                        }
+                    )
+                ]
+            )
+        ]
+
+        print("Audio: [1 second of 440Hz sine wave - musical note A]")
+        print("\n⏳ Analyzing audio...")
+
+        start = time.time()
+        response = await client.create_completion(messages, stream=False)
+        elapsed = time.time() - start
+
+        print(f"\n✅ Response ({elapsed:.2f}s):")
+        print(response['response'])
+
+        return response
+
+    except ImportError:
+        print("⚠️  InputAudioContent not available in this version")
+        return None
+    except Exception as e:
+        print(f"⚠️  Audio demo failed: {e}")
+        print("    Audio models may require special access or different API format")
+        return None
+
+
+# =============================================================================
 # Demo 5: JSON Mode
 # =============================================================================
 
@@ -716,25 +815,18 @@ async def demo_model_discovery():
     print(f"{'='*70}")
 
     try:
-        from chuk_llm.llm.discovery.openai_discoverer import OpenAIModelDiscoverer
-
-        api_key = os.getenv("OPENAI_API_KEY")
+        from chuk_llm.api.discovery import discover_models
 
         print("⏳ Discovering models from OpenAI API...")
 
-        discoverer = OpenAIModelDiscoverer(
-            provider_name="openai",
-            api_key=api_key
-        )
-
-        models = await discoverer.discover_models()
+        models = await discover_models("openai", force_refresh=True)
 
         print(f"\n✅ Found {len(models)} models\n")
 
         # Group models by family
         model_families = {}
         for model in models:
-            model_id = model.get("id", model.get("name", "unknown"))
+            model_id = model.get("name", model.get("id", "unknown"))
 
             # Determine family
             if "gpt-5" in model_id.lower():
@@ -791,23 +883,16 @@ async def demo_dynamic_model_call():
     print(f"{'='*70}")
 
     try:
-        from chuk_llm.llm.discovery.openai_discoverer import OpenAIModelDiscoverer
-
-        api_key = os.getenv("OPENAI_API_KEY")
+        from chuk_llm.api.discovery import discover_models
 
         print("⏳ Step 1: Discovering available models...")
 
-        discoverer = OpenAIModelDiscoverer(
-            provider_name="openai",
-            api_key=api_key
-        )
-
-        models = await discoverer.discover_models()
+        models = await discover_models("openai", force_refresh=True)
 
         # Find a text chat model (not TTS/audio)
         target_model = None
         for model in models:
-            model_id = model.get("id", model.get("name", ""))
+            model_id = model.get("name", model.get("id", ""))
             # Skip non-chat models
             if any(x in model_id.lower() for x in ["tts", "whisper", "audio", "realtime", "dall-e", "sora"]):
                 continue
@@ -822,7 +907,7 @@ async def demo_dynamic_model_call():
         if not target_model:
             # Fallback to first text model
             for model in models:
-                model_id = model.get("id", model.get("name", ""))
+                model_id = model.get("name", model.get("id", ""))
                 if not any(x in model_id.lower() for x in ["tts", "whisper", "audio", "realtime", "dall-e", "sora"]):
                     target_model = model_id
                     break
@@ -955,6 +1040,10 @@ async def main():
 
     if args.demo is None or args.demo == 4:
         demos.append(("Vision", demo_vision("gpt-4o")))
+
+    # Demo 4.5: Audio Input (not numbered in CLI since it's optional/may fail)
+    if args.demo is None:
+        demos.append(("Audio Input", demo_audio_input()))
 
     if args.demo is None or args.demo == 5:
         demos.append(("JSON Mode", demo_json_mode(args.model)))

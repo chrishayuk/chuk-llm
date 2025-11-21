@@ -128,17 +128,16 @@ Resolvers are **layered** — later resolvers override earlier ones.
 
 #### Built-in Resolvers
 
-**1. StaticCapabilityResolver**
+**1. YamlCapabilityResolver**
 
-Provides baseline capabilities for ~30 well-known models:
+Loads tested capabilities from YAML cache files:
 
 ```python
-StaticCapabilityResolver()
-# OpenAI: gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-3.5-turbo
-# Anthropic: claude-3-5-sonnet, claude-3-5-haiku, claude-3-opus
-# Groq: llama-3.3-70b-versatile, llama-3.1-8b-instant
-# Gemini: gemini-2.0-flash-exp, gemini-1.5-pro
-# Mistral, DeepSeek, Watsonx, Azure OpenAI
+YamlCapabilityResolver()
+# Loads from src/chuk_llm/registry/capabilities/*.yaml
+# Contains tested capabilities for discovered models
+# Updated via scripts/update_capabilities.py
+# Committed to git for fast, reliable capability data
 ```
 
 **2. OllamaCapabilityResolver**
@@ -265,7 +264,7 @@ class QualityTier(str, Enum):
 ```python
 from chuk_llm.registry import (
     ModelRegistry,
-    StaticCapabilityResolver,
+    YamlCapabilityResolver,
     OllamaCapabilityResolver,
     EnvProviderSource,
     OllamaSource,
@@ -279,7 +278,7 @@ registry = ModelRegistry(
         MyCustomSource(),
     ],
     resolvers=[
-        StaticCapabilityResolver(),
+        YamlCapabilityResolver(),
         OllamaCapabilityResolver(),
         MyCustomResolver(),
     ]

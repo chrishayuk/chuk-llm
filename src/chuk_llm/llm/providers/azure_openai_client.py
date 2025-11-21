@@ -28,6 +28,7 @@ import openai
 if TYPE_CHECKING:
     from chuk_llm.core.models import Message, Tool
 
+from chuk_llm.core.constants import AzureOpenAIParam
 from chuk_llm.llm.providers._config_mixin import ConfigAwareProviderMixin
 
 # mixins
@@ -81,8 +82,8 @@ class AzureOpenAILLMClient(
 
         # Azure OpenAI client configuration
         client_kwargs = {
-            "api_version": self.api_version,
-            "azure_endpoint": azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT"),
+            AzureOpenAIParam.API_VERSION.value: self.api_version,
+            AzureOpenAIParam.AZURE_ENDPOINT.value: azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT"),
         }
 
         # Authentication - priority order: token provider > token > api key
@@ -91,16 +92,16 @@ class AzureOpenAILLMClient(
         elif azure_ad_token:
             client_kwargs["azure_ad_token"] = azure_ad_token
         else:
-            client_kwargs["api_key"] = api_key or os.getenv("AZURE_OPENAI_API_KEY")
+            client_kwargs[AzureOpenAIParam.API_KEY.value] = api_key or os.getenv("AZURE_OPENAI_API_KEY")
 
         # Validate required parameters
-        if not client_kwargs.get("azure_endpoint"):
+        if not client_kwargs.get(AzureOpenAIParam.AZURE_ENDPOINT.value):
             raise ValueError(
                 "azure_endpoint is required for Azure OpenAI. Set AZURE_OPENAI_ENDPOINT or pass azure_endpoint parameter."
             )
 
         if not any(
-            [azure_ad_token_provider, azure_ad_token, client_kwargs.get("api_key")]
+            [azure_ad_token_provider, azure_ad_token, client_kwargs.get(AzureOpenAIParam.API_KEY.value)]
         ):
             raise ValueError(
                 "Authentication required: provide api_key, azure_ad_token, or azure_ad_token_provider"
@@ -410,8 +411,58 @@ class AzureOpenAILLMClient(
         Enhanced validation that uses smart defaults for unknown deployments.
         FIXED: Actually disable streaming when not supported.
         """
-        validated_messages = messages
-        validated_tools = tools
+        # Import here to avoid circular imports
+        from chuk_llm.core.models import Message as MessageModel
+        from chuk_llm.core.models import Tool as ToolModel
+
+        # Convert to Pydantic if needed
+        def _convert_content_item(item):
+            """Convert content item (for multimodal messages) to dict if needed."""
+            if isinstance(item, dict):
+                return item
+            # Handle objects with attributes
+            return {k: v for k, v in vars(item).items()}
+
+        def _convert_message(msg):
+            if isinstance(msg, MessageModel):
+                return msg
+            elif isinstance(msg, dict):
+                return MessageModel.model_validate(msg)
+            else:
+                # Handle objects with attributes (convert to dict first)
+                content = getattr(msg, "content", None)
+                # Convert content list items if needed
+                if isinstance(content, list):
+                    content = [_convert_content_item(item) for item in content]
+
+                msg_dict = {
+                    "role": getattr(msg, "role", None),
+                    "content": content,
+                }
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    msg_dict["tool_calls"] = msg.tool_calls
+                if hasattr(msg, "tool_call_id") and msg.tool_call_id:
+                    msg_dict["tool_call_id"] = msg.tool_call_id
+                if hasattr(msg, "name") and msg.name:
+                    msg_dict["name"] = msg.name
+                return MessageModel.model_validate(msg_dict)
+
+        validated_messages = [_convert_message(msg) for msg in messages]
+
+        def _convert_tool(tool):
+            if isinstance(tool, ToolModel):
+                return tool
+            elif isinstance(tool, dict):
+                return ToolModel.model_validate(tool)
+            else:
+                # Handle objects with attributes
+                return ToolModel.model_validate(
+                    {"type": getattr(tool, "type", "function"), **vars(tool)}
+                )
+
+        validated_tools = (
+            [_convert_tool(tool) for tool in tools] if tools else None
+        )
         validated_stream = stream
         validated_kwargs = kwargs.copy()
 
@@ -439,10 +490,13 @@ class AzureOpenAILLMClient(
         # Check vision support (Pydantic native)
         has_vision = False
         for msg in messages:
-            content = msg.content
+            # Handle both Message objects and dicts
+            content = msg.content if hasattr(msg, "content") else msg.get("content")
             if isinstance(content, list):
                 for item in content:
-                    if hasattr(item, "type") and item.type == "image_url":
+                    # Handle both Pydantic objects and dicts
+                    item_type = item.type if hasattr(item, "type") else item.get("type")
+                    if item_type == "image_url":
                         has_vision = True
                         break
             if has_vision:
@@ -555,27 +609,11 @@ class AzureOpenAILLMClient(
         Uses universal tool name compatibility with bidirectional mapping.
         Supports discovered deployments with smart defaults!
         """
-        # Pydantic native - auto-convert dicts to Pydantic models if needed
-        from chuk_llm.core.models import Message as MessageModel
-        from chuk_llm.core.models import Tool as ToolModel
-
-        pydantic_messages = [
-            msg if isinstance(msg, MessageModel) else MessageModel.model_validate(msg)
-            for msg in messages
-        ]
-        pydantic_tools = (
-            [
-                tool if isinstance(tool, ToolModel) else ToolModel.model_validate(tool)
-                for tool in tools
-            ]
-            if tools
-            else None
-        )
-
         # Validate request against configuration (with smart defaults for unknown deployments)
+        # Note: _validate_request_with_config handles Pydantic conversion internally
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
             self._validate_request_with_config(
-                pydantic_messages, pydantic_tools, stream, **kwargs
+                messages, tools, stream, **kwargs
             )
         )
 
@@ -592,9 +630,17 @@ class AzureOpenAILLMClient(
         validated_kwargs = self._adjust_parameters_for_provider(validated_kwargs)
 
         # Convert Pydantic models to dicts for OpenAI SDK
-        messages_dicts = [msg.model_dump() for msg in validated_messages]
+        messages_dicts = [
+            msg.model_dump() if hasattr(msg, "model_dump") else msg
+            for msg in validated_messages
+        ]
         tools_dicts = (
-            [tool.model_dump() for tool in validated_tools] if validated_tools else None
+            [
+                tool.model_dump() if hasattr(tool, "model_dump") else tool
+                for tool in validated_tools
+            ]
+            if validated_tools
+            else None
         )
 
         if validated_stream:

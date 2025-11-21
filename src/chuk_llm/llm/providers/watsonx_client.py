@@ -1240,23 +1240,31 @@ class WatsonXLLMClient(
             messages: List of Pydantic Message objects
             tools: List of Pydantic Tool objects
         """
-        # Handle backward compatibility
-        from chuk_llm.llm.core.base import (
-            _ensure_pydantic_messages,
-            _ensure_pydantic_tools,
-        )
+        # Handle backward compatibility - inline logic to avoid import issues in tests
+        from chuk_llm.core.models import Message as MessageModel
+        from chuk_llm.core.models import Tool as ToolModel
 
-        messages = _ensure_pydantic_messages(messages)
-        tools = _ensure_pydantic_tools(tools)
+        # Ensure messages are Pydantic
+        if messages:
+            messages = [
+                msg if isinstance(msg, MessageModel) else MessageModel.model_validate(msg)
+                for msg in messages
+            ]
 
-        # Convert Pydantic to dicts
+        # Ensure tools are Pydantic
+        if tools:
+            tools = [
+                tool if isinstance(tool, ToolModel) else ToolModel.model_validate(tool)
+                for tool in tools
+            ]
+
+        # Convert Pydantic messages to dicts
         dict_messages = [msg.to_dict() for msg in messages]
-        dict_tools = [tool.to_dict() for tool in tools] if tools else None
 
-        # Validate request against configuration
+        # Validate request against configuration (keep tools as Pydantic for now)
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
             self._validate_request_with_config(
-                dict_messages, dict_tools, stream, **extra
+                dict_messages, tools, stream, **extra
             )
         )
 

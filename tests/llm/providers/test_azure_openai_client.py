@@ -438,8 +438,9 @@ class TestAzureOpenAIRequestValidation:
             )
         )
 
-        assert validated_messages == messages
-        assert validated_tools == tools
+        # _validate_request_with_config returns Pydantic objects
+        assert len(validated_messages) == len(messages)
+        assert len(validated_tools) == len(tools)
         assert validated_stream is True
         assert "temperature" in validated_kwargs
 
@@ -465,7 +466,8 @@ class TestAzureOpenAIRequestValidation:
             )
         )
 
-        assert validated_messages == messages
+        # _validate_request_with_config returns Pydantic objects
+        assert len(validated_messages) == len(messages)
         assert validated_tools is None  # Should be None when not supported
         assert validated_stream is False  # Should be False when not supported
         assert "response_format" not in validated_kwargs  # Should be removed
@@ -491,7 +493,12 @@ class TestAzureOpenAIRequestValidation:
             client._validate_request_with_config(messages, stream=False)
         )
 
-        assert validated_messages == messages  # Should pass through unchanged
+        # Validated messages are now Pydantic Message objects, not dicts
+        assert len(validated_messages) == len(messages)
+        # Check that vision content is preserved
+        assert isinstance(validated_messages[0].content, list)
+        assert len(validated_messages[0].content) == 2
+        assert validated_messages[0].content[1].type == "image_url"
 
         # Test with vision not supported
         monkeypatch.setattr(
@@ -502,8 +509,10 @@ class TestAzureOpenAIRequestValidation:
             client._validate_request_with_config(messages, stream=False)
         )
 
-        # Should still pass through - warning logged but content unchanged
-        assert validated_messages == messages
+        # Should still pass through as Pydantic - warning logged but content unchanged
+        assert len(validated_messages) == len(messages)
+        assert isinstance(validated_messages[0].content, list)
+        assert len(validated_messages[0].content) == 2
 
 
 # Parameter adjustment tests
@@ -1115,7 +1124,9 @@ class TestAzureOpenAIIntegration:
 
         # Verify payload structure
         assert captured_payload["model"] == client.azure_deployment
-        assert captured_payload["messages"] == messages
+        # Messages are converted to dicts by the client
+        assert len(captured_payload["messages"]) == len(messages)
+        assert captured_payload["messages"][0]["content"] == "Hello Azure!"
         assert captured_payload["stream"] is False
 
     @pytest.mark.asyncio
@@ -1307,7 +1318,11 @@ class TestAzureOpenAIComplexScenarios:
         tools = [
             {
                 "type": "function",
-                "function": {"name": "analyze_image", "parameters": {}},
+                "function": {
+                    "name": "analyze_image",
+                    "description": "Analyze an image",
+                    "parameters": {},
+                },
             }
         ]
 

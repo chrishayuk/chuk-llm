@@ -509,49 +509,40 @@ class ChukLLMCLI:
     def show_models(self, provider: str) -> None:
         """List models for a specific provider with discovery"""
         try:
+            # Use the new registry-based discovery API
+            import asyncio
+
+            from chuk_llm.api.discovery import discover_models
+
             provider_config = self.config.get_provider(provider)
 
-            # Trigger discovery based on provider type
+            # Trigger discovery using registry
             self.print_rich(
                 f"🔍 Fetching available {provider} models from API...", "info"
             )
 
-            # Use the discovery system properly
+            # Use registry for discovery
             discovered_models = set()
             discovery_succeeded = False
 
-            if provider == "ollama":
-                try:
-                    from chuk_llm.api.providers import (
-                        trigger_ollama_discovery_and_refresh,
+            try:
+                # Run discovery
+                async def run_discovery():
+                    return await discover_models(provider, force_refresh=False)
+
+                models_list = asyncio.run(run_discovery())
+                if models_list:
+                    discovered_models = {m["name"] for m in models_list}
+                    discovery_succeeded = True
+                    self.print_rich(
+                        f"✅ Found {len(discovered_models)} available models", "success"
                     )
+            except Exception as e:
+                self.print_rich(f"⚠️  Discovery failed for {provider}: {e}", "error")
 
-                    trigger_ollama_discovery_and_refresh()
-                    # Get discovered models from config manager
-                    discovered_models = self.config.get_discovered_models(provider)
-                    discovery_succeeded = bool(discovered_models)
-                except Exception as e:
-                    self.print_rich(f"⚠️  Ollama discovery unavailable: {e}", "error")
-            else:
-                # Use the config manager's discovery instead of making direct API calls
-                try:
-                    # Trigger discovery through config manager
-                    success = trigger_discovery_for_provider(provider, quiet=False)
-                    if success:
-                        # Get discovered models from config manager
-                        discovered_models = self.config.get_discovered_models(provider)
-                        discovery_succeeded = bool(discovered_models)
-                        if discovered_models:
-                            self.print_rich(
-                                f"✅ Found {len(discovered_models)} available models",
-                                "success",
-                            )
-                except Exception as e:
-                    self.print_rich(f"⚠️  Discovery failed for {provider}: {e}", "error")
-
-            # Get all models (static + discovered) from config manager
-            all_models = self.config.get_all_available_models(provider)
+            # Get all models (static + discovered)
             static_models = set(provider_config.models)
+            all_models = static_models | discovered_models
 
             if not all_models:
                 self.print_rich(f"No models found for provider '{provider}'", "error")
@@ -710,34 +701,33 @@ class ChukLLMCLI:
             self.print_rich(f"Error testing provider '{provider}': {e}", "error")
 
     def discover_models(self, provider: str) -> None:
-        """Discover new models for a provider"""
+        """Discover new models for a provider using the registry"""
         try:
             self.print_rich(f"Discovering models for {provider}...", "info")
 
-            if provider == "ollama":
-                new_functions = trigger_ollama_discovery_and_refresh()
+            # Use the new registry-based discovery API
+            import asyncio
+
+            from chuk_llm.api.discovery import discover_models, show_discovered_models
+
+            # Run the discovery with force refresh
+            async def run_discovery():
+                return await discover_models(provider, force_refresh=True)
+
+            models = asyncio.run(run_discovery())
+
+            if models:
                 self.print_rich(
-                    f"✓ Discovered {len(new_functions)} new Ollama functions", "success"
-                )
-            else:
-                new_functions = refresh_provider_functions(provider)
-                self.print_rich(
-                    f"✓ Refreshed {len(new_functions)} functions for {provider}",
-                    "success",
+                    f"✓ Discovered {len(models)} models for {provider}", "success"
                 )
 
-            # Show some discovered functions
-            if new_functions:
-                provider_funcs = [
-                    name
-                    for name in new_functions
-                    if name.startswith(f"ask_{provider}_")
-                    and not name.endswith("_sync")
-                ][:5]
-                if provider_funcs:
-                    self.print_rich("Example functions:", "info")
-                    for func_name in provider_funcs:
-                        self.print_rich(f'  - chuk-llm {func_name} "your question"')
+                # Show the discovered models in nice format
+                asyncio.run(show_discovered_models(provider))
+            else:
+                self.print_rich(
+                    f"No models found for {provider}. Is the provider configured correctly?",
+                    "error",
+                )
 
         except Exception as e:
             self.print_rich(f"Error discovering models for {provider}: {e}", "error")

@@ -11,6 +11,7 @@ Key changes:
 
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from types import ModuleType
@@ -49,18 +50,18 @@ try:
 except ImportError:
     _pkg_resources_available = False
 
-from .discovery import ConfigDiscoveryMixin
 from .models import Feature, ModelCapabilities, ProviderConfig
+from .registry_integration import RegistryIntegrationMixin
 from .validator import ConfigValidator
 
 logger = logging.getLogger(__name__)
 
 
-class UnifiedConfigManager(ConfigDiscoveryMixin):
+class UnifiedConfigManager(RegistryIntegrationMixin):
     """
-    Unified configuration manager with transparent dynamic discovery.
+    Unified configuration manager with registry-based discovery.
 
-    Discovery is completely seamless - existing APIs work unchanged.
+    Uses the new registry system for model discovery.
     All configuration comes from YAML, nothing hardcoded.
     """
 
@@ -443,7 +444,71 @@ class UnifiedConfigManager(ConfigDiscoveryMixin):
 
             # Update collections
             if "models" in data:
-                provider.models = data["models"]
+                models_list = data["models"]
+                # If models is ["*"], load from registry
+                if models_list == ["*"]:
+                    logger.debug(f"Loading models for {name} from registry")
+                    # Try to load from registry cache
+                    try:
+                        import json
+                        from pathlib import Path
+                        cache_dir = Path.home() / ".cache" / "chuk-llm"
+                        registry_cache_path = cache_dir / "registry_cache.json"
+                        if registry_cache_path.exists():
+                            with open(registry_cache_path) as f:
+                                registry_data = json.load(f)
+
+                            # Registry cache is organized as {provider:model: {data}}
+                            # Group by provider
+                            provider_models = []
+                            for key, value in registry_data.items():
+                                if key.startswith(f"{name}:"):
+                                    model_name = value.get("model", key.split(":", 1)[1])
+                                    provider_models.append((model_name, value))
+
+                            if provider_models:
+                                provider.models = [m[0] for m in provider_models]
+
+                                # Also load model capabilities from registry
+                                from chuk_llm.configuration import Feature
+                                from chuk_llm.configuration.models import (
+                                    ModelCapabilities,
+                                )
+
+                                for model_name, model_data in provider_models:
+                                    caps_data = model_data.get("capabilities", {})
+
+                                    # Build feature set
+                                    features = set()
+                                    if caps_data.get("supports_streaming"):
+                                        features.add(Feature.STREAMING)
+                                    if caps_data.get("supports_tools"):
+                                        features.add(Feature.TOOLS)
+                                    if caps_data.get("supports_vision"):
+                                        features.add(Feature.VISION)
+                                    if caps_data.get("supports_json_mode"):
+                                        features.add(Feature.JSON_MODE)
+
+                                    caps = ModelCapabilities(
+                                        pattern=f"^{re.escape(model_name)}$",  # Exact match
+                                        features=features,
+                                        max_context_length=caps_data.get("max_context"),
+                                        max_output_tokens=caps_data.get("max_output_tokens"),
+                                    )
+                                    provider.model_capabilities.append(caps)
+
+                                logger.info(f"Loaded {len(provider.models)} models with capabilities for {name} from registry cache")
+                            else:
+                                logger.debug(f"No registry data found for {name}, keeping wildcard")
+                                provider.models = ["*"]
+                        else:
+                            logger.debug(f"No registry cache found, keeping wildcard for {name}")
+                            provider.models = ["*"]
+                    except Exception as e:
+                        logger.debug(f"Failed to load models from registry for {name}: {e}")
+                        provider.models = ["*"]
+                else:
+                    provider.models = models_list
             if "model_aliases" in data:
                 provider.model_aliases.update(data["model_aliases"])
 

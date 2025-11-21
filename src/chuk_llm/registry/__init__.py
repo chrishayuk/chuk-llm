@@ -23,6 +23,13 @@ Example:
     ```
 """
 
+# Load environment variables from .env file before importing sources
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not available, use system env vars only
+
 from chuk_llm.registry.core import ModelRegistry
 from chuk_llm.registry.models import (
     ModelCapabilities,
@@ -33,13 +40,25 @@ from chuk_llm.registry.models import (
 )
 from chuk_llm.registry.resolvers import (
     CapabilityResolver,
+    GeminiCapabilityResolver,
+    HeuristicCapabilityResolver,
     OllamaCapabilityResolver,
-    StaticCapabilityResolver,
+    YamlCapabilityResolver,
 )
 from chuk_llm.registry.sources import (
+    AnthropicModelSource,
+    DeepSeekModelSource,
     EnvProviderSource,
+    GeminiModelSource,
+    GroqModelSource,
+    MistralModelSource,
     ModelSource,
     OllamaSource,
+    OpenAICompatibleSource,
+    OpenAIModelSource,
+    OpenRouterModelSource,
+    PerplexityModelSource,
+    WatsonxModelSource,
 )
 
 # Singleton registry instance
@@ -50,20 +69,24 @@ async def get_registry(
     *,
     sources: list[ModelSource] | None = None,
     resolvers: list[CapabilityResolver] | None = None,
+    use_provider_apis: bool = True,
     force_refresh: bool = False,
 ) -> ModelRegistry:
     """
     Get the global model registry instance.
 
     By default, creates a registry with:
-    - EnvProviderSource (discovers providers via API keys)
+    - Provider-specific sources (OpenAI, Anthropic, Gemini APIs) if use_provider_apis=True
+    - OR EnvProviderSource (basic env-based discovery) if use_provider_apis=False
     - OllamaSource (discovers local Ollama models)
-    - StaticCapabilityResolver (baseline capabilities for major models)
-    - OllamaCapabilityResolver (dynamic Ollama capabilities)
+    - YamlCapabilityResolver (tested capabilities from YAML cache)
+    - OllamaCapabilityResolver (dynamic Ollama GGUF capabilities)
+    - HeuristicCapabilityResolver (fallback heuristics for quality tier & context)
 
     Args:
         sources: Custom model sources (overrides defaults)
         resolvers: Custom capability resolvers (overrides defaults)
+        use_provider_apis: Use provider-specific API sources for richer discovery
         force_refresh: Force recreation of registry instance
 
     Returns:
@@ -76,16 +99,35 @@ async def get_registry(
 
     # Default sources
     if sources is None:
-        sources = [
-            EnvProviderSource(include_ollama=False),  # Ollama handled separately
-            OllamaSource(),
-        ]
+        if use_provider_apis:
+            # Use provider-specific sources for dynamic discovery
+            sources = [
+                OpenAIModelSource(),
+                AnthropicModelSource(),
+                GeminiModelSource(),
+                DeepSeekModelSource(),
+                MistralModelSource(),
+                GroqModelSource(),
+                PerplexityModelSource(),
+                OpenRouterModelSource(),
+                WatsonxModelSource(),
+                OllamaSource(),
+            ]
+        else:
+            # Use simple env-based discovery
+            sources = [
+                EnvProviderSource(include_ollama=False),
+                OllamaSource(),
+            ]
 
     # Default resolvers (order matters - later ones override earlier ones)
+    # Priority: Heuristics (fallback) → API metadata (dynamic) → YAML cache (tested data)
     if resolvers is None:
         resolvers = [
-            StaticCapabilityResolver(),
-            OllamaCapabilityResolver(),
+            HeuristicCapabilityResolver(),  # Lowest priority: heuristics for quality/context
+            GeminiCapabilityResolver(),  # Medium priority: query Gemini API for real data
+            OllamaCapabilityResolver(),  # Medium priority: query Ollama API
+            YamlCapabilityResolver(),  # Highest priority: tested capability cache
         ]
 
     _registry_instance = ModelRegistry(sources=sources, resolvers=resolvers)
@@ -105,9 +147,21 @@ __all__ = [
     # Sources
     "ModelSource",
     "EnvProviderSource",
+    "OpenAICompatibleSource",
+    "OpenAIModelSource",
+    "AnthropicModelSource",
+    "GeminiModelSource",
+    "DeepSeekModelSource",
+    "MistralModelSource",
+    "GroqModelSource",
+    "PerplexityModelSource",
+    "OpenRouterModelSource",
+    "WatsonxModelSource",
     "OllamaSource",
     # Resolvers
     "CapabilityResolver",
-    "StaticCapabilityResolver",
+    "HeuristicCapabilityResolver",
     "OllamaCapabilityResolver",
+    "YamlCapabilityResolver",
+    "GeminiCapabilityResolver",
 ]

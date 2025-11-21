@@ -63,6 +63,26 @@ class AnthropicEndpoint(str, Enum):
 
 
 # ================================================================
+# API Base URLs
+# ================================================================
+
+
+class ApiBaseUrl(str, Enum):
+    """Default API base URLs for each provider."""
+
+    OPENAI = "https://api.openai.com/v1"
+    ANTHROPIC = "https://api.anthropic.com"
+    GROQ = "https://api.groq.com/openai/v1"
+    DEEPSEEK = "https://api.deepseek.com/v1"
+    TOGETHER = "https://api.together.xyz/v1"
+    PERPLEXITY = "https://api.perplexity.ai"
+    MISTRAL = "https://api.mistral.ai/v1"
+    OPENROUTER = "https://openrouter.ai/api/v1"
+    GEMINI = "https://generativelanguage.googleapis.com"
+    OLLAMA = "http://localhost:11434"
+
+
+# ================================================================
 # SSE (Server-Sent Events) Constants
 # ================================================================
 
@@ -141,6 +161,7 @@ class ResponseKey(str, Enum):
     ERROR = "error"
     ERROR_MESSAGE = "error_message"
     TYPE = "type"
+    DATA = "data"  # For /v1/models response
 
 
 # ================================================================
@@ -219,13 +240,56 @@ class ConfigKey(str, Enum):
 
     PROVIDERS = "providers"
     DEFAULT_PROVIDER = "default_provider"
+    PROVIDER = "provider"
+    MODEL = "model"
     API_KEY = "api_key"
     API_BASE = "api_base"
     DEFAULT_MODEL = "default_model"
     MODELS = "models"
     FEATURES = "features"
+    CAPABILITIES = "capabilities"
+    PATTERN = "pattern"
     TIMEOUT = "timeout"
     MAX_RETRIES = "max_retries"
+    ENABLED = "enabled"
+    DYNAMIC_DISCOVERY = "dynamic_discovery"
+    ACTIVE_PROVIDER = "active_provider"
+    GLOBAL = "__global__"
+    GLOBAL_ALIASES = "__global_aliases__"
+
+
+class CapabilityKey(str, Enum):
+    """Model capability flag names."""
+
+    SUPPORTS_TEXT = "supports_text"
+    SUPPORTS_STREAMING = "supports_streaming"
+    SUPPORTS_TOOLS = "supports_tools"
+    SUPPORTS_VISION = "supports_vision"
+    SUPPORTS_JSON_MODE = "supports_json_mode"
+    SUPPORTS_SYSTEM_MESSAGES = "supports_system_messages"
+    SUPPORTS_PARALLEL_CALLS = "supports_parallel_calls"
+    SUPPORTS_REASONING = "supports_reasoning"
+
+
+class AzureOpenAIParam(str, Enum):
+    """Azure OpenAI specific configuration parameters."""
+
+    API_VERSION = "api_version"
+    AZURE_DEPLOYMENT = "azure_deployment"
+    AZURE_ENDPOINT = "azure_endpoint"
+    API_KEY = "api_key"
+
+
+class ToolParam(str, Enum):
+    """Tool/function call parameter names."""
+
+    TYPE = "type"
+    ID = "id"
+    NAME = "name"
+    DESCRIPTION = "description"
+    PARAMETERS = "parameters"
+    FUNCTION = "function"
+    ARGUMENTS = "arguments"
 
 
 # ================================================================
