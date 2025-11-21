@@ -28,13 +28,13 @@ See [REGISTRY_COMPLETE.md](REGISTRY_COMPLETE.md) for architecture details.
 ## Why chuk-llm?
 
 - **🧠 Intelligent**: Dynamic registry selects models by capabilities, not names
-- **⚡ Lightning Fast**: 52x faster imports (14ms), 112x faster client creation (cached)
 - **🔍 Auto-Discovery**: Pull new models, use immediately - no configuration needed
+- **⚡ Lightning Fast**: Massive performance improvements (see [Performance](#performance))
 - **🛠️ Clean Tools API**: Function calling without complexity - tools are just parameters
 - **🏗️ Type-Safe**: Pydantic V2 models throughout, no dictionary goop
 - **⚡ Async-Native**: True async/await with sync wrappers when needed
 - **📊 Built-in Analytics**: Automatic cost and usage tracking with session isolation
-- **🎯 Production-Ready**: Thread-safe caching, connection pooling, <0.015% overhead
+- **🎯 Production-Ready**: Thread-safe caching, connection pooling, negligible overhead
 
 ## Quick Start
 
@@ -123,6 +123,7 @@ The **registry** is the intelligent core of chuk-llm. Instead of hardcoding mode
 
 ```python
 from chuk_llm.registry import get_registry
+from chuk_llm import ask
 
 # Get the registry (auto-discovers all available models)
 registry = await get_registry()
@@ -134,6 +135,13 @@ model = await registry.find_best(
 )
 print(f"Selected: {model.spec.provider}:{model.spec.name}")
 # Selected: groq:llama-3.3-70b-versatile
+
+# Use the selected model with ask()
+response = await ask(
+    "Summarize this document",
+    provider=model.spec.provider,
+    model=model.spec.name
+)
 
 # Find best model for vision with large context
 model = await registry.find_best(
@@ -169,6 +177,8 @@ results = await registry.query(ModelQuery(
 - Google Gemini models API
 - Ollama `/api/tags` (local models)
 - Groq, Mistral, DeepSeek, and more
+
+Provider APIs are cached on disk and refreshed periodically (or via `chuk-llm discover`), so new models appear without needing a chuk-llm release.
 
 **Benefits:**
 - ✅ **No hardcoded model lists** - Pull new Ollama models, use immediately
@@ -246,17 +256,19 @@ All providers are **dynamically discovered** via the registry system - no hardco
 
 | Provider | Discovery Method | Special Features | Status |
 |----------|-----------------|-----------------|--------|
-| **OpenAI** | `/v1/models` API | GPT-5, o1/o3 reasoning, industry standard | ✅ Dynamic |
+| **OpenAI** | `/v1/models` API | GPT-5 / GPT-5.1, o3-family reasoning, industry standard | ✅ Dynamic |
 | **Azure OpenAI** | Deployment config | SOC2, HIPAA compliant, VNet, multi-region | ✅ Dynamic |
-| **Anthropic** | Known models | Claude 3.5 Sonnet, advanced reasoning, 200K context | ✅ Static |
-| **Google Gemini** | Models API | Gemini 2.0 Flash, multimodal, vision, video | ✅ Dynamic |
-| **Groq** | `/v1/models` API | Llama 3.3, ultra-fast (526 tokens/sec) | ✅ Dynamic |
+| **Anthropic** | Known models† | Claude 3.5 Sonnet, advanced reasoning, 200K context | ✅ Static |
+| **Google Gemini** | Models API | Gemini 2.0 / 3.0 Flash, multimodal, vision, video | ✅ Dynamic |
+| **Groq** | `/v1/models` API | Llama 3.3, ultra-fast (our benchmarks: ~526 tok/s) | ✅ Dynamic |
 | **Ollama** | `/api/tags` | Any local model, auto-discovery, offline, privacy | ✅ Dynamic |
-| **IBM watsonx** | Known models | Granite 3.3, enterprise, on-prem, compliance | ✅ Static |
-| **Perplexity** | Known models | Sonar, real-time web search, citations | ✅ Static |
-| **Mistral** | Known models | Large, Medium, Small, Codestral, European sovereignty | ✅ Static |
-| **DeepSeek** | Known models | DeepSeek V3, efficient, cost-effective | ✅ Static |
-| **OpenRouter** | Known models | Access to 100+ models via single API | ✅ Static |
+| **IBM watsonx** | Known models† | Granite 3.3, enterprise, on-prem, compliance | ✅ Static |
+| **Perplexity** | Known models† | Sonar, real-time web search, citations | ✅ Static |
+| **Mistral** | Known models† | Large, Medium, Small, Codestral, European sovereignty | ✅ Static |
+| **DeepSeek** | Known models† | DeepSeek V3, efficient, cost-effective | ✅ Static |
+| **OpenRouter** | Known models† | Access to 100+ models via single API | ✅ Static |
+
+† Static = discovered from curated model list + provider docs, not via `/models` endpoint
 
 **Capabilities** (auto-detected by registry):
 - ✅ Streaming responses
@@ -334,46 +346,20 @@ print_registry_stats()
 
 ### 🛠️ Function Calling / Tool Use
 
-ChukLLM provides a clean, unified API for function calling. Tools are just another parameter - no special functions needed!
-
-> 🚀 **New in v0.9+**: Simplified API! Use `ask(prompt, tools=tools_list)` instead of `ask_with_tools()`. The response format automatically adapts: dict when tools are provided, string otherwise.
+ChukLLM provides a clean, unified API for function calling. **Recommended approach**: Use the `Tools` class for automatic execution.
 
 ```python
-from chuk_llm import ask, ask_sync
-from chuk_llm.api.tools import tool, Tools, tools_from_functions
+from chuk_llm import Tools, tool
 
-# Method 1: Direct API usage
-def get_weather(location: str, unit: str = "celsius") -> dict:
-    """Get weather information for a location"""
-    return {"temp": 22, "location": location, "unit": unit, "condition": "sunny"}
-
-def calculate(expression: str) -> float:
-    """Evaluate a mathematical expression"""
-    return eval(expression)
-
-# Create toolkit
-toolkit = tools_from_functions(get_weather, calculate)
-
-# With tools parameter - returns dict with tool_calls
-response = await ask(
-    "What's the weather in Paris and what's 15 * 4?",
-    tools=toolkit.to_openai_format()
-)
-print(response)  # {"response": "...", "tool_calls": [...]}
-
-# Without tools - returns just string
-response = await ask("Hello there!")
-print(response)  # "Hello! How can I help you today?"
-
-# Method 2: Class-based tools (auto-execution)
+# Recommended: Class-based tools with auto-execution
 class MyTools(Tools):
     @tool(description="Get weather for a city")
     def get_weather(self, location: str) -> dict:
-        return {"temp": 22, "location": location}
-    
+        return {"temp": 22, "location": location, "condition": "sunny"}
+
     @tool  # Description auto-extracted from docstring
     def calculate(self, expr: str) -> float:
-        "Evaluate a math expression"
+        """Evaluate a mathematical expression"""
         return eval(expr)
 
 # Auto-executes tools and returns final response
@@ -381,9 +367,30 @@ tools = MyTools()
 response = await tools.ask("What's the weather in Paris and what's 2+2?")
 print(response)  # "The weather in Paris is 22°C and sunny. 2+2 equals 4."
 
-# Method 3: Sync versions work identically
-response = ask_sync("Calculate 15 * 4", tools=toolkit.to_openai_format())
-print(response)  # {"response": "60", "tool_calls": [...]}
+# Sync version
+response = tools.ask_sync("Calculate 15 * 4")
+print(response)  # "15 * 4 equals 60"
+```
+
+**Alternative: Direct API usage** (for more control):
+
+```python
+from chuk_llm import ask
+from chuk_llm.api.tools import tools_from_functions
+
+def get_weather(location: str) -> dict:
+    """Get weather information for a location"""
+    return {"temp": 22, "location": location}
+
+# Create toolkit
+toolkit = tools_from_functions(get_weather)
+
+# Returns dict with tool_calls - you handle execution
+response = await ask(
+    "What's the weather in Paris?",
+    tools=toolkit.to_openai_format()
+)
+print(response)  # {"response": "...", "tool_calls": [...]}
 ```
 
 #### Streaming with Tools
@@ -482,67 +489,33 @@ uvx chuk-llm ask_claude "Hello world"
 
 ## Performance
 
-ChukLLM is **one of the fastest LLM libraries available**, with extensive optimizations:
+chuk-llm is designed for production with negligible overhead:
 
-### ⚡ Import Performance (52.6x faster)
-```bash
-# Other libraries: 500-2000ms
-# chuk-llm with lazy imports: 14ms
-python -c "import chuk_llm"  # 14ms (was 735ms)
-```
+### Key Metrics
 
-### 🚀 Client Creation (112x faster when cached)
-```python
-from chuk_llm.llm.client import get_client
+| Operation | Time | Notes |
+|-----------|------|-------|
+| Import | 14ms | 52x faster than eager loading |
+| Client creation (cached) | 125µs | 112x faster, thread-safe |
+| Request overhead | 50-140µs | <0.015% of typical API call |
 
-# First call: ~12ms (optimized async-native)
-client1 = get_client("openai", model="gpt-4o")
+### Production Features
 
-# Subsequent calls with same config: ~125µs (cached)
-client2 = get_client("openai", model="gpt-4o")  # 112x faster!
-assert client1 is client2  # Same instance, thread-safe
-```
-
-### 📊 Overhead Analysis
-| Operation | Time | % of 1s API Call |
-|-----------|------|------------------|
-| Import library | 14ms | 1.4% (one-time) |
-| Client creation (cached) | 125µs | 0.0125% |
-| Request overhead | 50-140µs | 0.005-0.014% |
-| **Total overhead** | **<0.015%** | **Negligible** |
-
-### 🏗️ Production Features
-- **Automatic client caching** - 112x faster repeated operations, thread-safe
-- **Lazy imports** - Only load what you use, 52x faster startup
-- **Connection pooling** - Efficient HTTP/2 connection reuse
+- **Automatic client caching** - Thread-safe, 112x faster repeated operations
+- **Lazy imports** - Only load what you use
+- **Connection pooling** - Efficient HTTP/2 reuse
 - **Async-native** - Built on asyncio for maximum throughput
-- **Smart caching** - Model discovery results cached intelligently
-- **Session isolation** - Conversation state properly isolated (see architecture)
-- **Automatic retries** - Exponential backoff with jitter
-- **Concurrent execution** - Run multiple queries in parallel
+- **Smart caching** - Model discovery results cached on disk
 
-### 📈 Benchmark Results
+### Benchmarks
 
+Run comprehensive benchmarks:
 ```bash
-# Run comprehensive benchmarks
 uv run python benchmarks/benchmark_client_registry.py
-uv run python benchmarks/benchmark_json.py
 uv run python benchmarks/llm_benchmark.py
-
-# Performance highlights:
-# - Import: 14ms (52x faster than eager loading)
-# - Cached client creation: 125µs (112x faster than creating new)
-# - JSON operations: Within 1.02-1.64x of raw orjson
-# - Message building: ~2M ops/sec
-# - Groq streaming: 526 tokens/sec, 0.15s first token
-# - OpenAI streaming: 68 tokens/sec, 0.58s first token
 ```
 
-### 🎯 Throughput
-- **Client operations:** 7,979 ops/sec (cached) vs 71 ops/sec (uncached)
-- **Message building:** ~2M ops/sec
-- **Streaming chunks:** ~21M ops/sec
-- **JSON serialization:** ~175K-7M ops/sec
+**See [PERFORMANCE_OPTIMIZATIONS.md](PERFORMANCE_OPTIMIZATIONS.md) for detailed analysis and micro-benchmarks.**
 
 ## Architecture
 
@@ -632,15 +605,25 @@ chuk-llm/
 └── client_registry.py       # Thread-safe client caching
 ```
 
+## Used by the CHUK Stack
+
+chuk-llm is the **canonical LLM layer** for the entire CHUK ecosystem:
+
+- **chuk-ai-planner** uses the registry to select planning vs drafting models by capability
+- **chuk-acp-agent** uses capability-based policies per agent (e.g., "requires tools + 128k context")
+- **chuk-mcp-remotion** uses it to pick video-script models with vision + long context
+
+Instead of hardcoding "use GPT-4o", CHUK components declare **what they need**, and the registry finds the best available model.
+
 ## Documentation
 
 - 📚 [Full Documentation](https://github.com/chrishayuk/chuk-llm/wiki)
-- 🎯 [Examples (70+)](https://github.com/chrishayuk/chuk-llm/tree/main/examples)
+- 🎯 [Examples (33)](https://github.com/chrishayuk/chuk-llm/tree/main/examples)
 - ⚡ [Performance Optimizations](PERFORMANCE_OPTIMIZATIONS.md)
 - 🗄️ [Client Registry](CLIENT_REGISTRY.md)
 - 🔄 [Lazy Imports](LAZY_IMPORTS.md)
 - 🔐 [Conversation Isolation](CONVERSATION_ISOLATION.md)
-- 📊 [Registry System](docs/REGISTRY_SYSTEM.md)
+- 📊 [Registry System](REGISTRY_COMPLETE.md)
 - 🏗️ [Migration Guide](https://github.com/chrishayuk/chuk-llm/wiki/migration)
 - 🤝 [Contributing](https://github.com/chrishayuk/chuk-llm/blob/main/CONTRIBUTING.md)
 

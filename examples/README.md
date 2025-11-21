@@ -24,13 +24,15 @@ Comprehensive examples demonstrating all features of chuk-llm with modern Pydant
 9. **[07_json_mode.py](07_json_mode.py)** - Structured outputs and data extraction
 10. **[08_multimodal.py](08_multimodal.py)** - Vision and image understanding
 
-## Directory Structure
+## 📁 Directory Structure
+
+The examples directory is now clean and well-organized:
 
 ```
 examples/
 ├── README.md                                   # This file
 │
-├── 🆕 CORE EXAMPLES (Start Here!)
+├── 🆕 CORE EXAMPLES (Root directory - Start Here!)
 │   ├── 00_quick_start.py                      # Simplest possible example
 │   ├── 01_basic_ask.py                        # Basic usage patterns
 │   ├── 02_streaming.py                        # Real-time streaming
@@ -42,24 +44,45 @@ examples/
 │   ├── 08_multimodal.py                       # Vision/images
 │   └── registry_provider_discovery.py         # Registry deep dive
 │
-├── providers/                                  # Provider-specific examples
-│   ├── run_all_providers.py                   # Test all 15+ providers
+├── providers/                                  # Provider-specific examples (17 files)
+│   ├── run_all_providers.py                   # ⭐ Test all providers
 │   ├── openai_usage_examples.py               # OpenAI (GPT-5, o1, GPT-4o)
+│   ├── openai_chat_completions_example.py     # Chat completions format
+│   ├── openai_responses_example.py            # Responses API (stateful)
+│   ├── openai_compatible_example.py           # OpenAI-compatible providers
 │   ├── anthropic_usage_examples.py            # Claude 3.5
 │   ├── gemini_usage_examples.py               # Gemini 2.0
 │   ├── groq_usage_examples.py                 # Ultra-fast inference
 │   ├── mistral_usage_examples.py              # Mistral AI
 │   ├── azure_usage_examples.py                # Enterprise Azure
 │   ├── watsonx_usage_examples.py              # IBM Watsonx
+│   ├── advantage_usage_examples.py            # IBM Advantage
 │   ├── deepseek_usage_examples.py             # DeepSeek V3
 │   ├── perplexity_usage_examples.py           # Web search + citations
 │   ├── openrouter_usage_examples.py           # 100+ models via one API
-│   ├── openai_chat_completions_example.py     # Chat completions format
-│   ├── openai_responses_example.py            # Responses API (stateful)
-│   └── openai_compatible_example.py           # OpenAI-compatible providers
+│   ├── conversation_isolation_demo.py         # Architecture deep dive
+│   └── session_isolation_demo.py              # Session management
 │
-└── (legacy examples preserved for reference)
+└── advanced/                                   # Advanced features (6 files)
+    ├── registry_demo.py                       # Registry system demo
+    ├── performance_demo.py                    # Performance benchmarks
+    ├── dynamic_provider_workflow.py           # Dynamic provider selection
+    ├── streaming_usage.py                     # Advanced streaming
+    ├── tools_execution_demo.py                # Tool execution patterns
+    └── common_demos.py                        # Common usage patterns
 ```
+
+**Total: 33 focused, well-organized examples** (10 core + 17 provider + 6 advanced)
+
+### 🧹 Recent Cleanup (2025-01-21)
+
+The examples directory was massively cleaned up to remove:
+- ❌ 34+ duplicate, debug, and outdated examples
+- ❌ Pirate-themed examples (fun but not core)
+- ❌ Legacy discovery examples (replaced by registry)
+- ❌ Test and scratch files
+
+**Result**: Crystal clear learning path with only essential, well-documented examples!
 
 ## Test All Providers
 
