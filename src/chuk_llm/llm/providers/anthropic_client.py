@@ -20,6 +20,7 @@ Key points
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import logging
 import os
@@ -237,16 +238,16 @@ class AnthropicLLMClient(
         if response_format:
             # Validate with Pydantic if it's a dict
             if isinstance(response_format, dict):
-                try:
+                with contextlib.suppress(Exception):
                     response_format = ResponseFormat.model_validate(response_format)
-                except Exception:
-                    pass  # Keep as dict if validation fails
 
             # Check type regardless of whether it's dict or ResponseFormat
             format_type = (
                 response_format.type
                 if isinstance(response_format, ResponseFormat)
-                else response_format.get("type") if isinstance(response_format, dict) else None
+                else response_format.get("type")
+                if isinstance(response_format, dict)
+                else None
             )
 
             if format_type == "json_object":
@@ -567,7 +568,6 @@ class AnthropicLLMClient(
 
         # Apply universal tool name sanitization (stores mapping for restoration)
         name_mapping = {}
-        dict_tools = None
         sanitized_tools = None
         if tools:
             from chuk_llm.core.models import Tool as ToolModel
@@ -590,7 +590,11 @@ class AnthropicLLMClient(
             )
 
         # Convert Pydantic models to dicts only at this final step
-        anth_tools = self._convert_tools(self._tools_to_dicts(sanitized_tools)) if sanitized_tools else None
+        anth_tools = (
+            self._convert_tools(self._tools_to_dicts(sanitized_tools))
+            if sanitized_tools
+            else None
+        )
 
         # Check for JSON mode (using configuration validation)
         json_instruction = self._check_json_mode(extra)
@@ -626,7 +630,7 @@ class AnthropicLLMClient(
         system: str | None,
         json_instruction: str | None,
         messages: list[dict[str, Any]],
-        anth_tools: list[dict[str, Any]],
+        anth_tools: list[dict[str, Any]] | None,
         filtered_params: dict[str, Any],
         name_mapping: dict[str, str] = None,
     ) -> AsyncIterator[dict[str, Any]]:
@@ -841,7 +845,9 @@ class AnthropicLLMClient(
                 log.error(
                     f"Tool name validation error (this should not happen with universal compatibility): {e}"
                 )
-                log.error(f"Request tools: {[t.get('name') for t in anth_tools]}")
+                log.error(
+                    f"Request tools: {[t.get('name') for t in anth_tools] if anth_tools else []}"
+                )
 
             yield {
                 "response": f"Streaming error: {str(e)}",
@@ -854,7 +860,7 @@ class AnthropicLLMClient(
         system: str | None,
         json_instruction: str | None,
         messages: list[dict[str, Any]],
-        anth_tools: list[dict[str, Any]],
+        anth_tools: list[dict[str, Any]] | None,
         filtered_params: dict[str, Any],
         name_mapping: dict[str, str] = None,
     ) -> dict[str, Any]:
@@ -904,7 +910,9 @@ class AnthropicLLMClient(
                 log.error(
                     f"Tool name validation error (this should not happen with universal compatibility): {e}"
                 )
-                log.error(f"Request tools: {[t.get('name') for t in anth_tools]}")
+                log.error(
+                    f"Request tools: {[t.get('name') for t in anth_tools] if anth_tools else []}"
+                )
 
             return {"response": f"Error: {str(e)}", "tool_calls": [], "error": True}
 

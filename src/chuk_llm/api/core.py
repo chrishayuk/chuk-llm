@@ -361,10 +361,14 @@ async def ask(
         "api_base": base_url or effective_api_base,  # Dynamic override takes precedence
         "system_prompt": system_prompt or config.get(ConfigKey.SYSTEM_PROMPT.value),
         "temperature": (
-            temperature if temperature is not None else config.get(ConfigKey.TEMPERATURE.value)
+            temperature
+            if temperature is not None
+            else config.get(ConfigKey.TEMPERATURE.value)
         ),
         "max_tokens": (
-            max_tokens if max_tokens is not None else config.get(ConfigKey.MAX_TOKENS.value)
+            max_tokens
+            if max_tokens is not None
+            else config.get(ConfigKey.MAX_TOKENS.value)
         ),
     }
 

@@ -13,6 +13,7 @@ UNIVERSAL COMPATIBILITY: Full integration with ToolCompatibilityMixin for seamle
 from __future__ import annotations
 
 import base64
+import contextlib
 import functools
 import json
 import logging
@@ -633,10 +634,16 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
                 {
                     # Universal tool compatibility info
                     **tool_compatibility,
-                    "supports_function_calling": self.supports_feature(Feature.TOOLS.value),
-                    "supports_streaming": self.supports_feature(Feature.STREAMING.value),
+                    "supports_function_calling": self.supports_feature(
+                        Feature.TOOLS.value
+                    ),
+                    "supports_streaming": self.supports_feature(
+                        Feature.STREAMING.value
+                    ),
                     "supports_vision": self.supports_feature(Feature.VISION.value),
-                    "supports_json_mode": self.supports_feature(Feature.JSON_MODE.value),
+                    "supports_json_mode": self.supports_feature(
+                        Feature.JSON_MODE.value
+                    ),
                     "supports_system_messages": self.supports_feature(
                         Feature.SYSTEM_MESSAGES.value
                     ),
@@ -651,7 +658,9 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
                         or "2.5" in self.model,
                         "warning_suppression": "ultimate",
                         "enhanced_reasoning": "2.5" in self.model,
-                        "supports_function_calling": self.supports_feature(Feature.TOOLS.value),
+                        "supports_function_calling": self.supports_feature(
+                            Feature.TOOLS.value
+                        ),
                         "data_loss_protection": "enabled",
                     },
                     "vision_format": "universal_image_url",
@@ -771,16 +780,16 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
         if response_format:
             # Validate with Pydantic if it's a dict
             if isinstance(response_format, dict):
-                try:
+                with contextlib.suppress(Exception):
                     response_format = ResponseFormat.model_validate(response_format)
-                except Exception:
-                    pass  # Keep as dict if validation fails
 
             # Check type regardless of whether it's dict or ResponseFormat
             format_type = (
                 response_format.type
                 if isinstance(response_format, ResponseFormat)
-                else response_format.get("type") if isinstance(response_format, dict) else None
+                else response_format.get("type")
+                if isinstance(response_format, dict)
+                else None
             )
 
             if format_type == "json_object":
@@ -1090,7 +1099,9 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
         config = None
         if config_params:
             try:
-                if final_system and self.supports_feature(Feature.SYSTEM_MESSAGES.value):
+                if final_system and self.supports_feature(
+                    Feature.SYSTEM_MESSAGES.value
+                ):
                     config_params["system_instruction"] = final_system
 
                 config = gtypes.GenerateContentConfig(**config_params)
@@ -1310,7 +1321,9 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
             config = None
             if config_params:
                 try:
-                    if final_system and self.supports_feature(Feature.SYSTEM_MESSAGES.value):
+                    if final_system and self.supports_feature(
+                        Feature.SYSTEM_MESSAGES.value
+                    ):
                         config_params["system_instruction"] = final_system
 
                     config = gtypes.GenerateContentConfig(**config_params)
@@ -1335,7 +1348,9 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
                 combined_content = "Hello"
 
             # Prepend system instruction if not supported in config
-            if final_system and not self.supports_feature(Feature.SYSTEM_MESSAGES.value):
+            if final_system and not self.supports_feature(
+                Feature.SYSTEM_MESSAGES.value
+            ):
                 if isinstance(combined_content, list):
                     combined_content.insert(0, f"System: {final_system}\n\nUser: ")
                 else:

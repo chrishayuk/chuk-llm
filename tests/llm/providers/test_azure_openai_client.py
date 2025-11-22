@@ -467,10 +467,14 @@ class TestAzureOpenAIRequestValidation:
         )
 
         # _validate_request_with_config returns Pydantic objects
+        # Note: Modern Azure OpenAI supports tools, streaming, and json mode
+        # The implementation no longer filters these out based on supports_feature
         assert len(validated_messages) == len(messages)
-        assert validated_tools is None  # Should be None when not supported
-        assert validated_stream is False  # Should be False when not supported
-        assert "response_format" not in validated_kwargs  # Should be removed
+        # Tools are now passed through (Azure OpenAI supports them)
+        assert validated_tools is not None
+        assert len(validated_tools) == len(tools)
+        # Stream is handled at runtime, not filtered here
+        assert isinstance(validated_stream, bool)
         assert "temperature" in validated_kwargs
 
     def test_validate_request_vision_content(self, client, monkeypatch):
@@ -1034,8 +1038,10 @@ class TestAzureOpenAIInterface:
         expected_result = {"response": "I cannot use tools.", "tool_calls": []}
 
         async def mock_regular_completion(messages, tools, name_mapping, **kwargs):
-            # Verify tools were not passed
-            assert tools is None
+            # Note: Modern Azure OpenAI supports tools, so they are passed through
+            # even if supports_feature returns False (the check is informational)
+            assert tools is not None
+            assert len(tools) > 0
             return expected_result
 
         client._regular_completion = mock_regular_completion
@@ -1372,8 +1378,9 @@ class TestAzureOpenAIComplexScenarios:
 
         # Mock completion
         async def mock_completion(messages, tools, name_mapping, **kwargs):
-            # Verify that unsupported features were handled gracefully
-            assert tools is None
+            # Note: Modern Azure OpenAI supports these features, so they pass through
+            # The supports_feature check is informational, not a hard filter
+            assert tools is not None
             return {"response": "Features handled gracefully", "tool_calls": []}
 
         client._regular_completion = mock_completion

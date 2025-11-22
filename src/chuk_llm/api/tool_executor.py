@@ -70,14 +70,18 @@ class ToolExecutor:
                     result = await asyncio.to_thread(func, **arguments)
 
                 return {
-                    ToolParam.TOOL_CALL_ID.value: tool_call.get(ToolParam.ID.value, "unknown"),
+                    ToolParam.TOOL_CALL_ID.value: tool_call.get(
+                        ToolParam.ID.value, "unknown"
+                    ),
                     ToolParam.NAME.value: name,
                     ResponseKey.RESULT.value: result,
                 }
             else:
                 logger.warning(f"Tool {name} not found in executor")
                 return {
-                    ToolParam.TOOL_CALL_ID.value: tool_call.get(ToolParam.ID.value, "unknown"),
+                    ToolParam.TOOL_CALL_ID.value: tool_call.get(
+                        ToolParam.ID.value, "unknown"
+                    ),
                     ToolParam.NAME.value: name,
                     ResponseKey.ERROR.value: f"Tool {name} not registered",
                 }
@@ -85,24 +89,32 @@ class ToolExecutor:
         except Exception as e:
             logger.error(f"Error executing tool {tool_call}: {e}")
             return {
-                ToolParam.TOOL_CALL_ID.value: tool_call.get(ToolParam.ID.value, "unknown"),
+                ToolParam.TOOL_CALL_ID.value: tool_call.get(
+                    ToolParam.ID.value, "unknown"
+                ),
                 ResponseKey.ERROR.value: str(e),
             }
 
-    async def execute_all(self, tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    async def execute_all(
+        self, tool_calls: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Execute multiple tool calls in parallel (async-native)"""
         # Execute all tool calls concurrently
         tasks = [self.execute(tool_call) for tool_call in tool_calls]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Convert exceptions to error results
-        formatted_results = []
+        formatted_results: list[dict[str, Any]] = []
         for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                formatted_results.append({
-                    ToolParam.TOOL_CALL_ID.value: tool_calls[i].get(ToolParam.ID.value, "unknown"),
-                    ResponseKey.ERROR.value: str(result),
-                })
+            if isinstance(result, BaseException):
+                formatted_results.append(
+                    {
+                        ToolParam.TOOL_CALL_ID.value: tool_calls[i].get(
+                            ToolParam.ID.value, "unknown"
+                        ),
+                        ResponseKey.ERROR.value: str(result),
+                    }
+                )
             else:
                 formatted_results.append(result)
 

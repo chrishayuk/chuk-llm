@@ -393,6 +393,42 @@ class TestOpenAICompatibleRegistration:
         resolved = self.config.get_api_base("openai_test3")
         assert resolved == "https://default.api.com/v1"
 
+    def test_register_with_auto_detected_env(self):
+        """Test registration with auto-detected environment variable."""
+        # Set environment variables that should be auto-detected
+        os.environ["MYAPI_API_BASE"] = "https://myapi.example.com/v1"
+
+        try:
+            provider = register_openai_compatible(
+                name="myapi",
+                models=["model1"]
+            )
+
+            # Should auto-detect MYAPI_API_BASE environment variable
+            assert provider.api_base_env == "MYAPI_API_BASE"
+            resolved = self.config.get_api_base("myapi")
+            assert resolved == "https://myapi.example.com/v1"
+        finally:
+            del os.environ["MYAPI_API_BASE"]
+
+    def test_register_with_auto_detected_base_url_env(self):
+        """Test registration with auto-detected BASE_URL environment variable."""
+        # Set alternative pattern environment variable
+        os.environ["MYAPI2_BASE_URL"] = "https://myapi2.example.com/v1"
+
+        try:
+            provider = register_openai_compatible(
+                name="myapi2",
+                models=["model1"]
+            )
+
+            # Should auto-detect MYAPI2_BASE_URL environment variable
+            assert provider.api_base_env == "MYAPI2_BASE_URL"
+            resolved = self.config.get_api_base("myapi2")
+            assert resolved == "https://myapi2.example.com/v1"
+        finally:
+            del os.environ["MYAPI2_BASE_URL"]
+
     def test_default_models(self):
         """Test default models when none specified."""
         provider = register_openai_compatible(

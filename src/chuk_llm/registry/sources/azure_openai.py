@@ -38,7 +38,8 @@ class AzureOpenAIModelSource(BaseModelSource):
             timeout: Request timeout in seconds
         """
         self.api_key = api_key or os.getenv("AZURE_OPENAI_API_KEY")
-        self.azure_endpoint = (azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT", "")).rstrip("/")
+        endpoint = azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT") or ""
+        self.azure_endpoint = endpoint.rstrip("/")
         self.api_version = api_version
         self.timeout = timeout
 
@@ -157,9 +158,17 @@ class AzureOpenAIModelSource(BaseModelSource):
             return "gpt-4"
         elif "gpt-3.5" in model_lower:
             return "gpt-3.5"
-        elif model_lower.startswith("o1") or "-o1-" in model_lower or "-o1" in model_lower:
+        elif (
+            model_lower.startswith("o1")
+            or "-o1-" in model_lower
+            or "-o1" in model_lower
+        ):
             return "o1"
-        elif model_lower.startswith("o3") or "-o3-" in model_lower or "-o3" in model_lower:
+        elif (
+            model_lower.startswith("o3")
+            or "-o3-" in model_lower
+            or "-o3" in model_lower
+        ):
             return "o3"
 
         return None

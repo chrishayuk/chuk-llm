@@ -90,7 +90,9 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
             model_info = self.sync_client.show(model=self.model)
             self._model_capabilities = model_info.capabilities
             self._capabilities_loaded = True
-            log.debug(f"Loaded capabilities for {self.model}: {self._model_capabilities}")
+            log.debug(
+                f"Loaded capabilities for {self.model}: {self._model_capabilities}"
+            )
         except ollama.ResponseError:
             log.debug("Unable to get model capabilities from Ollama")
             self._capabilities_loaded = True  # Don't retry
@@ -102,10 +104,14 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
 
         try:
             # Run sync SDK call in thread pool to avoid blocking
-            model_info = await asyncio.to_thread(self.sync_client.show, model=self.model)
+            model_info = await asyncio.to_thread(
+                self.sync_client.show, model=self.model
+            )
             self._model_capabilities = model_info.capabilities
             self._capabilities_loaded = True
-            log.debug(f"Loaded capabilities for {self.model}: {self._model_capabilities}")
+            log.debug(
+                f"Loaded capabilities for {self.model}: {self._model_capabilities}"
+            )
         except ollama.ResponseError:
             log.debug("Unable to get model capabilities from Ollama")
             self._capabilities_loaded = True  # Don't retry

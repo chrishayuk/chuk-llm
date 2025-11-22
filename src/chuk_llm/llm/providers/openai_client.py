@@ -682,7 +682,11 @@ class OpenAILLMClient(
 
         # Determine response format
         if tool_calls:
-            response_value = content if content and content.strip() else None
+            response_value = (
+                content
+                if content and isinstance(content, str) and content.strip()
+                else None
+            )
         else:
             response_value = content
 
@@ -945,9 +949,9 @@ class OpenAILLMClient(
         if tools:
             if not self.supports_feature("tools"):
                 log.debug(
-                    f"Tools provided but {self.detected_provider}/{self.model} doesn't support tools - trying anyway"
+                    f"Tools provided but {self.detected_provider}/{self.model} doesn't support tools according to config - trying anyway"
                 )
-                validated_tools = None
+                # Don't set validated_tools = None, let the API handle it
             elif (
                 not self._has_explicit_model_config(self.model)
                 and self.detected_provider == "openai"
