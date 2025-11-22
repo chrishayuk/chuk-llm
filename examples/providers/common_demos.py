@@ -161,7 +161,9 @@ async def demo_function_calling(client, provider: str, model: str):
     print(f"\nUser: {messages[0].content}")
     print("\n⏳ Processing with tools...")
 
-    response = await client.create_completion(messages, tools=tools)
+    # Increase max_tokens for tool calling to avoid truncated tool calls
+    # WatsonX needs higher limit when using modern chat endpoint
+    response = await client.create_completion(messages, tools=tools, max_tokens=2000)
 
     # Handle multiple rounds of tool calling (some models call tools sequentially)
     max_rounds = 5
@@ -917,7 +919,7 @@ async def demo_error_handling(client, provider: str, model: str):
 # Demo Runner Helper
 # =============================================================================
 
-async def run_all_demos(client, provider: str, model: str, skip_tools=False, skip_vision=False, skip_discovery=False, skip_audio=False, skip_parameters=False, skip_comparison=False, comparison_models=None, audio_model=None):
+async def run_all_demos(client, provider: str, model: str, skip_tools=False, skip_vision=False, skip_discovery=False, skip_audio=False, skip_parameters=False, skip_comparison=False, comparison_models=None, audio_model=None, vision_client=None, vision_model=None):
     """Run all demos for a provider"""
     demos = [
         ("Basic Completion", demo_basic_completion(client, provider, model)),
@@ -928,8 +930,11 @@ async def run_all_demos(client, provider: str, model: str, skip_tools=False, ski
         demos.append(("Function Calling", demo_function_calling(client, provider, model)))
 
     if not skip_vision:
-        demos.append(("Vision", demo_vision(client, provider, model)))
-        demos.append(("Vision with URL", demo_vision_url(client, provider, model)))
+        # Use custom vision client if provided (e.g., granite-vision for WatsonX)
+        vision_client_to_use = vision_client if vision_client else client
+        vision_model_to_use = vision_model if vision_model else model
+        demos.append(("Vision", demo_vision(vision_client_to_use, provider, vision_model_to_use)))
+        demos.append(("Vision with URL", demo_vision_url(vision_client_to_use, provider, vision_model_to_use)))
 
     demos.extend([
         ("JSON Mode", demo_json_mode(client, provider, model)),
