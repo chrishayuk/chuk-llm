@@ -2228,7 +2228,7 @@ def test_validate_request_with_config(client):
 
 
 def test_validate_request_unsupported_features(client, monkeypatch):
-    """Test validation with unsupported features."""
+    """Test validation with unsupported features - permissive approach."""
     # Mock unsupported streaming
     monkeypatch.setattr(
         client, "supports_feature", lambda feature: feature != "streaming"
@@ -2244,7 +2244,9 @@ def test_validate_request_unsupported_features(client, monkeypatch):
         )
     )
 
-    assert validated_stream is False  # Should be disabled
+    # WatsonX uses permissive approach - doesn't block based on feature support
+    # Lets API handle unsupported cases since models can be added dynamically
+    assert validated_stream is True  # Passed through unchanged
 
 
 # ---------------------------------------------------------------------------
@@ -2401,7 +2403,9 @@ def test_validate_request_with_config_comprehensive(client, monkeypatch):
 
     assert validated_messages == messages  # Messages preserved
     assert validated_tools == tools  # Tools supported
-    assert validated_stream is False  # Streaming not supported
+    # WatsonX uses permissive approach - doesn't block based on feature support
+    # Lets API handle unsupported cases since models can be added dynamically
+    assert validated_stream is True  # Passed through unchanged
     assert validated_kwargs["temperature"] == 0.8
 
 

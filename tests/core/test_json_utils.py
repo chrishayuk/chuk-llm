@@ -349,3 +349,318 @@ def test_deeply_nested():
     serialized = json_utils.dumps(data)
     deserialized = json_utils.loads(serialized)
     assert deserialized == data
+
+
+# =============================================================================
+# Library-specific behavior tests
+# =============================================================================
+
+def test_orjson_fast_path():
+    """Test orjson fast path (no kwargs)"""
+    if json_utils.get_json_library() == "orjson":
+        result = json_utils.dumps({"test": "data"})
+        assert isinstance(result, str)
+        assert "test" in result
+
+
+def test_orjson_slow_path():
+    """Test orjson slow path (with kwargs)"""
+    if json_utils.get_json_library() == "orjson":
+        result = json_utils.dumps({"test": "data"}, indent=2)
+        assert isinstance(result, str)
+        assert "test" in result
+
+
+def test_orjson_loads_bytes_fast_path():
+    """Test orjson loads with bytes (fast path)"""
+    if json_utils.get_json_library() == "orjson":
+        json_bytes = b'{"test": "data"}'
+        result = json_utils.loads(json_bytes)
+        assert result["test"] == "data"
+
+
+def test_orjson_loads_string_slow_path():
+    """Test orjson loads with string (slow path)"""
+    if json_utils.get_json_library() == "orjson":
+        json_str = '{"test": "data"}'
+        result = json_utils.loads(json_str)
+        assert result["test"] == "data"
+
+
+def test_orjson_load_from_string_file():
+    """Test orjson load with string content"""
+    if json_utils.get_json_library() == "orjson":
+        fp = io.StringIO('{"test": "data"}')
+        result = json_utils.load(fp)
+        assert result["test"] == "data"
+
+
+def test_orjson_load_from_bytes_file():
+    """Test orjson load with bytes content"""
+    if json_utils.get_json_library() == "orjson":
+        fp = io.BytesIO(b'{"test": "data"}')
+        result = json_utils.load(fp)
+        assert result["test"] == "data"
+
+
+def test_orjson_dump_to_binary_file():
+    """Test orjson dump to binary file (handles TypeError)"""
+    if json_utils.get_json_library() == "orjson":
+        fp = io.BytesIO()
+        json_utils.dump({"test": "data"}, fp)
+        fp.seek(0)
+        content = fp.read()
+        assert b"test" in content
+
+
+def test_orjson_dump_to_text_file():
+    """Test orjson dump to text file (handles TypeError)"""
+    if json_utils.get_json_library() == "orjson":
+        fp = io.StringIO()
+        json_utils.dump({"test": "data"}, fp)
+        fp.seek(0)
+        content = fp.read()
+        assert "test" in content
+
+
+def test_ujson_dumps():
+    """Test ujson dumps"""
+    if json_utils.get_json_library() == "ujson":
+        result = json_utils.dumps({"test": "data"})
+        assert isinstance(result, str)
+
+
+def test_ujson_loads():
+    """Test ujson loads"""
+    if json_utils.get_json_library() == "ujson":
+        result = json_utils.loads('{"test": "data"}')
+        assert result["test"] == "data"
+
+
+def test_ujson_dump():
+    """Test ujson dump"""
+    if json_utils.get_json_library() == "ujson":
+        fp = io.StringIO()
+        json_utils.dump({"test": "data"}, fp)
+        fp.seek(0)
+        content = fp.read()
+        assert "test" in content
+
+
+def test_ujson_load():
+    """Test ujson load"""
+    if json_utils.get_json_library() == "ujson":
+        fp = io.StringIO('{"test": "data"}')
+        result = json_utils.load(fp)
+        assert result["test"] == "data"
+
+
+def test_stdlib_dumps():
+    """Test stdlib dumps"""
+    if json_utils.get_json_library() == "stdlib":
+        result = json_utils.dumps({"test": "data"})
+        assert isinstance(result, str)
+
+
+def test_stdlib_loads_from_string():
+    """Test stdlib loads from string"""
+    if json_utils.get_json_library() == "stdlib":
+        result = json_utils.loads('{"test": "data"}')
+        assert result["test"] == "data"
+
+
+def test_stdlib_loads_from_bytes():
+    """Test stdlib loads from bytes (decodes first)"""
+    if json_utils.get_json_library() == "stdlib":
+        result = json_utils.loads(b'{"test": "data"}')
+        assert result["test"] == "data"
+
+
+def test_stdlib_dump():
+    """Test stdlib dump"""
+    if json_utils.get_json_library() == "stdlib":
+        fp = io.StringIO()
+        json_utils.dump({"test": "data"}, fp)
+        fp.seek(0)
+        content = fp.read()
+        assert "test" in content
+
+
+def test_stdlib_load_from_string_file():
+    """Test stdlib load from string file"""
+    if json_utils.get_json_library() == "stdlib":
+        fp = io.StringIO('{"test": "data"}')
+        result = json_utils.load(fp)
+        assert result["test"] == "data"
+
+
+def test_stdlib_load_from_bytes_file():
+    """Test stdlib load from bytes file (decodes first)"""
+    if json_utils.get_json_library() == "stdlib":
+        fp = io.BytesIO(b'{"test": "data"}')
+        result = json_utils.load(fp)
+        assert result["test"] == "data"
+
+
+# =============================================================================
+# Pydantic config tests
+# =============================================================================
+
+def test_pydantic_config_orjson():
+    """Test Pydantic config with orjson"""
+    if json_utils.get_json_library() == "orjson":
+        config = json_utils.get_pydantic_json_config()
+
+        # Test loads
+        loaded = config["json_loads"]('{"test": "data"}')
+        assert loaded["test"] == "data"
+
+        # Test dumps (returns bytes for orjson)
+        dumped = config["json_dumps"]({"test": "data"})
+        assert isinstance(dumped, bytes)
+        assert b"test" in dumped
+
+
+def test_pydantic_config_ujson():
+    """Test Pydantic config with ujson"""
+    if json_utils.get_json_library() == "ujson":
+        config = json_utils.get_pydantic_json_config()
+
+        # Test loads
+        loaded = config["json_loads"]('{"test": "data"}')
+        assert loaded["test"] == "data"
+
+        # Test dumps
+        dumped = config["json_dumps"]({"test": "data"})
+        assert isinstance(dumped, str)
+        assert "test" in dumped
+
+
+def test_pydantic_config_stdlib():
+    """Test Pydantic config with stdlib"""
+    if json_utils.get_json_library() == "stdlib":
+        config = json_utils.get_pydantic_json_config()
+
+        # Test loads
+        loaded = config["json_loads"]('{"test": "data"}')
+        assert loaded["test"] == "data"
+
+        # Test dumps
+        dumped = config["json_dumps"]({"test": "data"})
+        assert isinstance(dumped, str)
+        assert "test" in dumped
+
+
+# =============================================================================
+# Additional edge cases
+# =============================================================================
+
+def test_dumps_with_both_indent_and_sort_keys():
+    """Test dumps with both indent and sort_keys"""
+    data = {"z": 1, "a": 2, "m": 3}
+    result = json_utils.dumps(data, indent=2, sort_keys=True)
+    assert isinstance(result, str)
+
+    # Verify it's valid JSON
+    parsed = json.loads(result)
+    assert parsed == data
+
+
+def test_dump_with_both_indent_and_sort_keys():
+    """Test dump with both indent and sort_keys"""
+    data = {"z": 1, "a": 2}
+    fp = io.StringIO()
+    json_utils.dump(data, fp, indent=2, sort_keys=True)
+
+    fp.seek(0)
+    content = fp.read()
+    parsed = json.loads(content)
+    assert parsed == data
+
+
+def test_special_characters_in_strings():
+    """Test handling of special characters"""
+    data = {
+        "quote": 'He said "hello"',
+        "backslash": "path\\to\\file",
+        "newline": "line1\nline2",
+        "tab": "col1\tcol2"
+    }
+    serialized = json_utils.dumps(data)
+    deserialized = json_utils.loads(serialized)
+    assert deserialized == data
+
+
+def test_mixed_type_array():
+    """Test array with mixed types"""
+    data = [1, "string", True, None, {"nested": "dict"}, [1, 2]]
+    serialized = json_utils.dumps(data)
+    deserialized = json_utils.loads(serialized)
+    assert deserialized == data
+
+
+def test_float_precision():
+    """Test float precision handling"""
+    data = {"pi": 3.141592653589793, "e": 2.718281828459045}
+    serialized = json_utils.dumps(data)
+    deserialized = json_utils.loads(serialized)
+
+    # Check that values are close (accounting for precision)
+    assert abs(deserialized["pi"] - data["pi"]) < 0.000001
+    assert abs(deserialized["e"] - data["e"]) < 0.000001
+
+
+def test_empty_string_value():
+    """Test empty string as value"""
+    data = {"empty": "", "not_empty": "value"}
+    serialized = json_utils.dumps(data)
+    deserialized = json_utils.loads(serialized)
+    assert deserialized == data
+
+
+def test_performance_info_fields():
+    """Test all fields in performance info"""
+    info = json_utils.get_performance_info()
+
+    # Check library field
+    assert info.library in ["orjson", "ujson", "stdlib"]
+
+    # Check availability flags
+    assert isinstance(info.orjson_available, bool)
+    assert isinstance(info.ujson_available, bool)
+
+    # Check speedup description
+    assert info.speedup in [
+        "2-3x faster than stdlib",
+        "1.5-2x faster than stdlib",
+        "baseline performance"
+    ]
+
+
+def test_library_availability_consistency():
+    """Test that library selection is consistent with availability"""
+    lib = json_utils.get_json_library()
+    info = json_utils.get_performance_info()
+
+    if lib == "orjson":
+        assert info.orjson_available is True
+    elif lib == "ujson":
+        assert info.ujson_available is True
+        # orjson not available (or we'd use it)
+        if info.orjson_available:
+            # This shouldn't happen
+            pytest.fail("ujson selected but orjson is available")
+    else:  # stdlib
+        # Neither fast library available
+        pass  # stdlib is always available
+
+
+def test_module_level_variables():
+    """Test module-level variables are set correctly"""
+    assert hasattr(json_utils, '_json_lib')
+    assert hasattr(json_utils, '_orjson_available')
+    assert hasattr(json_utils, '_ujson_available')
+
+    assert json_utils._json_lib in ["orjson", "ujson", "stdlib"]
+    assert isinstance(json_utils._orjson_available, bool)
+    assert isinstance(json_utils._ujson_available, bool)

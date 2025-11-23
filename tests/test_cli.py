@@ -31,7 +31,7 @@ class TestCLISystemPromptSupport:
         import chuk_llm.cli
         monkeypatch.setitem(chuk_llm.cli._GENERATED_FUNCTIONS, 'ask_ollama_granite', mock_func)
 
-        with patch('chuk_llm.api.providers.has_function', return_value=True):
+        with patch('chuk_llm.cli.has_function', return_value=True):
             # Mock at the core API level to intercept actual calls
             with patch('chuk_llm.api.core.ask', new_callable=AsyncMock) as mock_ask:
                 mock_ask.return_value = "Test response"
@@ -59,7 +59,7 @@ class TestCLISystemPromptSupport:
         import chuk_llm.cli
         monkeypatch.setitem(chuk_llm.cli._GENERATED_FUNCTIONS, 'ask_ollama_granite', mock_func)
 
-        with patch('chuk_llm.api.providers.has_function', return_value=True):
+        with patch('chuk_llm.cli.has_function', return_value=True):
             # Mock at the core API level
             with patch('chuk_llm.api.core.ask', new_callable=AsyncMock) as mock_ask:
                 mock_ask.return_value = "Test response"
@@ -93,7 +93,7 @@ class TestCLISystemPromptSupport:
         import chuk_llm.cli
         monkeypatch.setitem(chuk_llm.cli._GENERATED_FUNCTIONS, 'ask_ollama_granite', mock_func)
 
-        with patch('chuk_llm.api.providers.has_function', return_value=True):
+        with patch('chuk_llm.cli.has_function', return_value=True):
             with patch('chuk_llm.api.event_loop_manager.run_sync') as mock_run_sync:
                 mock_run_sync.return_value = "Async response"
 
@@ -118,7 +118,7 @@ class TestCLISystemPromptSupport:
         import chuk_llm.cli
         monkeypatch.setitem(chuk_llm.cli._GENERATED_FUNCTIONS, 'ask_ollama_granite', mock_func)
 
-        with patch('chuk_llm.api.providers.has_function', return_value=True):
+        with patch('chuk_llm.cli.has_function', return_value=True):
             # Mock at the core API level for sync detection
             with patch('chuk_llm.api.core.ask', new_callable=AsyncMock) as mock_ask:
                 mock_ask.return_value = "Sync response"
@@ -344,7 +344,7 @@ class TestCLIStreamHandling:
         import chuk_llm.cli
         monkeypatch.setitem(chuk_llm.cli._GENERATED_FUNCTIONS, 'stream_ollama_granite', mock_func)
 
-        with patch('chuk_llm.api.providers.has_function', return_value=True):
+        with patch('chuk_llm.cli.has_function', return_value=True):
             with patch('chuk_llm.api.event_loop_manager.run_sync') as mock_run_sync:
                 mock_run_sync.return_value = "Hello World"
 
@@ -369,7 +369,7 @@ class TestCLIStreamHandling:
         import chuk_llm.cli
         monkeypatch.setitem(chuk_llm.cli._GENERATED_FUNCTIONS, 'ask_ollama_granite_sync', mock_func)
 
-        with patch('chuk_llm.api.providers.has_function', return_value=True):
+        with patch('chuk_llm.cli.has_function', return_value=True):
             # Mock at the core API level for sync functions
             with patch('chuk_llm.api.core.ask', new_callable=AsyncMock) as mock_ask:
                 mock_ask.return_value = "Sync response"
@@ -462,13 +462,13 @@ class TestCLIErrorHandling:
         """Test error when convenience function doesn't exist"""
         cli = ChukLLMCLI()
         
-        with patch('chuk_llm.api.providers.has_function', return_value=False):
+        with patch('chuk_llm.cli.has_function', return_value=False):
             with pytest.raises(Exception) as exc_info:
                 cli.handle_convenience_function(
                     'ask_nonexistent_model',
                     'Test prompt'
                 )
-            
+
             assert "not available" in str(exc_info.value)
     
     def test_alias_not_found(self):

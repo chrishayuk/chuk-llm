@@ -158,7 +158,7 @@ def _sanitize_name(name: str) -> str:
 
 
 def _check_ollama_available_models(timeout: float | None = None) -> list[str]:
-    """Check what Ollama models are actually available locally (non-blocking)"""
+    """Check what Ollama models are actually available locally using registry system."""
     # Check if Ollama discovery is disabled
     if not _is_discovery_enabled("ollama"):
         logger.debug("Ollama discovery disabled by environment variable")
@@ -169,29 +169,38 @@ def _check_ollama_available_models(timeout: float | None = None) -> list[str]:
         timeout = float(os.getenv("CHUK_LLM_DISCOVERY_QUICK_TIMEOUT", "2.0"))
 
     try:
-        import httpx
+        # Use the registry system's OllamaSource for discovery
+        from chuk_llm.registry import OllamaSource
 
-        # Quick check with timeout
-        with httpx.Client(timeout=timeout) as client:
-            try:
-                response = client.get("http://localhost:11434/api/tags")
-                if response.status_code == 200:
-                    data = response.json()
-                    available = [model["name"] for model in data.get("models", [])]
-                    logger.debug(f"Found {len(available)} available Ollama models")
-                    return available
-            except (httpx.ConnectError, httpx.TimeoutException):
-                logger.debug("Ollama not available or timeout - skipping model check")
-                return []
-            except Exception as e:
-                logger.debug(f"Error checking Ollama models: {e}")
-                return []
+        async def discover_ollama():
+            source = OllamaSource(timeout=timeout)
+            specs = await source.discover()
+            return [spec.name for spec in specs]
 
-    except ImportError:
-        logger.debug("httpx not available - skipping Ollama model check")
+        # Run the async discovery
+        import asyncio
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Can't run in an already-running loop
+                logger.debug("Event loop already running - skipping Ollama check")
+                return []
+            else:
+                models = loop.run_until_complete(discover_ollama())
+                logger.debug(
+                    f"Found {len(models)} available Ollama models via registry"
+                )
+                return models
+        except RuntimeError:
+            # No event loop available, create one
+            models = asyncio.run(discover_ollama())
+            logger.debug(f"Found {len(models)} available Ollama models via registry")
+            return models
+
+    except Exception as e:
+        logger.debug(f"Error checking Ollama models via registry: {e}")
         return []
-
-    return []
 
 
 def _ensure_provider_models_current(provider_name: str) -> list[str]:
@@ -230,51 +239,20 @@ def _ensure_provider_models_current(provider_name: str) -> list[str]:
             )
             return all_models
 
-        # For Ollama, also query the API directly to get current models
+        # For Ollama, use registry system to get current models
         if provider_name == "ollama":
             try:
-                import asyncio
-
-                import httpx
-
-                async def get_ollama_models():
-                    try:
-                        timeout = float(os.getenv("CHUK_LLM_DISCOVERY_TIMEOUT", "3"))
-                        async with httpx.AsyncClient(timeout=timeout) as client:
-                            response = await client.get(
-                                "http://localhost:11434/api/tags"
-                            )
-                            if response.status_code == 200:
-                                data = response.json()
-                                return [
-                                    model["name"] for model in data.get("models", [])
-                                ]
-                    except Exception:
-                        return []
-                    return []
-
-                # Get current models from Ollama API
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        # If we're in an async context, skip the API call to avoid blocking
-                        pass
-                    else:
-                        ollama_models = loop.run_until_complete(get_ollama_models())
-                        if ollama_models:
-                            # Merge with existing models
-                            all_models = list(
-                                set(provider_config.models + ollama_models)
-                            )
-                            provider_config.models = all_models
-                            logger.debug(
-                                f"Updated Ollama models: {len(all_models)} total"
-                            )
-                except Exception:
-                    # If async fails, continue with existing models
-                    pass
-            except ImportError:
-                # httpx not available, continue with existing models
+                ollama_models = _check_ollama_available_models()
+                if ollama_models:
+                    # Merge with existing models
+                    all_models = list(set(provider_config.models + ollama_models))
+                    provider_config.models = all_models
+                    logger.debug(
+                        f"Updated Ollama models via registry: {len(all_models)} total"
+                    )
+            except Exception as e:
+                logger.debug(f"Error updating Ollama models: {e}")
+                # Continue with existing models
                 pass
 
         # Check if discovery is enabled

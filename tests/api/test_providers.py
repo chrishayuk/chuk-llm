@@ -17,7 +17,7 @@ Key fixes:
 import asyncio
 import threading
 import warnings
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -742,22 +742,22 @@ class TestModuleIntegration:
     def test_module_imports_successfully(self):
         """Test that the module imports without errors."""
         # This should not raise any exceptions
-        import chuk_llm.api.providers
+        from chuk_llm.api import providers
 
         # Check that expected attributes exist
-        assert hasattr(chuk_llm.api.providers, "__all__")
-        assert isinstance(chuk_llm.api.providers.__all__, list)
+        assert hasattr(providers, "__all__")
+        assert isinstance(providers.__all__, list)
 
     def test_functions_are_exported(self):
         """Test that functions are properly exported in __all__."""
-        import chuk_llm.api.providers
+        from chuk_llm.api import providers
 
         # Should have some functions exported
-        assert len(chuk_llm.api.providers.__all__) > 0
+        assert len(providers.__all__) > 0
 
         # All exported names should be callable or utility functions
-        for name in chuk_llm.api.providers.__all__:
-            assert hasattr(chuk_llm.api.providers, name)
+        for name in providers.__all__:
+            assert hasattr(providers, name)
 
     @patch("chuk_llm.api.providers.get_config")
     def test_error_during_generation_handled(self, mock_get_config):
@@ -767,14 +767,13 @@ class TestModuleIntegration:
 
         # Reload the module - should handle the error gracefully
         import importlib
-
-        import chuk_llm.api.providers
+        from chuk_llm.api import providers
 
         try:
-            importlib.reload(chuk_llm.api.providers)
+            importlib.reload(providers)
         except Exception:
             # The module should still be usable even if generation fails
-            assert hasattr(chuk_llm.api.providers, "__all__")
+            assert hasattr(providers, "__all__")
 
     def test_warnings_are_suppressed(self):
         """Test that asyncio warnings are properly suppressed."""
@@ -1088,3 +1087,400 @@ class TestFunctionsListCommand:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestEnvironmentBoolParsing:
+    """Test _env_bool function."""
+
+    def test_env_bool_true_values(self, monkeypatch):
+        """Test that various true values are parsed correctly."""
+        from chuk_llm.api.providers import _env_bool
+        
+        true_values = ["true", "1", "yes", "on", "enabled", "TRUE", "YES"]
+        for value in true_values:
+            monkeypatch.setenv("TEST_VAR", value)
+            assert _env_bool("TEST_VAR") is True
+
+    def test_env_bool_false_values(self, monkeypatch):
+        """Test that various false values are parsed correctly."""
+        from chuk_llm.api.providers import _env_bool
+        
+        false_values = ["false", "0", "no", "off", "disabled", "FALSE", "NO"]
+        for value in false_values:
+            monkeypatch.setenv("TEST_VAR", value)
+            assert _env_bool("TEST_VAR") is False
+
+    def test_env_bool_default_when_not_set(self, monkeypatch):
+        """Test default value when env var not set."""
+        from chuk_llm.api.providers import _env_bool
+        
+        monkeypatch.delenv("TEST_VAR", raising=False)
+        assert _env_bool("TEST_VAR", default=True) is True
+        assert _env_bool("TEST_VAR", default=False) is False
+
+    def test_env_bool_invalid_value_returns_default(self, monkeypatch):
+        """Test that invalid values return default."""
+        from chuk_llm.api.providers import _env_bool
+        
+        monkeypatch.setenv("TEST_VAR", "maybe")
+        assert _env_bool("TEST_VAR", default=True) is True
+        assert _env_bool("TEST_VAR", default=False) is False
+
+
+class TestDiscoveryEnabled:
+    """Test discovery enabled checks."""
+
+    def test_is_discovery_enabled_global_disabled(self, monkeypatch):
+        """Test that global disable works."""
+        from chuk_llm.api.providers import _is_discovery_enabled
+        
+        monkeypatch.setenv("CHUK_LLM_DISCOVERY_ENABLED", "false")
+        assert _is_discovery_enabled() is False
+        assert _is_discovery_enabled("ollama") is False
+
+    def test_is_discovery_enabled_global_enabled(self, monkeypatch):
+        """Test that global enable works."""
+        from chuk_llm.api.providers import _is_discovery_enabled
+        
+        monkeypatch.setenv("CHUK_LLM_DISCOVERY_ENABLED", "true")
+        assert _is_discovery_enabled() is True
+
+    def test_is_discovery_enabled_provider_specific(self, monkeypatch):
+        """Test provider-specific discovery disable."""
+        from chuk_llm.api.providers import _is_discovery_enabled
+        
+        monkeypatch.setenv("CHUK_LLM_DISCOVERY_ENABLED", "true")
+        monkeypatch.setenv("CHUK_LLM_OLLAMA_DISCOVERY", "false")
+        
+        assert _is_discovery_enabled() is True
+        assert _is_discovery_enabled("ollama") is False
+        assert _is_discovery_enabled("openai") is True
+
+    def test_is_startup_discovery_enabled(self, monkeypatch):
+        """Test startup discovery check."""
+        from chuk_llm.api.providers import _is_startup_discovery_enabled
+        
+        monkeypatch.setenv("CHUK_LLM_DISCOVERY_ON_STARTUP", "false")
+        assert _is_startup_discovery_enabled() is False
+        
+        monkeypatch.setenv("CHUK_LLM_DISCOVERY_ON_STARTUP", "true")
+        assert _is_startup_discovery_enabled() is True
+
+    def test_is_auto_discover_enabled(self, monkeypatch):
+        """Test auto discover check."""
+        from chuk_llm.api.providers import _is_auto_discover_enabled
+        
+        monkeypatch.setenv("CHUK_LLM_AUTO_DISCOVER", "false")
+        assert _is_auto_discover_enabled() is False
+        
+        monkeypatch.setenv("CHUK_LLM_AUTO_DISCOVER", "true")
+        assert _is_auto_discover_enabled() is True
+
+
+class TestCheckOllamaAvailableModels:
+    """Test _check_ollama_available_models function."""
+
+    def test_check_ollama_disabled_by_env(self, monkeypatch):
+        """Test that Ollama check returns empty when disabled."""
+        from chuk_llm.api.providers import _check_ollama_available_models
+        
+        monkeypatch.setenv("CHUK_LLM_OLLAMA_DISCOVERY", "false")
+        result = _check_ollama_available_models()
+        assert result == []
+
+    def test_check_ollama_httpx_not_available(self, monkeypatch):
+        """Test handling when httpx is not installed."""
+        from chuk_llm.api.providers import _check_ollama_available_models
+        
+        monkeypatch.setenv("CHUK_LLM_OLLAMA_DISCOVERY", "true")
+        
+        with patch("builtins.__import__", side_effect=ImportError):
+            result = _check_ollama_available_models()
+            assert result == []
+
+    def test_check_ollama_connection_error(self, monkeypatch):
+        """Test handling of Ollama connection error."""
+        from chuk_llm.api.providers import _check_ollama_available_models
+
+        monkeypatch.setenv("CHUK_LLM_OLLAMA_DISCOVERY", "true")
+
+        # Mock the OllamaSource to return empty list (simulating connection error)
+        with patch("chuk_llm.registry.OllamaSource") as mock_source:
+            async def mock_discover():
+                return []
+
+            mock_instance = Mock()
+            mock_instance.discover = mock_discover
+            mock_source.return_value = mock_instance
+
+            result = _check_ollama_available_models()
+            assert result == []
+
+    def test_check_ollama_timeout(self, monkeypatch):
+        """Test handling of Ollama timeout."""
+        from chuk_llm.api.providers import _check_ollama_available_models
+
+        monkeypatch.setenv("CHUK_LLM_OLLAMA_DISCOVERY", "true")
+
+        # Mock the OllamaSource to return empty list (simulating timeout)
+        with patch("chuk_llm.registry.OllamaSource") as mock_source:
+            async def mock_discover():
+                return []
+
+            mock_instance = Mock()
+            mock_instance.discover = mock_discover
+            mock_source.return_value = mock_instance
+
+            result = _check_ollama_available_models()
+            assert result == []
+
+    def test_check_ollama_success(self, monkeypatch):
+        """Test successful Ollama model check."""
+        from chuk_llm.api.providers import _check_ollama_available_models
+        from chuk_llm.registry.models import ModelSpec
+
+        monkeypatch.setenv("CHUK_LLM_OLLAMA_DISCOVERY", "true")
+
+        # Mock the OllamaSource to return test models
+        with patch("chuk_llm.registry.OllamaSource") as mock_source:
+            async def mock_discover():
+                return [
+                    ModelSpec(provider="ollama", name="llama3:latest", family="llama-3"),
+                    ModelSpec(provider="ollama", name="mistral:latest", family="mistral"),
+                ]
+
+            mock_instance = Mock()
+            mock_instance.discover = mock_discover
+            mock_source.return_value = mock_instance
+
+            result = _check_ollama_available_models()
+            assert result == ["llama3:latest", "mistral:latest"]
+
+    def test_check_ollama_custom_timeout(self, monkeypatch):
+        """Test Ollama check with custom timeout."""
+        from chuk_llm.api.providers import _check_ollama_available_models
+        
+        monkeypatch.setenv("CHUK_LLM_OLLAMA_DISCOVERY", "true")
+        monkeypatch.setenv("CHUK_LLM_DISCOVERY_QUICK_TIMEOUT", "5.0")
+        
+        result = _check_ollama_available_models(timeout=3.0)
+        # Should complete without error
+
+    def test_check_ollama_exception_handling(self, monkeypatch):
+        """Test generic exception handling."""
+        from chuk_llm.api.providers import _check_ollama_available_models
+
+        monkeypatch.setenv("CHUK_LLM_OLLAMA_DISCOVERY", "true")
+
+        # Mock the OllamaSource to raise an exception
+        with patch("chuk_llm.registry.OllamaSource") as mock_source:
+            mock_source.side_effect = Exception("Unexpected error")
+            result = _check_ollama_available_models()
+            assert result == []
+
+
+class TestEnsureProviderModelsCurrent:
+    """Test _ensure_provider_models_current function."""
+
+    def test_ensure_models_auto_discover_disabled(self, monkeypatch):
+        """Test when auto-discover is disabled."""
+        from chuk_llm.api.providers import _ensure_provider_models_current
+        
+        monkeypatch.setenv("CHUK_LLM_AUTO_DISCOVER", "false")
+        
+        mock_config = MagicMock()
+        mock_provider = MagicMock()
+        mock_provider.models = ["model1", "model2"]
+        mock_config.get_provider.return_value = mock_provider
+        
+        with patch("chuk_llm.api.providers.get_config", return_value=mock_config):
+            result = _ensure_provider_models_current("openai")
+            assert result == ["model1", "model2"]
+
+    def test_ensure_models_provider_discovery_disabled(self, monkeypatch):
+        """Test when provider-specific discovery is disabled."""
+        from chuk_llm.api.providers import _ensure_provider_models_current
+        
+        monkeypatch.setenv("CHUK_LLM_OPENAI_DISCOVERY", "false")
+        
+        mock_config = MagicMock()
+        mock_provider = MagicMock()
+        mock_provider.models = ["gpt-4"]
+        mock_config.get_provider.return_value = mock_provider
+        
+        with patch("chuk_llm.api.providers.get_config", return_value=mock_config):
+            result = _ensure_provider_models_current("openai")
+            assert result == ["gpt-4"]
+
+    def test_ensure_models_with_discovery_cache(self, monkeypatch):
+        """Test merging with discovery cache."""
+        from chuk_llm.api.providers import _ensure_provider_models_current
+        
+        monkeypatch.setenv("CHUK_LLM_AUTO_DISCOVER", "true")
+        
+        mock_config = MagicMock()
+        mock_provider = MagicMock()
+        mock_provider.models = ["model1", "model2"]
+        mock_config.get_provider.return_value = mock_provider
+        mock_config._discovery_cache = {
+            "openai": {"models": ["model3", "model4"]}
+        }
+        mock_config.providers = {}
+        
+        with patch("chuk_llm.api.providers.get_config", return_value=mock_config):
+            result = _ensure_provider_models_current("openai")
+            # Should have merged models
+            assert len(result) == 4
+            assert "model1" in result
+            assert "model3" in result
+
+    def test_ensure_models_exception_handling(self, monkeypatch):
+        """Test exception handling when getting provider fails."""
+        from chuk_llm.api.providers import _ensure_provider_models_current
+        
+        monkeypatch.setenv("CHUK_LLM_AUTO_DISCOVER", "false")
+        
+        with patch("chuk_llm.api.providers.get_config", side_effect=Exception("Config error")):
+            result = _ensure_provider_models_current("openai")
+            assert result == []
+
+
+class TestListProviderFunctions:
+    """Test list_provider_functions."""
+
+    def test_list_provider_functions(self):
+        """Test listing generated provider functions."""
+        from chuk_llm.api.providers import list_provider_functions
+
+        functions = list_provider_functions()
+        assert isinstance(functions, list)
+
+
+class TestVisionImagePreparation:
+    """Test suite for vision/image preparation functionality."""
+
+    def test_prepare_vision_message_with_local_jpeg(self, tmp_path):
+        """Test preparing vision message with a local JPEG file."""
+        from chuk_llm.api.providers import _prepare_vision_message
+
+        # Create a temporary image file
+        image_path = tmp_path / "test_image.jpg"
+        image_data = b"fake image data"
+        image_path.write_bytes(image_data)
+
+        result = _prepare_vision_message("What's in this image?", image_path, "anthropic")
+
+        # Check basic structure
+        assert "role" in result
+        assert result["role"] == "user"
+        assert "content" in result
+        assert isinstance(result["content"], list)
+
+        # Find text and image content
+        text_content = next((c for c in result["content"] if c["type"] == "text"), None)
+        image_content = next((c for c in result["content"] if c["type"] == "image"), None)
+
+        assert text_content is not None
+        assert text_content["text"] == "What's in this image?"
+        assert image_content is not None
+
+    def test_prepare_vision_message_with_url(self):
+        """Test preparing vision message with an image URL."""
+        from chuk_llm.api.providers import _prepare_vision_message
+
+        result = _prepare_vision_message(
+            "Describe this",
+            "https://example.com/image.jpg",
+            "openai"
+        )
+
+        assert result["role"] == "user"
+        assert isinstance(result["content"], list)
+
+        # Find the image URL content
+        image_content = next(
+            (c for c in result["content"] if c.get("type") == "image_url"), None
+        )
+        assert image_content is not None
+        assert "image_url" in image_content
+        assert image_content["image_url"]["url"] == "https://example.com/image.jpg"
+
+    def test_prepare_vision_message_anthropic_format(self, tmp_path):
+        """Test Anthropic-specific vision message format."""
+        from chuk_llm.api.providers import _prepare_vision_message
+
+        # Create a temporary PNG file
+        image_path = tmp_path / "test.png"
+        image_path.write_bytes(b"fake png data")
+
+        result = _prepare_vision_message("Analyze", image_path, "anthropic")
+
+        # Anthropic uses a specific structure
+        image_content = next((c for c in result["content"] if c["type"] == "image"), None)
+        assert image_content["source"]["type"] == "base64"
+        assert image_content["source"]["media_type"] == "image/png"
+        assert "data" in image_content["source"]
+
+    def test_prepare_vision_message_openai_format(self, tmp_path):
+        """Test OpenAI-specific vision message format."""
+        from chuk_llm.api.providers import _prepare_vision_message
+
+        # Create a temporary JPEG file
+        image_path = tmp_path / "test.jpeg"
+        image_path.write_bytes(b"fake jpeg data")
+
+        result = _prepare_vision_message("What is this?", image_path, "openai")
+
+        # OpenAI uses image_url format even for base64
+        image_content = next(
+            (c for c in result["content"] if c.get("type") == "image_url"), None
+        )
+        assert image_content is not None
+        assert "image_url" in image_content
+        assert image_content["image_url"]["url"].startswith("data:image/jpeg;base64,")
+
+    def test_prepare_vision_message_different_image_formats(self, tmp_path):
+        """Test handling different image file formats."""
+        from chuk_llm.api.providers import _prepare_vision_message
+
+        formats = [
+            ("test.jpg", "image/jpeg"),
+            ("test.png", "image/png"),
+            ("test.gif", "image/gif"),
+            ("test.webp", "image/webp"),
+        ]
+
+        for filename, expected_media_type in formats:
+            image_path = tmp_path / filename
+            image_path.write_bytes(b"test data")
+
+            result = _prepare_vision_message("Test", image_path, "anthropic")
+
+            image_content = next((c for c in result["content"] if c["type"] == "image"), None)
+            assert image_content["source"]["media_type"] == expected_media_type
+
+    def test_prepare_vision_message_with_bytes(self):
+        """Test preparing vision message with raw bytes."""
+        from chuk_llm.api.providers import _prepare_vision_message
+
+        image_bytes = b"fake image bytes data"
+
+        result = _prepare_vision_message("Analyze bytes", image_bytes, "anthropic")
+
+        image_content = next((c for c in result["content"] if c["type"] == "image"), None)
+        assert image_content is not None
+        assert image_content["source"]["type"] == "base64"
+        assert "data" in image_content["source"]
+
+    def test_prepare_vision_message_default_provider(self, tmp_path):
+        """Test vision message preparation with default provider."""
+        from chuk_llm.api.providers import _prepare_vision_message
+
+        image_path = tmp_path / "test.jpg"
+        image_path.write_bytes(b"data")
+
+        # No provider specified - should use default format
+        result = _prepare_vision_message("Test", image_path)
+
+        assert "content" in result
+        assert isinstance(result["content"], list)
