@@ -120,7 +120,9 @@ class TestLlamaCppServerManager:
 
             assert cmd[0] == "/usr/bin/llama-server"
             assert "-m" in cmd
-            assert "/models/llama.gguf" in cmd
+            # Convert path to string and normalize for cross-platform compatibility
+            model_path_str = str(Path("/models/llama.gguf"))
+            assert model_path_str in cmd
             assert "--host" in cmd
             assert "0.0.0.0" in cmd
             assert "--port" in cmd
@@ -157,8 +159,14 @@ class TestLlamaCppServerManager:
         mock_process.returncode = 1
         manager.process = mock_process
 
-        with pytest.raises(RuntimeError, match="process died with code 1"):
-            await manager._wait_for_health(timeout=1.0)
+        # Mock the HTTP client to avoid actual network calls
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.get = AsyncMock(
+                side_effect=httpx.ConnectError("Connection refused")
+            )
+
+            with pytest.raises(RuntimeError, match="process died with code 1"):
+                await manager._wait_for_health(timeout=1.0)
 
     @pytest.mark.asyncio
     async def test_is_healthy_no_process(self):
