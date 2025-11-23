@@ -83,6 +83,11 @@ PROVIDERS = [
         default_model="deepseek-chat",
     ),
     ProviderConfig(
+        name="moonshot",
+        env_var="MOONSHOT_API_KEY",
+        default_model="kimi-k2-turbo-preview",
+    ),
+    ProviderConfig(
         name="together",
         env_var="TOGETHER_API_KEY",
         default_model="meta-llama/Llama-3.3-70B-Instruct-Turbo",

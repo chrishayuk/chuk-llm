@@ -44,6 +44,13 @@ deepseek:
   default_model: "deepseek-chat"
   models: ["*"]
 
+moonshot:
+  client_class: "chuk_llm.llm.providers.openai_client:OpenAILLMClient"
+  api_key_env: "MOONSHOT_API_KEY"
+  api_base: "https://api.moonshot.ai/v1"
+  default_model: "kimi-k2-turbo-preview"
+  models: ["*"]
+
 ollama:
   client_class: "chuk_llm.llm.providers.ollama_client:OllamaLLMClient"
   api_base: "http://localhost:11434"

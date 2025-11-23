@@ -27,6 +27,7 @@ class Provider(str, Enum):
     ANYSCALE = "anyscale"
     OPENAI_COMPATIBLE = "openai_compatible"
     OPENROUTER = "openrouter"
+    MOONSHOT = "moonshot"
 
 
 class Feature(str, Enum):

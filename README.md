@@ -176,7 +176,7 @@ results = await registry.query(ModelQuery(
 - Anthropic known models
 - Google Gemini models API
 - Ollama `/api/tags` (local models)
-- Groq, Mistral, DeepSeek, and more
+- Groq, Mistral, DeepSeek, Moonshot AI, and more
 
 Provider APIs are cached on disk and refreshed periodically (or via `chuk-llm discover`), so new models appear without needing a chuk-llm release.
 
@@ -266,6 +266,7 @@ All providers are **dynamically discovered** via the registry system - no hardco
 | **Perplexity** | Known models† | Sonar, real-time web search, citations | ✅ Static |
 | **Mistral** | Known models† | Large, Medium, Small, Codestral, European sovereignty | ✅ Static |
 | **DeepSeek** | Known models† | DeepSeek V3, efficient, cost-effective | ✅ Static |
+| **Moonshot AI** | Known models† | Kimi K2, 256K context, coding, agent building | ✅ Static |
 | **OpenRouter** | Known models† | Access to 100+ models via single API | ✅ Static |
 
 † Static = discovered from curated model list + provider docs, not via `/models` endpoint

@@ -8,6 +8,7 @@ from chuk_llm.registry.sources.env import EnvProviderSource
 from chuk_llm.registry.sources.gemini import GeminiModelSource
 from chuk_llm.registry.sources.groq import GroqModelSource
 from chuk_llm.registry.sources.mistral import MistralModelSource
+from chuk_llm.registry.sources.moonshot import MoonshotModelSource
 from chuk_llm.registry.sources.ollama import OllamaSource
 from chuk_llm.registry.sources.openai import OpenAIModelSource
 from chuk_llm.registry.sources.openai_compatible import OpenAICompatibleSource
@@ -29,6 +30,7 @@ __all__ = [
     "GeminiModelSource",
     "DeepSeekModelSource",
     "MistralModelSource",
+    "MoonshotModelSource",
     "GroqModelSource",
     "PerplexityModelSource",
     "OpenRouterModelSource",

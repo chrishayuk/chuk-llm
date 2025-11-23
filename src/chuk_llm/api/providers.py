@@ -1188,6 +1188,8 @@ def _generate_family_aliases():
                 family = "phi"
             elif "deepseek" in model_lower:
                 family = "deepseek"
+            elif "moonshot" in model_lower or "kimi" in model_lower:
+                family = "moonshot"
             elif "codellama" in model_lower:
                 family = "codellama"
 

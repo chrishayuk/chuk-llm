@@ -14,6 +14,7 @@ from chuk_llm.registry.sources.env import EnvProviderSource
 from chuk_llm.registry.sources.gemini import GeminiModelSource
 from chuk_llm.registry.sources.groq import GroqModelSource
 from chuk_llm.registry.sources.mistral import MistralModelSource
+from chuk_llm.registry.sources.moonshot import MoonshotModelSource
 from chuk_llm.registry.sources.ollama import OllamaSource
 from chuk_llm.registry.sources.openai import OpenAIModelSource
 from chuk_llm.registry.sources.openrouter import OpenRouterModelSource
@@ -142,6 +143,122 @@ class TestDeepSeekModelSource:
         assert source._extract_family("deepseek-v2") == "deepseek-v2"
         assert source._extract_family("deepseek-chat") == "deepseek-chat"
         assert source._extract_family("deepseek-reasoner") == "deepseek-reasoner"
+        assert source._extract_family("unknown-model") is None
+
+
+class TestMoonshotModelSource:
+    """Test MoonshotModelSource."""
+
+    @pytest.mark.asyncio
+    async def test_discover_successful(self):
+        """Test successful model discovery."""
+        source = MoonshotModelSource(api_key="test-key")
+
+        mock_response_data = {
+            "data": [
+                {"id": "kimi-k2-turbo-preview"},
+                {"id": "kimi-k2-0905-preview"},
+                {"id": "kimi-k2-thinking-turbo"},
+                {"id": "kimi-latest"},
+                {"id": "moonshot-v1-8k"},
+                {"id": "moonshot-v1-32k-vision-preview"},
+                {"id": ""},  # Empty ID should be skipped
+            ]
+        }
+
+        async def mock_get(*args, **kwargs):
+            """Mock async get method."""
+            mock_resp = MagicMock()
+            mock_resp.json = MagicMock(return_value=mock_response_data)
+            mock_resp.raise_for_status = MagicMock()
+            return mock_resp
+
+        with patch("httpx.AsyncClient") as MockClient:
+            mock_client = MagicMock()
+            mock_client.get = mock_get
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            MockClient.return_value = mock_client
+
+            models = await source.discover()
+
+            # Should have all valid models
+            assert len(models) >= 1
+            assert all(m.provider == Provider.MOONSHOT.value for m in models)
+            assert any("kimi-k2-turbo-preview" in m.name for m in models)
+
+    @pytest.mark.asyncio
+    async def test_discover_without_api_key(self):
+        """Test discovery returns empty without API key."""
+        with patch.dict("os.environ", {}, clear=True):
+            source = MoonshotModelSource(api_key=None)
+            models = await source.discover()
+
+            assert models == []
+
+    @pytest.mark.asyncio
+    async def test_discover_api_error(self):
+        """Test discovery handles API errors gracefully."""
+        source = MoonshotModelSource(api_key="test-key")
+
+        async def mock_get_error(*args, **kwargs):
+            """Mock async get that raises an error."""
+            import httpx
+
+            raise httpx.HTTPError("API Error")
+
+        with patch("httpx.AsyncClient") as MockClient:
+            mock_client = MagicMock()
+            mock_client.get = mock_get_error
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            MockClient.return_value = mock_client
+
+            models = await source.discover()
+
+            assert models == []
+
+    @pytest.mark.asyncio
+    async def test_is_chat_model(self):
+        """Test _is_chat_model filtering logic."""
+        source = MoonshotModelSource(api_key="test-key")
+
+        # Kimi K2 models
+        assert source._is_chat_model("kimi-k2-turbo-preview")
+        assert source._is_chat_model("kimi-k2-0905-preview")
+        assert source._is_chat_model("kimi-k2-thinking-turbo")
+        assert source._is_chat_model("kimi-latest")
+
+        # Moonshot v1 models
+        assert source._is_chat_model("moonshot-v1-8k")
+        assert source._is_chat_model("moonshot-v1-32k")
+        assert source._is_chat_model("moonshot-v1-128k-vision-preview")
+
+        # Non-Moonshot models
+        assert not source._is_chat_model("gpt-4")
+        assert not source._is_chat_model("claude-3")
+
+    @pytest.mark.asyncio
+    async def test_extract_family(self):
+        """Test _extract_family logic."""
+        source = MoonshotModelSource(api_key="test-key")
+
+        # Kimi K2 families
+        assert source._extract_family("kimi-k2-thinking-turbo") == "kimi-k2-thinking"
+        assert source._extract_family("kimi-k2-thinking") == "kimi-k2-thinking"
+        assert source._extract_family("kimi-k2-turbo-preview") == "kimi-k2-turbo"
+        assert source._extract_family("kimi-k2-0905-preview") == "kimi-k2"
+        assert source._extract_family("kimi-latest") == "kimi-latest"
+
+        # Moonshot v1 families
+        assert source._extract_family("moonshot-v1-8k") == "moonshot-v1"
+        assert source._extract_family("moonshot-v1-32k") == "moonshot-v1"
+        assert source._extract_family("moonshot-v1-128k") == "moonshot-v1"
+        assert source._extract_family("moonshot-v1-auto") == "moonshot-v1-auto"
+        assert source._extract_family("moonshot-v1-8k-vision-preview") == "moonshot-v1-vision"
+        assert source._extract_family("moonshot-v1-32k-vision-preview") == "moonshot-v1-vision"
+
+        # Unknown models
         assert source._extract_family("unknown-model") is None
 
 

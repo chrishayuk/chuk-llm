@@ -80,6 +80,7 @@ class ApiBaseUrl(str, Enum):
     OPENROUTER = "https://openrouter.ai/api/v1"
     GEMINI = "https://generativelanguage.googleapis.com"
     OLLAMA = "http://localhost:11434"
+    MOONSHOT = "https://api.moonshot.ai/v1"
 
 
 # ================================================================
@@ -326,6 +327,7 @@ class EnvVar(str, Enum):
     GROQ_API_KEY = "GROQ_API_KEY"
     MISTRAL_API_KEY = "MISTRAL_API_KEY"
     DEEPSEEK_API_KEY = "DEEPSEEK_API_KEY"
+    MOONSHOT_API_KEY = "MOONSHOT_API_KEY"
 
     # ChukLLM specific
     CHUK_LLM_CONFIG = "CHUK_LLM_CONFIG"

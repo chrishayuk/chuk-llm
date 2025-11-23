@@ -121,13 +121,25 @@ class OpenAILLMClient(
 
         modified_tools = []
         for tool in tools:
-            tool_copy = tool.copy()
+            # Handle both dict and Pydantic models
+            if isinstance(tool, dict):
+                tool_copy = tool.copy()
+            else:
+                # Pydantic model - convert to dict
+                tool_copy = (
+                    tool.model_dump() if hasattr(tool, "model_dump") else tool.dict()
+                )
+
             if (
                 tool_copy.get("type") == ToolType.FUNCTION.value
                 and "function" in tool_copy
             ):
                 # Make a copy of the function dict to avoid modifying the original
-                func_copy = tool_copy["function"].copy()
+                func_copy = (
+                    tool_copy["function"].copy()
+                    if isinstance(tool_copy["function"], dict)
+                    else tool_copy["function"]
+                )
                 if "strict" not in func_copy:
                     func_copy["strict"] = False
                     log.debug(
