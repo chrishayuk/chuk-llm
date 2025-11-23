@@ -58,6 +58,8 @@ class LlamaCppServerManager:
 
     async def _find_server_binary(self) -> str:
         """Find llama-server binary in PATH or common locations."""
+        import platform
+
         if self.config.server_binary:
             if Path(self.config.server_binary).exists():
                 return str(self.config.server_binary)
@@ -65,18 +67,47 @@ class LlamaCppServerManager:
                 f"Specified llama-server binary not found: {self.config.server_binary}"
             )
 
+        # Determine binary name based on platform
+        system = platform.system()
+        binary_name = "llama-server.exe" if system == "Windows" else "llama-server"
+
         # Try to find in PATH
-        binary_name = "llama-server"
         if server_path := shutil.which(binary_name):
             log.debug(f"Found llama-server in PATH: {server_path}")
             return server_path
 
-        # Try common installation paths
-        common_paths = [
-            Path.home() / "llama.cpp" / "build" / "bin" / binary_name,
-            Path("/usr/local/bin") / binary_name,
-            Path("/opt/homebrew/bin") / binary_name,
-        ]
+        # Try common installation paths (platform-specific)
+        common_paths = []
+        if system == "Windows":
+            # Windows paths
+            common_paths = [
+                Path.home() / "llama.cpp" / "build" / "bin" / "Release" / binary_name,
+                Path.home() / "llama.cpp" / "build" / "Release" / binary_name,
+                Path("C:/Program Files/llama.cpp") / binary_name,
+                Path("C:/llama.cpp") / binary_name,
+            ]
+        elif system == "Linux":
+            # Linux paths
+            common_paths = [
+                Path.home() / "llama.cpp" / "build" / "bin" / binary_name,
+                Path("/usr/local/bin") / binary_name,
+                Path("/usr/bin") / binary_name,
+                Path("/opt/llama.cpp/bin") / binary_name,
+            ]
+        elif system == "Darwin":
+            # macOS paths
+            common_paths = [
+                Path.home() / "llama.cpp" / "build" / "bin" / binary_name,
+                Path("/usr/local/bin") / binary_name,
+                Path("/opt/homebrew/bin") / binary_name,
+                Path("/opt/llama.cpp/bin") / binary_name,
+            ]
+        else:
+            # Fallback for other Unix-like systems
+            common_paths = [
+                Path.home() / "llama.cpp" / "build" / "bin" / binary_name,
+                Path("/usr/local/bin") / binary_name,
+            ]
 
         for path in common_paths:
             if path.exists():
@@ -84,7 +115,8 @@ class LlamaCppServerManager:
                 return str(path)
 
         raise FileNotFoundError(
-            "llama-server not found. Install llama.cpp and ensure llama-server is in PATH"
+            f"llama-server not found. Install llama.cpp and ensure {binary_name} is in PATH.\n"
+            f"For installation instructions, see: https://github.com/ggerganov/llama.cpp"
         )
 
     async def _build_command(self) -> list[str]:
