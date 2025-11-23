@@ -586,7 +586,8 @@ class TestOllamaCapabilityResolver:
         """Test handling when Ollama API is unavailable."""
         from chuk_llm.registry.resolvers.ollama import OllamaCapabilityResolver
 
-        resolver = OllamaCapabilityResolver(base_url="http://localhost:99999")
+        # Use a valid port number that's unlikely to be in use
+        resolver = OllamaCapabilityResolver(base_url="http://localhost:54321")
         spec = ModelSpec(provider="ollama", name="llama3.2")
         caps = await resolver.get_capabilities(spec)
 
