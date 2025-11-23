@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import re
@@ -11,6 +12,8 @@ from typing import (
     Any,
     cast,
 )
+
+import httpx
 
 Tool = dict[str, Any]
 LLMResult = dict[str, Any]  # {"response": str|None, "tool_calls":[...]}
@@ -44,6 +47,116 @@ class OpenAIStyleMixin:
                 copy["function"] = fn
             fixed.append(copy)
         return fixed
+
+    # ------------------------------------------------------------------ image URLs
+    @staticmethod
+    async def _download_and_encode_image(url: str) -> tuple[str, str]:
+        """
+        Download an image from a URL and encode it as base64.
+
+        Args:
+            url: The URL of the image to download
+
+        Returns:
+            Tuple of (base64_encoded_data, image_format)
+        """
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            image_data = response.content
+
+            # Detect format from content-type or URL
+            content_type = response.headers.get("content-type", "").lower()
+            if "jpeg" in content_type or "jpg" in content_type:
+                image_format = "jpeg"
+            elif "png" in content_type:
+                image_format = "png"
+            elif "webp" in content_type:
+                image_format = "webp"
+            elif "gif" in content_type:
+                image_format = "gif"
+            else:
+                # Fall back to URL extension detection
+                url_lower = url.lower()
+                if ".jpg" in url_lower or ".jpeg" in url_lower:
+                    image_format = "jpeg"
+                elif ".png" in url_lower:
+                    image_format = "png"
+                elif ".webp" in url_lower:
+                    image_format = "webp"
+                elif ".gif" in url_lower:
+                    image_format = "gif"
+                else:
+                    image_format = "jpeg"  # Default
+
+            encoded_data = base64.b64encode(image_data).decode("utf-8")
+            return encoded_data, image_format
+
+    @classmethod
+    async def _process_image_urls_in_messages(
+        cls, messages: list[dict[str, Any]], supports_direct_urls: bool = False
+    ) -> list[dict[str, Any]]:
+        """
+        Process messages to download and encode image URLs if needed.
+
+        Args:
+            messages: List of message dictionaries
+            supports_direct_urls: Whether the provider supports direct HTTP(S) URLs
+
+        Returns:
+            Processed messages with images downloaded and encoded if necessary
+        """
+        if supports_direct_urls:
+            return messages  # No processing needed
+
+        processed_messages = []
+        for msg in messages:
+            content = msg.get("content")
+
+            # Check if content is a list (multimodal content)
+            if isinstance(content, list):
+                processed_content = []
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "image_url":
+                        image_url_dict = item.get("image_url", {})
+                        url = image_url_dict.get("url", "")
+
+                        # Check if URL is HTTP(S) and not already base64
+                        if url.startswith(("http://", "https://")):
+                            try:
+                                logger.debug(
+                                    f"Downloading image from URL: {url[:100]}..."
+                                )
+                                (
+                                    encoded_data,
+                                    image_format,
+                                ) = await cls._download_and_encode_image(url)
+                                # Replace URL with base64 data URI
+                                new_url = (
+                                    f"data:image/{image_format};base64,{encoded_data}"
+                                )
+                                item = {
+                                    **item,
+                                    "image_url": {**image_url_dict, "url": new_url},
+                                }
+                                logger.debug(
+                                    f"Image downloaded and encoded as {image_format}"
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"Failed to download image from {url}: {e}"
+                                )
+                                # Keep original URL and let the provider handle the error
+
+                        processed_content.append(item)
+                    else:
+                        processed_content.append(item)
+
+                processed_messages.append({**msg, "content": processed_content})
+            else:
+                processed_messages.append(msg)
+
+        return processed_messages
 
     # ------------------------------------------------------------------ blocking
     @staticmethod

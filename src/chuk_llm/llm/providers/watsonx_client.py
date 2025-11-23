@@ -33,6 +33,9 @@ from typing import Any
 from ibm_watsonx_ai import APIClient, Credentials
 from ibm_watsonx_ai.foundation_models import ModelInference
 
+# core
+from chuk_llm.core.enums import MessageRole
+
 # providers
 from ..core.base import BaseLLMClient
 from ._config_mixin import ConfigAwareProviderMixin
@@ -890,7 +893,7 @@ class WatsonXLLMClient(
         prepared_messages: list[dict[str, Any]] = []
 
         for msg in messages:
-            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            if msg.get("role") == MessageRole.ASSISTANT.value and msg.get("tool_calls"):
                 # Sanitize tool names in assistant message tool calls
                 prepared_msg = msg.copy()
                 sanitized_tool_calls: list[dict[str, Any]] = []
@@ -933,21 +936,36 @@ class WatsonXLLMClient(
         if not tools:
             return []
 
+        from chuk_llm.core.models import Tool as ToolModel
+
         converted: list[dict[str, Any]] = []
         for entry in tools:
-            fn = entry.get("function", entry)
+            # Handle both Pydantic Tool models and dict-based tools
+            if isinstance(entry, ToolModel):
+                # Pydantic Tool model - convert to dict
+                fn = entry.function
+                name = fn.name
+                description = fn.description or ""
+                parameters = fn.parameters or {}
+            elif isinstance(entry, dict):
+                # Dict-based tool
+                fn = entry.get("function", entry)
+                name = fn.get("name", f"tool_{uuid.uuid4().hex[:6]}")
+                description = fn.get("description", "")
+                parameters = fn.get("parameters") or fn.get("input_schema") or {}
+            else:
+                # Unknown format, skip
+                log.warning(f"Unknown tool format: {type(entry)}")
+                continue
+
             try:
                 converted.append(
                     {
                         "type": "function",
                         "function": {
-                            "name": fn[
-                                "name"
-                            ],  # Should already be sanitized by ToolCompatibilityMixin
-                            "description": fn.get("description", ""),
-                            "parameters": fn.get("parameters")
-                            or fn.get("input_schema")
-                            or {},
+                            "name": name,
+                            "description": description,
+                            "parameters": parameters,
                         },
                     }
                 )
@@ -957,8 +975,8 @@ class WatsonXLLMClient(
                     {
                         "type": "function",
                         "function": {
-                            "name": fn.get("name", f"tool_{uuid.uuid4().hex[:6]}"),
-                            "description": fn.get("description", ""),
+                            "name": name,
+                            "description": description,
                             "parameters": {
                                 "type": "object",
                                 "additionalProperties": True,
@@ -1099,45 +1117,23 @@ class WatsonXLLMClient(
                         {"role": "user", "content": [{"type": "text", "text": content}]}
                     )
                 elif isinstance(content, list):
-                    # Handle multimodal content for Watson X with configuration awareness
-                    has_images = any(
-                        item.get("type") in ["image", "image_url"] for item in content
-                    )
+                    # Permissive approach: Process all multimodal content (text, vision, audio)
+                    # Let WatsonX API handle unsupported cases rather than filtering
+                    # Handle multimodal content for Watson X - both dict and Pydantic
+                    from chuk_llm.core.enums import ContentType
 
-                    if has_images and not self.supports_feature("vision"):
-                        # Extract only text content
-                        text_content = " ".join(
-                            [
-                                item.get("text", "")
-                                for item in content
-                                if item.get("type") == "text"
-                            ]
-                        )
-                        formatted.append(
-                            {
-                                "role": "user",
-                                "content": [
-                                    {
-                                        "type": "text",
-                                        "text": text_content
-                                        or "[Image content removed - not supported by model]",
-                                    }
-                                ],
-                            }
-                        )
-                    else:
-                        # Process multimodal content normally
-                        watsonx_content = []
-                        for item in content:
+                    # Process multimodal content normally (both dict and Pydantic)
+                    watsonx_content = []
+                    for item in content:
+                        if isinstance(item, dict):
+                            # Dict-based content
                             if item.get("type") == "text":
                                 watsonx_content.append(
                                     {"type": "text", "text": item.get("text", "")}
                                 )
                             elif item.get("type") == "image":
-                                # Convert image format for Watson X
                                 source = item.get("source", {})
                                 if source.get("type") == "base64":
-                                    # Watson X expects image_url format
                                     data_url = f"data:{source.get('media_type', 'image/png')};base64,{source.get('data', '')}"
                                     watsonx_content.append(
                                         {
@@ -1146,50 +1142,54 @@ class WatsonXLLMClient(
                                         }
                                     )
                             elif item.get("type") == "image_url":
-                                # Pass through image_url format
                                 watsonx_content.append(item)
+                        else:
+                            # Pydantic object-based content
+                            if hasattr(item, "type") and item.type == ContentType.TEXT:
+                                watsonx_content.append(
+                                    {"type": "text", "text": item.text}
+                                )
+                            elif (
+                                hasattr(item, "type")
+                                and item.type == ContentType.IMAGE_URL
+                            ):
+                                image_url_data = item.image_url
+                                url = (
+                                    image_url_data.get("url")
+                                    if isinstance(image_url_data, dict)
+                                    else image_url_data
+                                )
+                                watsonx_content.append(
+                                    {"type": "image_url", "image_url": {"url": url}}
+                                )
 
-                        formatted.append({"role": "user", "content": watsonx_content})
+                    formatted.append({"role": "user", "content": watsonx_content})
                 else:
                     formatted.append({"role": "user", "content": content})
             elif role == "assistant":
                 if msg.get("tool_calls"):
-                    # Check if tools are supported
-                    if self.supports_feature("tools"):
-                        formatted.append(
-                            {"role": "assistant", "tool_calls": msg["tool_calls"]}
-                        )
-                    else:
-                        # Convert tool calls to text response
-                        log.warning(
-                            f"Tool calls detected but {self.model} doesn't support tools according to configuration"
-                        )
-                        tool_text = f"{content or ''}\n\nNote: Tool calls were requested but not supported by this model."
-                        formatted.append({"role": "assistant", "content": tool_text})
+                    # Permissive approach: Always pass tool calls to API
+                    formatted.append(
+                        {"role": "assistant", "tool_calls": msg["tool_calls"]}
+                    )
                 else:
                     formatted.append({"role": "assistant", "content": content})
             elif role == "tool":
-                # Tool response messages - only include if tools are supported
-                if self.supports_feature("tools"):
-                    formatted.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": msg.get("tool_call_id"),
-                            "content": content,
-                        }
-                    )
-                else:
-                    # Convert tool response to user message
-                    formatted.append(
-                        {"role": "user", "content": f"Tool result: {content or ''}"}
-                    )
+                # Permissive approach: Always pass tool responses to API
+                formatted.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": msg.get("tool_call_id"),
+                        "content": content,
+                    }
+                )
 
         return formatted
 
     def create_completion(
         self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        messages: list,  # Pydantic Message objects
+        tools: list | None = None,  # Pydantic Tool objects
         *,
         stream: bool = False,
         max_tokens: int | None = None,
@@ -1198,10 +1198,44 @@ class WatsonXLLMClient(
         """
         CRITICAL FIX: Enhanced completion generation with Granite chat template support
         and universal tool compatibility.
+
+        Args:
+            messages: List of Pydantic Message objects
+            tools: List of Pydantic Tool objects
         """
-        # Validate request against configuration
+        # Handle backward compatibility - inline logic to avoid import issues in tests
+        from chuk_llm.core.models import Message as MessageModel
+        from chuk_llm.core.models import Tool as ToolModel
+
+        # Ensure messages are Pydantic
+        if messages:
+            messages = [
+                msg
+                if isinstance(msg, MessageModel)
+                else MessageModel.model_validate(msg)
+                for msg in messages
+            ]
+
+        # Ensure tools are Pydantic (skip malformed tools)
+        if tools:
+            validated_tools = []
+            for tool in tools:
+                if isinstance(tool, ToolModel):
+                    validated_tools.append(tool)
+                else:
+                    try:
+                        validated_tools.append(ToolModel.model_validate(tool))
+                    except Exception as e:
+                        log.warning(f"Skipping malformed tool: {e}")
+                        continue
+            tools = validated_tools
+
+        # Convert Pydantic messages to dicts
+        dict_messages = [msg.to_dict() for msg in messages]
+
+        # Validate request against configuration (keep tools as Pydantic)
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
-            self._validate_request_with_config(messages, tools, stream, **extra)
+            self._validate_request_with_config(dict_messages, tools, stream, **extra)
         )
 
         # Apply max_tokens if provided (will be mapped or skipped based on model)
@@ -1212,6 +1246,7 @@ class WatsonXLLMClient(
         validated_kwargs = self._map_parameters_for_watsonx(validated_kwargs)
 
         # CRITICAL UPDATE: Use universal tool name sanitization (stores mapping for restoration)
+        # Keep tools as Pydantic objects throughout
         name_mapping: dict[str, str] = {}
         if validated_tools:
             validated_tools = self._sanitize_tool_names(validated_tools)
@@ -1226,8 +1261,8 @@ class WatsonXLLMClient(
                 validated_messages
             )
 
-        # Convert to WatsonX format
-        watsonx_tools = self._convert_tools(validated_tools)
+        # Convert to WatsonX format (convert to dicts only at this final step)
+        watsonx_tools = self._convert_tools(self._tools_to_dicts(validated_tools))
 
         # Format messages with configuration-aware processing and Granite template support
         formatted_messages = self._format_messages_for_watsonx(
@@ -1513,10 +1548,10 @@ class WatsonXLLMClient(
     def _validate_request_with_config(
         self,
         messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        tools: list[Any] | None = None,
         stream: bool = False,
         **kwargs: Any,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]] | None, bool, dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], list[Any] | None, bool, dict[str, Any]]:
         """
         Validate request against configuration before processing.
         """
@@ -1525,40 +1560,10 @@ class WatsonXLLMClient(
         validated_stream = stream
         validated_kwargs = kwargs.copy()
 
-        # Check streaming support
-        if stream and not self.supports_feature("streaming"):
-            log.warning(
-                f"Streaming requested but {self.model} doesn't support streaming according to configuration"
-            )
-            validated_stream = False
-
-        # Check tool support
-        if tools and not self.supports_feature("tools"):
-            log.warning(
-                f"Tools provided but {self.model} doesn't support tools according to configuration"
-            )
-            validated_tools = None
-
-        # Check vision support
-        has_vision = any(
-            isinstance(msg.get("content"), list)
-            and any(
-                isinstance(item, dict) and item.get("type") in ["image", "image_url"]
-                for item in msg.get("content", [])
-            )
-            for msg in messages
-        )
-        if has_vision and not self.supports_feature("vision"):
-            log.warning(
-                f"Vision content detected but {self.model} doesn't support vision according to configuration"
-            )
-
-        # Check multimodal support
-        has_multimodal = any(isinstance(msg.get("content"), list) for msg in messages)
-        if has_multimodal and not self.supports_feature("multimodal"):
-            log.info(
-                f"Multimodal content will be simplified - {self.model} has limited multimodal support"
-            )
+        # Permissive approach: Don't block streaming or tools
+        # Let WatsonX API handle unsupported cases - models can be added dynamically
+        # and we shouldn't prevent attempts based on capability checks
+        # Pass all content to API (vision, audio, multimodal, etc.)
 
         # Validate parameters using configuration
         validated_kwargs = self.validate_parameters(**validated_kwargs)

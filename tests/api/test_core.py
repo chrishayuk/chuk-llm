@@ -21,6 +21,8 @@ from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
 import pytest
 
+from chuk_llm.core.enums import MessageRole
+
 # Import the module under test
 from chuk_llm.api import core
 from chuk_llm.api.core import (
@@ -121,9 +123,10 @@ class TestAskFunction:
         call_args = mock_client.create_completion.call_args[1]
         assert "messages" in call_args
         assert len(call_args["messages"]) == 2  # system + user
-        assert call_args["messages"][0]["role"] == "system"
-        assert call_args["messages"][1]["role"] == "user"
-        assert call_args["messages"][1]["content"] == "Hello"
+        # Messages are Pydantic objects, use attribute access
+        assert call_args["messages"][0].role == "system"
+        assert call_args["messages"][1].role == "user"
+        assert call_args["messages"][1].content == "Hello"
 
     @pytest.mark.asyncio
     async def test_ask_with_provider_override(self, mock_client, mock_config):
@@ -219,9 +222,7 @@ class TestAskFunction:
             )
 
     @pytest.mark.asyncio
-    async def test_ask_with_tools_parameter(
-        self, setup_mocks, mock_session_manager
-    ):
+    async def test_ask_with_tools_parameter(self, setup_mocks, mock_session_manager):
         """Test ask with tools that get called."""
         mock_client, _, _ = setup_mocks
 
@@ -309,7 +310,7 @@ class TestAskFunction:
 
         # Should add JSON instruction to system message
         call_args = mock_client.create_completion.call_args[1]
-        system_message = call_args["messages"][0]["content"]
+        system_message = call_args["messages"][0].content
         assert "JSON" in system_message
         assert "valid JSON only" in system_message
 
@@ -374,12 +375,13 @@ class TestAskFunction:
         messages = call_args["messages"]
 
         # Should have system (with context), previous messages, and current user message
+        # Messages from ask() are Message objects
         assert len(messages) >= 4
         assert (
-            "Important context information" in messages[0]["content"]
+            "Important context information" in messages[0].content
         )  # Context in system
-        assert any(msg["content"] == "Previous question" for msg in messages)
-        assert any(msg["content"] == "Follow up question" for msg in messages)
+        assert any(msg.content == "Previous question" for msg in messages)
+        assert any(msg.content == "Follow up question" for msg in messages)
 
     @pytest.mark.asyncio
     async def test_ask_validation_warnings(self, setup_mocks):
@@ -770,10 +772,10 @@ class TestUtilityFunctions:
     def mock_config(self):
         """Mock configuration."""
         return {
-            "provider": "openai", 
-            "model": "gpt-4",
+            "provider": "openai",
+            "model": "gpt-4o",  # Use gpt-4o which definitely supports tools
             "api_key": "sk-test123",
-            "api_base": "https://api.openai.com/v1"
+            "api_base": "https://api.openai.com/v1",
         }
 
     @pytest.mark.asyncio
@@ -790,7 +792,12 @@ class TestUtilityFunctions:
             ),
         ):
             mock_client = MagicMock()
-            mock_client.create_completion = AsyncMock(return_value={"response": "Tool response"})
+            mock_client.create_completion = AsyncMock(
+                return_value={"response": "Tool response", "tool_calls": []}
+            )
+            mock_client.supports_feature = MagicMock(
+                return_value=True
+            )  # Mock to support all features including tools
             mock_get_client.return_value = mock_client
 
             result = await ask("Use a tool", tools=tools, temperature=0.8)
@@ -801,7 +808,9 @@ class TestUtilityFunctions:
             assert "tool_calls" in result
             mock_client.create_completion.assert_called_once()
             call_args = mock_client.create_completion.call_args[1]
-            assert call_args["tools"] == tools
+            # Tools may be converted to Pydantic objects, check structure
+            assert len(call_args["tools"]) == 1
+            assert call_args["tools"][0].function.name == "test_tool"
             assert call_args["temperature"] == 0.8
 
     @pytest.mark.asyncio
@@ -1022,6 +1031,7 @@ class TestMessageBuilding:
             )
 
             # Should only have user message with system content prepended
+            # _build_messages returns dicts
             assert len(messages) == 1
             assert messages[0]["role"] == "user"
             assert "System: System prompt" in messages[0]["content"]
@@ -1036,6 +1046,7 @@ class TestMessageBuilding:
 
         _add_json_instruction_to_messages(messages)
 
+        # messages are dicts, not Message objects here
         system_content = messages[0]["content"]
         assert "You are helpful" in system_content
         assert "valid JSON only" in system_content
@@ -1047,6 +1058,7 @@ class TestMessageBuilding:
         _add_json_instruction_to_messages(messages)
 
         # Should add system message at the beginning
+        # messages are dicts, not Message objects here
         assert len(messages) == 2
         assert messages[0]["role"] == "system"
         assert "valid JSON only" in messages[0]["content"]
@@ -1157,6 +1169,7 @@ class TestErrorHandlingAndEdgeCases:
                 )
 
                 # Should use fallback system prompt
+                # _build_messages returns dicts
                 assert "function calling tools" in messages[0]["content"].lower()
 
     def test_get_session_manager_reuses_existing_instance(self):
@@ -1176,3 +1189,919 @@ class TestErrorHandlingAndEdgeCases:
 if __name__ == "__main__":
     # Run the tests
     pytest.main([__file__, "-v", "--tb=short"])
+
+
+class TestSessionImportError:
+    """Test session manager import error handling."""
+
+    def test_session_import_error_handled(self):
+        """Test that missing session manager is handled gracefully."""
+        import sys
+        from unittest.mock import patch
+
+        # Test that when session manager import fails, the module still works
+        # The ImportError handling is in the module-level imports (lines 43-45)
+        # This is already covered by normal imports, but we verify the behavior
+        import chuk_llm.api.core as core
+
+        # If session manager isn't available, _SESSION_AVAILABLE should be False
+        # Otherwise it should be True
+        assert hasattr(core, "_SESSION_AVAILABLE")
+        assert isinstance(core._SESSION_AVAILABLE, bool)
+
+
+class TestMultimodalMessageConversion:
+    """Test multimodal message conversion."""
+
+    def test_convert_dict_to_pydantic_with_image_url(self):
+        """Test converting dict messages with image_url content."""
+        from chuk_llm.api.core import _convert_dict_to_pydantic_messages
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What's in this image?"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.com/image.jpg"},
+                    },
+                ],
+            }
+        ]
+
+        result = _convert_dict_to_pydantic_messages(messages)
+
+        assert len(result) == 1
+        assert result[0].role.value == "user"
+        assert isinstance(result[0].content, list)
+        assert len(result[0].content) == 2
+
+    def test_convert_dict_to_pydantic_with_unknown_content_type(self):
+        """Test converting dict messages with unknown content type."""
+        from chuk_llm.api.core import _convert_dict_to_pydantic_messages
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Hello"},
+                    {"type": "unknown_type", "data": "some data"},  # Unknown type
+                ],
+            }
+        ]
+
+        result = _convert_dict_to_pydantic_messages(messages)
+
+        # Should handle unknown types gracefully
+        assert len(result) == 1
+
+    def test_convert_dict_with_already_pydantic_content(self):
+        """Test converting when content parts are already Pydantic objects."""
+        from chuk_llm.api.core import _convert_dict_to_pydantic_messages
+        from chuk_llm.core import TextContent, ContentType
+
+        # Create a message with already-pydantic content
+        pydantic_content = TextContent(type=ContentType.TEXT, text="Already Pydantic")
+
+        messages = [{"role": "user", "content": [pydantic_content]}]
+
+        result = _convert_dict_to_pydantic_messages(messages)
+
+        assert len(result) == 1
+        assert result[0].content[0] == pydantic_content
+
+
+class TestStreamingContentExtraction:
+    """Test _extract_streaming_content function."""
+
+    def test_extract_tool_calls_dict_format(self):
+        """Test extracting tool calls from dictionary format."""
+        from chuk_llm.api.core import _extract_streaming_content
+
+        chunk = {
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "execute_sql",
+                        "arguments": '{"query":"SELECT * FROM users"}',
+                    },
+                    "incremental": False,
+                }
+            ]
+        }
+
+        result = _extract_streaming_content(chunk)
+        assert "[Calling execute_sql]" in result
+        assert "SELECT * FROM users" in result
+
+    def test_extract_incremental_tool_calls(self):
+        """Test extracting incremental tool call updates."""
+        from chuk_llm.api.core import _extract_streaming_content
+
+        chunk = {
+            "tool_calls": [
+                {
+                    "function": {"name": "search", "arguments": '{"query"'},
+                    "incremental": True,
+                }
+            ]
+        }
+
+        result = _extract_streaming_content(chunk)
+        assert "[Calling search]" in result
+
+    def test_extract_error_response(self):
+        """Test extracting error responses."""
+        from chuk_llm.api.core import _extract_streaming_content
+
+        chunk = {"error": True, "error_message": "Rate limit exceeded"}
+
+        result = _extract_streaming_content(chunk)
+        assert "Error" in result
+        assert "Rate limit exceeded" in result
+
+    def test_extract_choices_format(self):
+        """Test extracting from choices format."""
+        from chuk_llm.api.core import _extract_streaming_content
+
+        chunk = {"choices": [{"delta": {"content": "Hello world"}}]}
+
+        result = _extract_streaming_content(chunk)
+        assert result == "Hello world"
+
+    def test_extract_choices_with_message(self):
+        """Test extracting from choices with message."""
+        from chuk_llm.api.core import _extract_streaming_content
+
+        chunk = {"choices": [{"message": {"content": "Response text"}}]}
+
+        result = _extract_streaming_content(chunk)
+        assert result == "Response text"
+
+    def test_extract_string_chunk(self):
+        """Test extracting from string chunk."""
+        from chuk_llm.api.core import _extract_streaming_content
+
+        chunk = "Direct string content"
+        result = _extract_streaming_content(chunk)
+        assert result == "Direct string content"
+
+    def test_extract_sdk_object_format(self):
+        """Test extracting from SDK object format."""
+        from chuk_llm.api.core import _extract_streaming_content
+        from unittest.mock import Mock
+
+        # Mock OpenAI SDK object structure
+        chunk = Mock()
+        chunk.choices = [Mock()]
+        chunk.choices[0].delta = Mock()
+        chunk.choices[0].delta.content = "SDK content"
+
+        result = _extract_streaming_content(chunk)
+        assert result == "SDK content"
+
+    def test_extract_sdk_tool_calls(self):
+        """Test extracting tool calls from SDK objects."""
+        from chuk_llm.api.core import _extract_streaming_content
+        from unittest.mock import Mock
+
+        chunk = Mock()
+        chunk.choices = [Mock()]
+        chunk.choices[0].delta = Mock()
+        chunk.choices[0].delta.content = None
+
+        tool_call = Mock()
+        tool_call.function = Mock()
+        tool_call.function.name = "get_weather"
+        tool_call.function.arguments = '{"location":"NYC"}'
+        chunk.choices[0].delta.tool_calls = [tool_call]
+
+        result = _extract_streaming_content(chunk)
+        assert "[Calling get_weather]" in result
+        assert "NYC" in result
+
+    def test_extract_empty_content(self):
+        """Test extracting returns empty string for no content."""
+        from chuk_llm.api.core import _extract_streaming_content
+
+        chunk = {"response": ""}
+        result = _extract_streaming_content(chunk)
+        assert result == ""
+
+    def test_extract_with_exception(self):
+        """Test extraction handles exceptions gracefully."""
+        from chuk_llm.api.core import _extract_streaming_content
+
+        # Malformed object that will raise exception
+        chunk = Mock()
+        chunk.choices = None  # Will cause AttributeError
+
+        result = _extract_streaming_content(chunk)
+        assert result == ""
+
+
+class TestModelResolution:
+    """Test _resolve_model_alias function."""
+
+    def test_resolve_global_alias_same_provider(self):
+        """Test resolving global alias for same provider."""
+        from chuk_llm.api.core import _resolve_model_alias
+        from unittest.mock import Mock, patch
+
+        mock_config = Mock()
+        mock_config.get_global_aliases.return_value = {"fast": "openai/gpt-3.5-turbo"}
+
+        with patch("chuk_llm.api.core.get_config", return_value=mock_config):
+            result = _resolve_model_alias("openai", "fast")
+            assert result == "gpt-3.5-turbo"
+
+    def test_resolve_global_alias_different_provider(self):
+        """Test global alias for different provider doesn't resolve."""
+        from chuk_llm.api.core import _resolve_model_alias
+        from unittest.mock import Mock, patch
+
+        mock_config = Mock()
+        mock_config.get_global_aliases.return_value = {"fast": "openai/gpt-3.5-turbo"}
+
+        with patch("chuk_llm.api.core.get_config", return_value=mock_config):
+            result = _resolve_model_alias("anthropic", "fast")
+            assert result == "fast"  # Not resolved
+
+    def test_resolve_no_slash_in_alias(self):
+        """Test alias without slash doesn't resolve."""
+        from chuk_llm.api.core import _resolve_model_alias
+        from unittest.mock import Mock, patch
+
+        mock_config = Mock()
+        mock_config.get_global_aliases.return_value = {"fast": "just-a-model"}
+
+        with patch("chuk_llm.api.core.get_config", return_value=mock_config):
+            result = _resolve_model_alias("openai", "fast")
+            assert result == "fast"  # Not resolved
+
+    def test_resolve_with_exception(self):
+        """Test resolution handles exceptions."""
+        from chuk_llm.api.core import _resolve_model_alias
+        from unittest.mock import patch
+
+        with patch(
+            "chuk_llm.api.core.get_config", side_effect=Exception("Config error")
+        ):
+            result = _resolve_model_alias("provider", "model-name")
+            assert result == "model-name"  # Returns original on error
+
+    def test_resolve_none_model(self):
+        """Test resolving None model returns None."""
+        from chuk_llm.api.core import _resolve_model_alias
+
+        result = _resolve_model_alias("provider", None)
+        assert result is None
+
+
+class TestToolSupport:
+    """Test _supports_tools_by_model function."""
+
+    def test_old_reasoning_models_no_tools(self):
+        """Test old reasoning models don't support tools."""
+        from chuk_llm.api.core import _supports_tools_by_model
+
+        assert not _supports_tools_by_model("o1-preview-2024-09-12")
+        assert not _supports_tools_by_model("o1-mini-2024-09-12")
+
+    def test_regular_models_support_tools(self):
+        """Test regular models support tools."""
+        from chuk_llm.api.core import _supports_tools_by_model
+
+        assert _supports_tools_by_model("gpt-4")
+        assert _supports_tools_by_model("claude-3-opus")
+        assert _supports_tools_by_model("gemini-pro")
+
+    def test_empty_model_name_assumes_support(self):
+        """Test empty model name assumes tool support."""
+        from chuk_llm.api.core import _supports_tools_by_model
+
+        assert _supports_tools_by_model("")
+        assert _supports_tools_by_model(None)
+
+
+class TestSessionTracking:
+    """Test session tracking helper functions."""
+
+    @pytest.mark.asyncio
+    async def test_track_user_message_success(self):
+        """Test tracking user message succeeds."""
+        from chuk_llm.api.core import _track_user_message
+        from unittest.mock import AsyncMock, Mock
+
+        session_manager = Mock()
+        session_manager.user_says = AsyncMock()
+
+        await _track_user_message(session_manager, "Hello")
+        session_manager.user_says.assert_called_once_with("Hello")
+
+    @pytest.mark.asyncio
+    async def test_track_user_message_with_error(self):
+        """Test tracking user message handles errors."""
+        from chuk_llm.api.core import _track_user_message
+        from unittest.mock import AsyncMock, Mock
+
+        session_manager = Mock()
+        session_manager.user_says = AsyncMock(side_effect=Exception("Session error"))
+
+        # Should not raise exception
+        await _track_user_message(session_manager, "Hello")
+
+    @pytest.mark.asyncio
+    async def test_track_user_message_none_session(self):
+        """Test tracking with None session manager."""
+        from chuk_llm.api.core import _track_user_message
+
+        # Should not raise exception
+        await _track_user_message(None, "Hello")
+
+    @pytest.mark.asyncio
+    async def test_track_ai_response_success(self):
+        """Test tracking AI response succeeds."""
+        from chuk_llm.api.core import _track_ai_response
+        from unittest.mock import AsyncMock, Mock
+
+        session_manager = Mock()
+        session_manager.ai_responds = AsyncMock()
+
+        await _track_ai_response(session_manager, "Response", "gpt-4", "openai")
+        session_manager.ai_responds.assert_called_once_with(
+            "Response", model="gpt-4", provider="openai"
+        )
+
+    @pytest.mark.asyncio
+    async def test_track_ai_response_with_error(self):
+        """Test tracking AI response handles errors."""
+        from chuk_llm.api.core import _track_ai_response
+        from unittest.mock import AsyncMock, Mock
+
+        session_manager = Mock()
+        session_manager.ai_responds = AsyncMock(side_effect=Exception("Tracking error"))
+
+        # Should not raise exception
+        await _track_ai_response(session_manager, "Response", "gpt-4", "openai")
+
+    @pytest.mark.asyncio
+    async def test_track_ai_response_none_session(self):
+        """Test tracking AI response with None session."""
+        from chuk_llm.api.core import _track_ai_response
+
+        # Should not raise exception
+        await _track_ai_response(None, "Response", "gpt-4", "openai")
+
+
+class TestProviderResolutionErrors:
+    """Test provider resolution error handling."""
+
+    @pytest.mark.asyncio
+    async def test_ask_with_invalid_provider(self):
+        """Test ask with provider that fails to resolve."""
+        from chuk_llm.api.core import ask
+        from unittest.mock import AsyncMock, Mock, patch
+
+        mock_config_manager = Mock()
+        mock_config_manager.get_provider.side_effect = Exception("Provider not found")
+
+        mock_config = {
+            "provider": "openai",
+            "model": "gpt-4",
+            "api_key": "fallback-key",
+            "api_base": "https://api.openai.com/v1",
+        }
+
+        mock_client = Mock()
+        mock_client.create_completion = AsyncMock(
+            return_value={"response": "fallback response"}
+        )
+        mock_client.supports_feature = Mock(return_value=True)
+
+        with patch("chuk_llm.api.core.get_config", return_value=mock_config_manager):
+            with patch(
+                "chuk_llm.api.core.get_current_config", return_value=mock_config
+            ):
+                with patch("chuk_llm.api.core.get_client", return_value=mock_client):
+                    result = await ask("test", provider="invalid-provider")
+                    assert result == "fallback response"
+
+    @pytest.mark.asyncio
+    async def test_ask_with_none_provider_and_no_model(self):
+        """Test ask with None provider trying to get default model."""
+        from chuk_llm.api.core import ask
+        from unittest.mock import AsyncMock, Mock, patch
+
+        mock_config_manager = Mock()
+        mock_provider_config = Mock()
+        mock_provider_config.default_model = "gpt-4"
+        mock_config_manager.get_provider.return_value = mock_provider_config
+
+        mock_config = {
+            "provider": "openai",
+            "model": None,
+            "api_key": "test-key",
+            "api_base": "https://api.openai.com/v1",
+        }
+
+        mock_client = Mock()
+        mock_client.create_completion = AsyncMock(
+            return_value={"response": "response with default model"}
+        )
+        mock_client.supports_feature = Mock(return_value=True)
+
+        with patch("chuk_llm.api.core.get_config", return_value=mock_config_manager):
+            with patch(
+                "chuk_llm.api.core.get_current_config", return_value=mock_config
+            ):
+                with patch("chuk_llm.api.core.get_client", return_value=mock_client):
+                    result = await ask("test", provider=None, model=None)
+                    assert result == "response with default model"
+
+
+class TestSessionSystemPromptUpdate:
+    """Test session system prompt update functionality."""
+
+    @pytest.mark.asyncio
+    async def test_ask_with_system_prompt_updates_session(self):
+        """Test that providing system_prompt updates the session manager."""
+        from chuk_llm.api.core import ask
+        from unittest.mock import AsyncMock, Mock, patch
+
+        mock_session_manager = Mock()
+        mock_session_manager.update_system_prompt = AsyncMock()
+        mock_session_manager.user_says = AsyncMock()
+        mock_session_manager.ai_responds = AsyncMock()
+
+        mock_config = {
+            "provider": "openai",
+            "model": "gpt-4",
+            "api_key": "test-key",
+            "api_base": "https://api.openai.com/v1",
+            "system_prompt": "Old prompt",
+        }
+
+        mock_client = Mock()
+        mock_client.create_completion = AsyncMock(
+            return_value={"response": "updated response"}
+        )
+        mock_client.supports_feature = Mock(return_value=True)
+
+        with patch("chuk_llm.api.core.get_current_config", return_value=mock_config):
+            with patch(
+                "chuk_llm.api.core._get_session_manager",
+                return_value=mock_session_manager,
+            ):
+                with patch("chuk_llm.api.core.get_client", return_value=mock_client):
+                    result = await ask("test", system_prompt="New custom prompt")
+
+                    assert result == "updated response"
+                    mock_session_manager.update_system_prompt.assert_called_once_with(
+                        "New custom prompt"
+                    )
+
+    @pytest.mark.asyncio
+    async def test_ask_system_prompt_update_error_handled(self):
+        """Test that errors updating system prompt don't break ask."""
+        from chuk_llm.api.core import ask
+        from unittest.mock import AsyncMock, Mock, patch
+
+        mock_session_manager = Mock()
+        mock_session_manager.update_system_prompt = AsyncMock(
+            side_effect=Exception("Update failed")
+        )
+        mock_session_manager.user_says = AsyncMock()
+        mock_session_manager.ai_responds = AsyncMock()
+
+        mock_config = {
+            "provider": "openai",
+            "model": "gpt-4",
+            "api_key": "test-key",
+            "api_base": "https://api.openai.com/v1",
+        }
+
+        mock_client = Mock()
+        mock_client.create_completion = AsyncMock(
+            return_value={"response": "response despite error"}
+        )
+        mock_client.supports_feature = Mock(return_value=True)
+
+        with patch("chuk_llm.api.core.get_current_config", return_value=mock_config):
+            with patch(
+                "chuk_llm.api.core._get_session_manager",
+                return_value=mock_session_manager,
+            ):
+                with patch("chuk_llm.api.core.get_client", return_value=mock_client):
+                    # Should not raise exception
+                    result = await ask("test", system_prompt="New prompt")
+                    assert result == "response despite error"
+
+
+class TestStreamingOverrideParameters:
+    """Test streaming with parameter overrides."""
+
+    @pytest.mark.asyncio
+    async def test_ask_with_api_key_override(self):
+        """Test that api_key parameter overrides config."""
+        from chuk_llm.api.core import ask
+        from unittest.mock import AsyncMock, Mock, patch
+
+        mock_config = {
+            "provider": "openai",
+            "model": "gpt-4",
+            "api_key": "config-key",
+            "api_base": "https://api.openai.com/v1",
+        }
+
+        mock_client = Mock()
+        mock_client.create_completion = AsyncMock(
+            return_value={"response": "response with override"}
+        )
+        mock_client.supports_feature = Mock(return_value=True)
+
+        with patch("chuk_llm.api.core.get_current_config", return_value=mock_config):
+            with patch("chuk_llm.api.core.get_client", return_value=mock_client):
+                result = await ask("test", api_key="override-key")
+                assert result == "response with override"
+
+    @pytest.mark.asyncio
+    async def test_ask_with_base_url_override(self):
+        """Test that base_url parameter overrides config."""
+        from chuk_llm.api.core import ask
+        from unittest.mock import AsyncMock, Mock, patch
+
+        mock_config = {
+            "provider": "openai",
+            "model": "gpt-4",
+            "api_key": "test-key",
+            "api_base": "https://api.openai.com/v1",
+        }
+
+        mock_client = Mock()
+        mock_client.create_completion = AsyncMock(
+            return_value={"response": "response with override"}
+        )
+        mock_client.supports_feature = Mock(return_value=True)
+
+        with patch("chuk_llm.api.core.get_current_config", return_value=mock_config):
+            with patch("chuk_llm.api.core.get_client", return_value=mock_client):
+                result = await ask("test", base_url="https://custom.api.com/v1")
+                assert result == "response with override"
+
+
+class TestToolCallExtractionsEdgeCases:
+    """Test edge cases in tool call extraction."""
+
+    def test_extract_tool_call_without_arguments(self):
+        """Test extracting tool call that has no arguments."""
+        from chuk_llm.api.core import _extract_streaming_content
+
+        chunk = {
+            "tool_calls": [
+                {
+                    "function": {"name": "no_args_function", "arguments": ""},
+                    "incremental": False,
+                }
+            ]
+        }
+
+        result = _extract_streaming_content(chunk)
+        assert "[Calling no_args_function]" in result
+
+    def test_extract_tool_call_invalid_json(self):
+        """Test extracting tool call with invalid JSON arguments."""
+        from chuk_llm.api.core import _extract_streaming_content
+
+        chunk = {
+            "tool_calls": [
+                {
+                    "function": {"name": "bad_json", "arguments": "not json at all"},
+                    "incremental": False,
+                }
+            ]
+        }
+
+        result = _extract_streaming_content(chunk)
+        assert "[Calling bad_json]" in result
+        assert "not json at all" in result
+
+    def test_extract_sdk_object_with_message_content(self):
+        """Test extracting from SDK object with message instead of delta."""
+        from chuk_llm.api.core import _extract_streaming_content
+        from unittest.mock import Mock
+
+        chunk = Mock()
+        chunk.choices = [Mock()]
+        chunk.choices[0].delta = None
+        chunk.choices[0].message = Mock()
+        chunk.choices[0].message.content = "Message content"
+
+        result = _extract_streaming_content(chunk)
+        assert result == "Message content"
+
+    def test_extract_sdk_tool_call_without_name(self):
+        """Test SDK tool call that has arguments but no name."""
+        from chuk_llm.api.core import _extract_streaming_content
+        from unittest.mock import Mock
+
+        chunk = Mock()
+        chunk.choices = [Mock()]
+        chunk.choices[0].delta = Mock()
+        chunk.choices[0].delta.content = None
+
+        tool_call = Mock()
+        tool_call.function = Mock()
+        tool_call.function.name = ""
+        tool_call.function.arguments = '{"key": "value"}'
+        chunk.choices[0].delta.tool_calls = [tool_call]
+
+        result = _extract_streaming_content(chunk)
+        # Should return empty string when no name
+        assert result == ""
+
+
+class TestJSONMode:
+    """Test JSON mode functionality."""
+
+    @pytest.mark.asyncio
+    async def test_ask_with_json_mode_openai(self):
+        """Test ask with JSON mode for OpenAI provider."""
+        from chuk_llm.api.core import ask
+        from unittest.mock import AsyncMock, Mock, patch
+
+        mock_config_manager = Mock()
+        mock_config_manager.supports_feature = Mock(return_value=True)
+
+        mock_config = {
+            "provider": "openai",
+            "model": "gpt-4",
+            "api_key": "test-key",
+            "api_base": "https://api.openai.com/v1",
+        }
+
+        mock_client = Mock()
+        mock_client.create_completion = AsyncMock(
+            return_value={"response": '{"result": "json"}'}
+        )
+        mock_client.supports_feature = Mock(return_value=True)
+
+        with patch("chuk_llm.api.core.get_config", return_value=mock_config_manager):
+            with patch(
+                "chuk_llm.api.core.get_current_config", return_value=mock_config
+            ):
+                with patch("chuk_llm.api.core.get_client", return_value=mock_client):
+                    result = await ask("test", json_mode=True)
+                    assert result == '{"result": "json"}'
+
+    @pytest.mark.asyncio
+    async def test_ask_with_json_mode_gemini(self):
+        """Test ask with JSON mode for Gemini provider."""
+        from chuk_llm.api.core import ask
+        from unittest.mock import AsyncMock, Mock, patch
+
+        mock_config_manager = Mock()
+        mock_config_manager.supports_feature = Mock(return_value=True)
+
+        mock_config = {
+            "provider": "gemini",
+            "model": "gemini-pro",
+            "api_key": "test-key",
+            "api_base": "https://api.gemini.com/v1",
+        }
+
+        mock_client = Mock()
+        mock_client.create_completion = AsyncMock(
+            return_value={"response": '{"data": "value"}'}
+        )
+        mock_client.supports_feature = Mock(return_value=True)
+
+        with patch("chuk_llm.api.core.get_config", return_value=mock_config_manager):
+            with patch(
+                "chuk_llm.api.core.get_current_config", return_value=mock_config
+            ):
+                with patch("chuk_llm.api.core.get_client", return_value=mock_client):
+                    result = await ask("test", json_mode=True)
+                    assert result == '{"data": "value"}'
+
+    @pytest.mark.asyncio
+    async def test_ask_json_mode_not_supported_fallback(self):
+        """Test JSON mode falls back to instruction when not supported."""
+        from chuk_llm.api.core import ask
+        from unittest.mock import AsyncMock, Mock, patch
+
+        mock_config_manager = Mock()
+        mock_config_manager.supports_feature = Mock(return_value=False)
+
+        mock_config = {
+            "provider": "custom",
+            "model": "custom-model",
+            "api_key": "test-key",
+            "api_base": "https://api.custom.com/v1",
+        }
+
+        mock_client = Mock()
+        mock_client.create_completion = AsyncMock(return_value={"response": "response"})
+        mock_client.supports_feature = Mock(return_value=True)
+
+        with patch("chuk_llm.api.core.get_config", return_value=mock_config_manager):
+            with patch(
+                "chuk_llm.api.core.get_current_config", return_value=mock_config
+            ):
+                with patch("chuk_llm.api.core.get_client", return_value=mock_client):
+                    result = await ask("test", json_mode=True)
+                    # Should still work, just adds instruction to messages
+                    assert result == "response"
+
+    @pytest.mark.asyncio
+    async def test_ask_json_mode_feature_check_exception(self):
+        """Test JSON mode when feature check raises exception."""
+        from chuk_llm.api.core import ask
+        from unittest.mock import AsyncMock, Mock, patch
+
+        mock_config_manager = Mock()
+        mock_config_manager.supports_feature = Mock(
+            side_effect=Exception("Feature check error")
+        )
+
+        mock_config = {
+            "provider": "openai",
+            "model": "gpt-4",
+            "api_key": "test-key",
+            "api_base": "https://api.openai.com/v1",
+        }
+
+        mock_client = Mock()
+        mock_client.create_completion = AsyncMock(return_value={"response": "response"})
+        mock_client.supports_feature = Mock(return_value=True)
+
+        with patch("chuk_llm.api.core.get_config", return_value=mock_config_manager):
+            with patch(
+                "chuk_llm.api.core.get_current_config", return_value=mock_config
+            ):
+                with patch("chuk_llm.api.core.get_client", return_value=mock_client):
+                    # Should handle exception and fall back to adding response_format
+                    result = await ask("test", json_mode=True)
+                    assert result == "response"
+
+
+class TestMaxTokensHandling:
+    """Test max_tokens parameter handling."""
+
+    @pytest.mark.asyncio
+    async def test_ask_with_max_tokens_from_config(self):
+        """Test that max_tokens from config is used."""
+        from chuk_llm.api.core import ask
+        from unittest.mock import AsyncMock, Mock, patch
+
+        mock_config = {
+            "provider": "openai",
+            "model": "gpt-4",
+            "api_key": "test-key",
+            "api_base": "https://api.openai.com/v1",
+            "max_tokens": 2000,
+        }
+
+        mock_client = Mock()
+        mock_client.create_completion = AsyncMock(return_value={"response": "response"})
+        mock_client.supports_feature = Mock(return_value=True)
+
+        with patch("chuk_llm.api.core.get_current_config", return_value=mock_config):
+            with patch("chuk_llm.api.core.get_client", return_value=mock_client):
+                result = await ask("test")
+                assert result == "response"
+
+
+class TestToolsPassthrough:
+    """Test tools parameter handling."""
+
+    @pytest.mark.asyncio
+    async def test_ask_passes_tools_to_client(self):
+        """Test that tools are passed through to client."""
+        from chuk_llm.api.core import ask
+        from unittest.mock import AsyncMock, Mock, patch
+
+        mock_config = {
+            "provider": "openai",
+            "model": "gpt-4",
+            "api_key": "test-key",
+            "api_base": "https://api.openai.com/v1",
+        }
+
+        tools = [{"type": "function", "function": {"name": "test_func"}}]
+
+        mock_client = Mock()
+        mock_client.create_completion = AsyncMock(
+            return_value={"response": "tool response", "tool_calls": []}
+        )
+        mock_client.supports_feature = Mock(return_value=True)
+
+        with patch("chuk_llm.api.core.get_current_config", return_value=mock_config):
+            with patch("chuk_llm.api.core.get_client", return_value=mock_client):
+                result = await ask("test", tools=tools)
+                # With tools, returns dict
+                assert isinstance(result, dict)
+                assert result["response"] == "tool response"
+
+
+class TestModelResolutionWithProviderParam:
+    """Test model resolution when provider parameter is provided."""
+
+    @pytest.mark.asyncio
+    async def test_ask_with_provider_param_uses_provider_model(self):
+        """Test that provider parameter triggers provider config lookup."""
+        from chuk_llm.api.core import ask
+        from unittest.mock import AsyncMock, Mock, patch
+
+        mock_config_manager = Mock()
+        mock_provider_config = Mock()
+        mock_provider_config.default_model = "provider-default-model"
+        mock_provider_config.api_base = "https://provider.api.com/v1"
+        mock_config_manager.get_provider.return_value = mock_provider_config
+        mock_config_manager.get_api_key.return_value = "provider-key"
+
+        mock_config = {
+            "provider": "default-provider",
+            "model": "default-model",
+            "api_key": "default-key",
+            "api_base": "https://default.api.com/v1",
+        }
+
+        mock_client = Mock()
+        mock_client.create_completion = AsyncMock(
+            return_value={"response": "using provider config"}
+        )
+        mock_client.supports_feature = Mock(return_value=True)
+
+        with patch("chuk_llm.api.core.get_config", return_value=mock_config_manager):
+            with patch(
+                "chuk_llm.api.core.get_current_config", return_value=mock_config
+            ):
+                with patch("chuk_llm.api.core.get_client", return_value=mock_client):
+                    # Pass provider but no model - should use provider's default
+                    result = await ask("test", provider="custom-provider", model=None)
+                    assert result == "using provider config"
+
+    @pytest.mark.asyncio
+    async def test_ask_with_no_provider_no_model_gets_default(self):
+        """Test that None provider/model tries to get default from config."""
+        from chuk_llm.api.core import ask
+        from unittest.mock import AsyncMock, Mock, patch
+
+        mock_config_manager = Mock()
+        mock_provider_config = Mock()
+        mock_provider_config.default_model = "resolved-default"
+        mock_config_manager.get_provider.return_value = mock_provider_config
+
+        mock_config = {
+            "provider": "openai",
+            "model": None,  # No model in config
+            "api_key": "test-key",
+            "api_base": "https://api.openai.com/v1",
+        }
+
+        mock_client = Mock()
+        mock_client.create_completion = AsyncMock(
+            return_value={"response": "with default model"}
+        )
+        mock_client.supports_feature = Mock(return_value=True)
+
+        with patch("chuk_llm.api.core.get_config", return_value=mock_config_manager):
+            with patch(
+                "chuk_llm.api.core.get_current_config", return_value=mock_config
+            ):
+                with patch("chuk_llm.api.core.get_client", return_value=mock_client):
+                    result = await ask("test", provider=None, model=None)
+                    assert result == "with default model"
+
+    @pytest.mark.asyncio
+    async def test_ask_with_no_model_provider_lookup_fails(self):
+        """Test that provider lookup failure for default model is handled."""
+        from chuk_llm.api.core import ask
+        from unittest.mock import AsyncMock, Mock, patch
+
+        mock_config_manager = Mock()
+        mock_config_manager.get_provider.side_effect = Exception("Provider not found")
+
+        mock_config = {
+            "provider": "openai",
+            "model": None,
+            "api_key": "test-key",
+            "api_base": "https://api.openai.com/v1",
+        }
+
+        mock_client = Mock()
+        mock_client.create_completion = AsyncMock(
+            return_value={"response": "works without default"}
+        )
+        mock_client.supports_feature = Mock(return_value=True)
+
+        with patch("chuk_llm.api.core.get_config", return_value=mock_config_manager):
+            with patch(
+                "chuk_llm.api.core.get_current_config", return_value=mock_config
+            ):
+                with patch("chuk_llm.api.core.get_client", return_value=mock_client):
+                    # Should handle exception and continue
+                    result = await ask("test", provider=None, model=None)
+                    assert result == "works without default"

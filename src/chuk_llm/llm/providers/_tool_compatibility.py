@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from chuk_llm.core.enums import Provider
+
 log = logging.getLogger(__name__)
 
 
@@ -87,7 +89,7 @@ class ProviderToolRequirements:
 
 # Provider-specific requirements
 PROVIDER_REQUIREMENTS = {
-    "mistral": ProviderToolRequirements(
+    Provider.MISTRAL.value: ProviderToolRequirements(
         pattern=r"^[a-zA-Z0-9_-]{1,64}$",
         max_length=64,
         compatibility_level=CompatibilityLevel.SANITIZED,
@@ -123,7 +125,7 @@ PROVIDER_REQUIREMENTS = {
             "~",
         },
     ),
-    "anthropic": ProviderToolRequirements(
+    Provider.ANTHROPIC.value: ProviderToolRequirements(
         pattern=r"^[a-zA-Z0-9_-]{1,128}$",
         max_length=128,
         compatibility_level=CompatibilityLevel.SANITIZED,
@@ -160,7 +162,7 @@ PROVIDER_REQUIREMENTS = {
         },
     ),
     # OpenAI actually requires sanitization - dots and colons are forbidden
-    "openai": ProviderToolRequirements(
+    Provider.OPENAI.value: ProviderToolRequirements(
         pattern=r"^[a-zA-Z0-9_-]{1,64}$",  # Same as Mistral - no dots or colons
         max_length=64,
         compatibility_level=CompatibilityLevel.SANITIZED,  # CHANGED from NATIVE to SANITIZED
@@ -197,7 +199,7 @@ PROVIDER_REQUIREMENTS = {
         },
     ),
     # Azure OpenAI should match OpenAI requirements
-    "azure_openai": ProviderToolRequirements(
+    Provider.AZURE_OPENAI.value: ProviderToolRequirements(
         pattern=r"^[a-zA-Z0-9_-]{1,64}$",  # Same as OpenAI
         max_length=64,
         compatibility_level=CompatibilityLevel.SANITIZED,  # CHANGED from NATIVE to SANITIZED
@@ -233,7 +235,7 @@ PROVIDER_REQUIREMENTS = {
             "~",
         },
     ),
-    "gemini": ProviderToolRequirements(
+    Provider.GEMINI.value: ProviderToolRequirements(
         pattern=r"^[a-zA-Z0-9_-]{1,64}$",
         max_length=64,
         compatibility_level=CompatibilityLevel.SANITIZED,
@@ -269,7 +271,7 @@ PROVIDER_REQUIREMENTS = {
             "~",
         },
     ),
-    "groq": ProviderToolRequirements(
+    Provider.GROQ.value: ProviderToolRequirements(
         pattern=r"^[a-zA-Z0-9_-]{1,64}$",
         max_length=64,
         compatibility_level=CompatibilityLevel.SANITIZED,
@@ -305,7 +307,7 @@ PROVIDER_REQUIREMENTS = {
             "~",
         },
     ),
-    "watsonx": ProviderToolRequirements(
+    Provider.WATSONX.value: ProviderToolRequirements(
         pattern=r"^[a-zA-Z0-9_-]{1,64}$",
         max_length=64,
         compatibility_level=CompatibilityLevel.ENTERPRISE,
@@ -341,7 +343,7 @@ PROVIDER_REQUIREMENTS = {
             "~",
         },
     ),
-    "ollama": ProviderToolRequirements(
+    Provider.OLLAMA.value: ProviderToolRequirements(
         pattern=r"^[a-zA-Z0-9_.-]{1,64}$",
         max_length=64,
         compatibility_level=CompatibilityLevel.NATIVE,  # Local deployment, usually flexible
@@ -427,7 +429,7 @@ class ToolNameSanitizer:
             return "unnamed_function"
 
         requirements = PROVIDER_REQUIREMENTS.get(
-            provider, PROVIDER_REQUIREMENTS["mistral"]
+            provider, PROVIDER_REQUIREMENTS[Provider.MISTRAL.value]
         )
 
         # For native providers, do minimal sanitization
@@ -569,7 +571,7 @@ class ToolCompatibilityMixin:
     def get_tool_requirements(self) -> ProviderToolRequirements:
         """Get tool naming requirements for this provider"""
         return PROVIDER_REQUIREMENTS.get(
-            self.provider_name, PROVIDER_REQUIREMENTS["mistral"]
+            self.provider_name, PROVIDER_REQUIREMENTS[Provider.MISTRAL.value]
         )
 
     def get_tool_compatibility_info(self) -> dict[str, Any]:
@@ -584,9 +586,11 @@ class ToolCompatibilityMixin:
             "requires_sanitization": requirements.compatibility_level
             != CompatibilityLevel.NATIVE,
             "compatibility_level": requirements.compatibility_level.value,
-            "forbidden_characters": list(requirements.forbidden_chars)
-            if requirements.forbidden_chars
-            else [],
+            "forbidden_characters": (
+                list(requirements.forbidden_chars)
+                if requirements.forbidden_chars
+                else []
+            ),
             "sample_transformations": self._get_sample_transformations(),
             "case_sensitive": requirements.case_sensitive,
         }
@@ -625,11 +629,11 @@ class ToolCompatibilityMixin:
             for original in samples
         }
 
-    def _sanitize_tool_names(
-        self, tools: list[dict[str, Any]] | None
-    ) -> list[dict[str, Any]] | None:
+    def _sanitize_tool_names(self, tools: list[Any] | None) -> list[Any] | None:
         """
         Standardized tool name sanitization with bidirectional mapping.
+
+        Pydantic native - works with Tool objects or dicts (backward compatible).
 
         This method should be called by all provider clients before sending
         tools to the API. It ensures compatibility while preserving original
@@ -647,8 +651,23 @@ class ToolCompatibilityMixin:
         # Reset mapping for new request
         self._current_name_mapping = {}
 
+        # Auto-convert dicts to Pydantic models using model_validate
+        from chuk_llm.core.models import Tool as ToolModel
+
+        pydantic_tools = []
+        for tool in tools:
+            if isinstance(tool, ToolModel):
+                pydantic_tools.append(tool)
+            else:
+                try:
+                    pydantic_tools.append(ToolModel.model_validate(tool))
+                except Exception as e:
+                    # Skip malformed tools with a warning
+                    log.warning(f"[{self.provider_name}] Skipping malformed tool: {e}")
+                    continue
+
         sanitized_tools, self._current_name_mapping = self._sanitize_tools_with_mapping(
-            tools
+            pydantic_tools
         )
 
         # Log sanitization activity
@@ -663,50 +682,59 @@ class ToolCompatibilityMixin:
         return sanitized_tools
 
     def _sanitize_tools_with_mapping(
-        self, tools: list[dict[str, Any]]
-    ) -> tuple[list[dict[str, Any]], dict[str, str]]:
+        self, tools: list[Any]
+    ) -> tuple[list[Any], dict[str, str]]:
         """
         Sanitize tools and create bidirectional mapping for restoration.
+
+        Pydantic native - creates new Tool instances with sanitized names.
 
         Returns:
             Tuple of (sanitized_tools, name_mapping)
             name_mapping: Dict[sanitized_name, original_name]
         """
-        sanitized_tools = []
+        from chuk_llm.core.enums import ToolType
+        from chuk_llm.core.models import Tool, ToolFunction
+
+        sanitized_tools: list[Tool] = []
         name_mapping = {}
 
         for tool in tools:
-            if (
-                isinstance(tool, dict)
-                and tool.get("type") == "function"
-                and "function" in tool
-            ):
-                original_name = tool["function"].get("name", "")
+            original_name = tool.function.name
 
-                if original_name:
-                    # Sanitize the name
-                    sanitized_name = self._sanitizer.sanitize_for_provider(
-                        original_name, self.provider_name
-                    )
+            if original_name:
+                # Sanitize the name
+                sanitized_name = self._sanitizer.sanitize_for_provider(
+                    original_name, self.provider_name
+                )
 
-                    # Store mapping
-                    name_mapping[sanitized_name] = original_name
+                # Store mapping
+                name_mapping[sanitized_name] = original_name
 
-                    # Create sanitized tool
-                    sanitized_tool = tool.copy()
-                    sanitized_tool["function"] = tool["function"].copy()
-                    sanitized_tool["function"]["name"] = sanitized_name
+                # Create new ToolFunction with sanitized name (Tool is frozen, must create new instance)
+                sanitized_function = ToolFunction(
+                    name=sanitized_name,
+                    description=tool.function.description,
+                    parameters=tool.function.parameters,
+                )
 
-                    sanitized_tools.append(sanitized_tool)
-                else:
-                    # Tool without name, add default
-                    sanitized_tool = tool.copy()
-                    sanitized_tool["function"] = tool["function"].copy()
-                    sanitized_tool["function"]["name"] = "unnamed_function"
-                    sanitized_tools.append(sanitized_tool)
+                # Create new Tool with sanitized function
+                sanitized_tool = Tool(
+                    type=ToolType.FUNCTION, function=sanitized_function
+                )
+
+                sanitized_tools.append(sanitized_tool)
             else:
-                # Non-function tools pass through unchanged
-                sanitized_tools.append(tool)
+                # Tool without name - use unnamed_function
+                sanitized_function = ToolFunction(
+                    name="unnamed_function",
+                    description=tool.function.description,
+                    parameters=tool.function.parameters,
+                )
+                sanitized_tool = Tool(
+                    type=ToolType.FUNCTION, function=sanitized_function
+                )
+                sanitized_tools.append(sanitized_tool)
 
         return sanitized_tools, name_mapping
 
@@ -795,6 +823,40 @@ class ToolCompatibilityMixin:
                     issues.append(f"  Suggested: '{sanitized}'")
 
         return all_valid, issues
+
+    @staticmethod
+    def _tools_to_dicts(tools: list[Any] | None) -> list[dict[str, Any]] | None:
+        """
+        Convert Pydantic Tool objects to dicts for provider SDK calls.
+
+        This is the ONLY place where tools should be converted to dicts -
+        right before calling the provider SDK. Keep tools as Pydantic objects
+        throughout the internal pipeline for type safety and consistency.
+
+        Args:
+            tools: List of Tool objects (Pydantic) or None
+
+        Returns:
+            List of tool dicts or None
+        """
+        if not tools:
+            return tools
+
+        result = []
+        for tool in tools:
+            if hasattr(tool, "model_dump"):
+                # Pydantic v2
+                result.append(tool.model_dump())
+            elif hasattr(tool, "to_dict"):
+                # Custom to_dict method
+                result.append(tool.to_dict())
+            elif hasattr(tool, "dict"):
+                # Pydantic v1 (backward compatibility)
+                result.append(tool.dict())
+            else:
+                # Already a dict
+                result.append(tool)
+        return result
 
 
 # Comprehensive test framework

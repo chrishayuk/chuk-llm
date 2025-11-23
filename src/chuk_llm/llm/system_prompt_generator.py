@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from chuk_llm.core.enums import Provider
+
 from ..configuration import Feature, get_config
 
 logger = logging.getLogger(__name__)
@@ -324,9 +326,13 @@ When solving problems:
             return ""
 
         # Format based on provider preferences
-        if self.provider == "anthropic":
+        if self.provider == Provider.ANTHROPIC.value:
             return self._format_tools_anthropic(tool_list)
-        elif self.provider in ["openai", "groq", "deepseek"]:
+        elif self.provider in [
+            Provider.OPENAI.value,
+            Provider.GROQ.value,
+            Provider.DEEPSEEK.value,
+        ]:
             return self._format_tools_openai(tool_list)
         else:
             return self._format_tools_generic(tool_list)
@@ -377,13 +383,17 @@ When solving problems:
         if not tools:
             return ""
 
-        if self.provider == "anthropic":
+        if self.provider == Provider.ANTHROPIC.value:
             return """When calling functions, use the following format:
 - Call functions when they would be helpful
 - Provide all arguments in the correct format
 - Use proper JSON for complex parameters"""
 
-        elif self.provider in ["openai", "groq", "deepseek"]:
+        elif self.provider in [
+            Provider.OPENAI.value,
+            Provider.GROQ.value,
+            Provider.DEEPSEEK.value,
+        ]:
             return """Function calling format:
 String and scalar parameters should be specified as is, while lists and objects should use JSON format.
 Ensure all required parameters are provided with correct types."""
@@ -396,11 +406,11 @@ Ensure all required parameters are provided with correct types."""
 
     def _get_default_user_prompt(self) -> str:
         """Get default user system prompt based on provider"""
-        if self.provider == "anthropic":
+        if self.provider == Provider.ANTHROPIC.value:
             return "You are Claude, an AI assistant created by Anthropic. Be helpful, harmless, and honest."
-        elif self.provider == "openai":
+        elif self.provider == Provider.OPENAI.value:
             return "You are a helpful assistant."
-        elif self.provider == "groq":
+        elif self.provider == Provider.GROQ.value:
             return "You are a helpful AI assistant with fast inference capabilities."
         else:
             return "You are an intelligent AI assistant."
@@ -420,17 +430,17 @@ Ensure all required parameters are provided with correct types."""
         instructions = []
 
         # Provider-specific capabilities
-        if self.provider == "groq":
+        if self.provider == Provider.GROQ.value:
             instructions.append(
                 "Take advantage of ultra-fast inference for quick responses."
             )
 
-        elif self.provider == "anthropic":
+        elif self.provider == Provider.ANTHROPIC.value:
             instructions.append(
                 "Use your reasoning capabilities to provide thoughtful responses."
             )
 
-        elif self.provider == "gemini":
+        elif self.provider == Provider.GEMINI.value:
             instructions.append("Leverage your multimodal capabilities when relevant.")
 
         # Feature-specific instructions

@@ -140,7 +140,11 @@ def unregister_provider(name: str) -> bool:
         success = unregister_provider("my_service")
     """
     config = get_config()
-    return config.unregister_provider(name)
+    try:
+        return config.unregister_provider(name)
+    except ValueError:
+        # Provider not found or not removable
+        return False
 
 
 def list_dynamic_providers() -> list[str]:
@@ -156,6 +160,24 @@ def list_dynamic_providers() -> list[str]:
     """
     config = get_config()
     return config.list_dynamic_providers()
+
+
+def provider_exists(name: str) -> bool:
+    """
+    Check if a provider exists.
+
+    Args:
+        name: Provider name to check
+
+    Returns:
+        True if provider exists
+
+    Example:
+        if provider_exists("openai"):
+            print("OpenAI provider is available")
+    """
+    config = get_config()
+    return config.provider_exists(name)
 
 
 def get_provider_config(name: str) -> ProviderConfig:
@@ -175,28 +197,6 @@ def get_provider_config(name: str) -> ProviderConfig:
     """
     config = get_config()
     return config.get_provider(name)
-
-
-def provider_exists(name: str) -> bool:
-    """
-    Check if a provider exists (either from config or dynamically registered).
-
-    Args:
-        name: Provider name to check
-
-    Returns:
-        True if provider exists
-
-    Example:
-        if provider_exists("my_service"):
-            response = ask_sync("Hello", provider="my_service")
-    """
-    config = get_config()
-    try:
-        config.get_provider(name)
-        return True
-    except Exception:
-        return False
 
 
 def register_openai_compatible(

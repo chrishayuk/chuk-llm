@@ -101,3 +101,6 @@ Thumbs.db
 # Project specific
 benchmark_runs/
 benchmark_results/
+
+# ai
+.claude

@@ -3,32 +3,46 @@
 Configuration module for ChukLLM - Clean Forward-Looking Version
 ===============================================================
 
-Unified configuration system - get_config now returns UnifiedConfigManager.
+Unified configuration system using Pydantic + Registry.
 """
 
+# Import models
+from .models import (
+    DiscoveryConfig,
+    Feature,
+    GlobalConfig,
+    ModelCapabilities,
+    ProviderConfig,
+)
+
+# Import config manager
 from .unified_config import (
     CapabilityChecker,
     ConfigManager,
-    Feature,
-    ModelCapabilities,
-    ProviderConfig,
     UnifiedConfigManager,
     get_config,
     reset_config,
     reset_unified_config,
 )
+
+# Import validator
 from .validator import ConfigValidator
 
 # Clean exports
 __all__ = [
+    # Models
     "Feature",
     "ModelCapabilities",
     "ProviderConfig",
+    "GlobalConfig",
+    "DiscoveryConfig",
+    # Config Manager
     "UnifiedConfigManager",
-    "ConfigValidator",
-    "CapabilityChecker",
+    "ConfigManager",
     "get_config",
     "reset_config",
     "reset_unified_config",
-    "ConfigManager",
+    # Helpers
+    "ConfigValidator",
+    "CapabilityChecker",
 ]

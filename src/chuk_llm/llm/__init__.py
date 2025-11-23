@@ -354,9 +354,11 @@ def check_installation() -> dict[str, Any]:
         "config_status": config_status,
         "issues": issues,
         "warnings": warning_messages,
-        "status": "healthy"
-        if not issues
-        else ("degraded" if not warning_messages else "partial"),
+        "status": (
+            "healthy"
+            if not issues
+            else ("degraded" if not warning_messages else "partial")
+        ),
     }
 
 

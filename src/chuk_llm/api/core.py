@@ -7,18 +7,36 @@ Main API functions using the unified configuration system with integrated sessio
 FIXED VERSION - Enhanced streaming with full tool call support.
 """
 
-import contextlib
 import logging
 import os
 from collections.abc import AsyncIterator
 from typing import Any, Optional
 
+# Modern integration removed - using unified llm/providers architecture
 from chuk_llm.api.config import get_current_config
 from chuk_llm.configuration import ConfigValidator, Feature, get_config
+from chuk_llm.core.constants import ConfigKey
+from chuk_llm.core.enums import ContentType, MessageRole, ToolType
+from chuk_llm.core.models import (
+    FunctionCall,
+    ImageUrlContent,
+    Message,
+    TextContent,
+    Tool,
+    ToolCall,
+    ToolFunction,
+)
 from chuk_llm.llm.client import get_client
 
 # Try to import session manager
 try:
+    import warnings
+
+    # Suppress Pydantic v2 validator warning from session_manager globally
+    # This warning comes from deep inside Session.__init__ and can't be caught locally
+    warnings.filterwarnings(
+        "ignore", category=UserWarning, message=".*Returning anything other than.*"
+    )
     from chuk_ai_session_manager import SessionManager
 
     _SESSION_AVAILABLE = True
@@ -30,6 +48,96 @@ logger = logging.getLogger(__name__)
 
 # Global session manager instance
 _global_session_manager = None
+
+
+def _convert_dict_to_pydantic_messages(messages: list[dict[str, Any]]) -> list[Message]:
+    """Convert dict messages to Pydantic Message objects for backward compatibility."""
+    pydantic_messages = []
+
+    for msg_dict in messages:
+        # Parse role
+        role_str = msg_dict.get("role", "user")
+        role = MessageRole(role_str) if isinstance(role_str, str) else role_str
+
+        # Parse content
+        content = msg_dict.get("content")
+        if isinstance(content, list):
+            # Multi-modal content - convert each part
+            content_parts = []
+            for part in content:
+                if isinstance(part, dict):
+                    part_type = part.get("type")
+                    if part_type == "text":
+                        content_parts.append(
+                            TextContent(
+                                type=ContentType.TEXT, text=part.get("text", "")
+                            )
+                        )
+                    elif part_type == "image_url":
+                        content_parts.append(
+                            ImageUrlContent(
+                                type=ContentType.IMAGE_URL,
+                                image_url=part.get("image_url", {}),
+                            )
+                        )
+                    else:
+                        # Unknown type, keep as-is (shouldn't happen with proper Pydantic validation)
+                        pass
+                else:
+                    # Already Pydantic object
+                    content_parts.append(part)
+            content = content_parts if content_parts else None
+
+        # Parse tool calls
+        tool_calls_list = None
+        if "tool_calls" in msg_dict and msg_dict["tool_calls"]:
+            tool_calls_list = [
+                ToolCall(
+                    id=tc.get("id", ""),
+                    type=ToolType(tc.get("type", "function")),
+                    function=FunctionCall(
+                        name=tc.get("function", {}).get("name", ""),
+                        arguments=tc.get("function", {}).get("arguments", "{}"),
+                    ),
+                )
+                for tc in msg_dict["tool_calls"]
+            ]
+
+        # Create Message
+        pydantic_messages.append(
+            Message(
+                role=role,
+                content=content,
+                tool_calls=tool_calls_list,
+                tool_call_id=msg_dict.get("tool_call_id"),
+                name=msg_dict.get("name"),
+            )
+        )
+
+    return pydantic_messages
+
+
+def _convert_dict_to_pydantic_tools(
+    tools: list[dict[str, Any]] | None,
+) -> list[Tool] | None:
+    """Convert dict tools to Pydantic Tool objects for backward compatibility."""
+    if not tools:
+        return None
+
+    pydantic_tools = []
+    for tool_dict in tools:
+        pydantic_tools.append(
+            Tool(
+                type=ToolType(tool_dict.get("type", "function")),
+                function=ToolFunction(
+                    name=tool_dict.get("function", {}).get("name", ""),
+                    description=tool_dict.get("function", {}).get("description", ""),
+                    parameters=tool_dict.get("function", {}).get("parameters", {}),
+                ),
+            )
+        )
+
+    return pydantic_tools
 
 
 def _resolve_model_alias(provider: str, model: str) -> str:
@@ -67,27 +175,9 @@ def _resolve_model_alias(provider: str, model: str) -> str:
             # Mock object or missing method, skip global alias resolution
             pass
 
-        # Then use _ensure_model_available which handles provider-specific aliases and discovery
-        try:
-            if hasattr(config_manager, "_ensure_model_available"):
-                resolved_model = config_manager._ensure_model_available(provider, model)
-
-                if resolved_model and resolved_model != model:
-                    logger.debug(
-                        f"Resolved model '{model}' to '{resolved_model}' for provider '{provider}'"
-                    )
-                    return resolved_model
-                elif not resolved_model:
-                    # Model couldn't be resolved, return original and let API handle error
-                    logger.debug(
-                        f"Could not resolve model '{model}' for provider '{provider}', using as-is"
-                    )
-                    return model
-
-                return resolved_model
-        except (AttributeError, TypeError):
-            # Mock object or missing method, return original model
-            pass
+        # Note: _ensure_model_available returns bool (whether model exists), not the model name
+        # We don't use it for resolution, just for checking availability
+        # Provider-specific alias resolution happens elsewhere in the provider config
     except Exception as e:
         # Any error in resolution, just return the original model
         logger.debug(f"Error resolving model alias: {e}")
@@ -112,13 +202,18 @@ def _get_session_manager() -> Optional["SessionManager"]:
         try:
             # Get system prompt from config if available
             config = get_current_config()
-            system_prompt = config.get("system_prompt")
+            system_prompt = config.get(ConfigKey.SYSTEM_PROMPT.value)
 
-            _global_session_manager = SessionManager(
-                system_prompt=system_prompt,
-                infinite_context=True,  # Enable by default
-                token_threshold=4000,  # Reasonable default
-            )
+            # Suppress Pydantic v2 validator warning from session_manager
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore", message=".*Returning anything other than.*"
+                )
+                _global_session_manager = SessionManager(
+                    system_prompt=system_prompt,
+                    infinite_context=True,  # Enable by default
+                    token_threshold=4000,  # Reasonable default
+                )
         except Exception as e:
             logger.debug(f"Could not create session manager: {e}")
             return None
@@ -212,8 +307,8 @@ async def ask(
     config = get_current_config()
 
     # Determine effective provider and model
-    effective_provider = provider or config["provider"]
-    effective_model = model or config["model"]
+    effective_provider = provider or config[ConfigKey.PROVIDER.value]
+    effective_model = model or config[ConfigKey.MODEL.value]
 
     # Resolve model alias if provider is specified
     if effective_provider and effective_model:
@@ -236,12 +331,12 @@ async def ask(
         except Exception as e:
             logger.warning(f"Could not resolve provider '{provider}': {e}")
             # Fallback to cached config
-            effective_api_key = config["api_key"]
-            effective_api_base = config["api_base"]
+            effective_api_key = config[ConfigKey.API_KEY.value]
+            effective_api_base = config[ConfigKey.API_BASE.value]
     else:
         # No provider override - use cached config
-        effective_api_key = config["api_key"]
-        effective_api_base = config["api_base"]
+        effective_api_key = config[ConfigKey.API_KEY.value]
+        effective_api_base = config[ConfigKey.API_BASE.value]
 
         # Still resolve model if needed
         if not effective_model:
@@ -264,13 +359,17 @@ async def ask(
         "model": effective_model,
         "api_key": api_key or effective_api_key,  # Dynamic override takes precedence
         "api_base": base_url or effective_api_base,  # Dynamic override takes precedence
-        "system_prompt": system_prompt or config.get("system_prompt"),
-        "temperature": temperature
-        if temperature is not None
-        else config.get("temperature"),
-        "max_tokens": max_tokens
-        if max_tokens is not None
-        else config.get("max_tokens"),
+        "system_prompt": system_prompt or config.get(ConfigKey.SYSTEM_PROMPT.value),
+        "temperature": (
+            temperature
+            if temperature is not None
+            else config.get(ConfigKey.TEMPERATURE.value)
+        ),
+        "max_tokens": (
+            max_tokens
+            if max_tokens is not None
+            else config.get(ConfigKey.MAX_TOKENS.value)
+        ),
     }
 
     # Validate request compatibility
@@ -289,16 +388,16 @@ async def ask(
 
     # Get client with correct parameters
     client = get_client(
-        provider=effective_config["provider"],
-        model=effective_config["model"],
-        api_key=effective_config["api_key"],
-        api_base=effective_config["api_base"],
+        provider=effective_config[ConfigKey.PROVIDER.value],
+        model=effective_config[ConfigKey.MODEL.value],
+        api_key=effective_config[ConfigKey.API_KEY.value],
+        api_base=effective_config[ConfigKey.API_BASE.value],
     )
 
     # Build messages with intelligent system prompt handling
     messages = _build_messages(
         prompt=prompt,
-        system_prompt=effective_config.get("system_prompt"),
+        system_prompt=effective_config.get(ConfigKey.SYSTEM_PROMPT.value),
         tools=tools,
         provider=effective_provider,
         model=effective_model,
@@ -314,35 +413,13 @@ async def ask(
     # Prepare completion arguments
     completion_args = {"messages": messages}
 
-    # Add tools if supported - FIXED: Better tool support detection
+    # Add tools if provided - permissive approach
+    # Let the provider/API handle unsupported cases rather than blocking
     if tools:
-        try:
-            # First check our internal knowledge
-            model_supports_tools = _supports_tools_by_model(effective_model)
-
-            # Then check configuration if available
-            config_supports_tools = True
-            with contextlib.suppress(Exception):
-                # Unknown provider/model, use our internal logic
-                config_supports_tools = config_manager.supports_feature(
-                    effective_provider, Feature.TOOLS, effective_model
-                )
-
-            if model_supports_tools and config_supports_tools:
-                completion_args["tools"] = tools
-            else:
-                if not model_supports_tools:
-                    logger.debug(
-                        f"{effective_model} is an old reasoning model without tool support"
-                    )
-                else:
-                    logger.warning(
-                        f"{effective_provider}/{effective_model} doesn't support tools according to config"
-                    )
-
-        except Exception:
-            # Unknown provider, try anyway
-            completion_args["tools"] = tools
+        completion_args["tools"] = tools
+        logger.debug(
+            f"Passing {len(tools)} tools to {effective_provider}/{effective_model}"
+        )
 
     # Add JSON mode if requested and supported
     if json_mode:
@@ -369,17 +446,32 @@ async def ask(
                 completion_args["response_format"] = {"type": "json_object"}
 
     # Add temperature and max_tokens - Let provider client handle parameter mapping
-    if effective_config.get("temperature") is not None:
-        completion_args["temperature"] = effective_config["temperature"]
-    if effective_config.get("max_tokens") is not None:
-        completion_args["max_tokens"] = effective_config["max_tokens"]
+    if effective_config.get(ConfigKey.TEMPERATURE.value) is not None:
+        completion_args["temperature"] = effective_config[ConfigKey.TEMPERATURE.value]
+    if effective_config.get(ConfigKey.MAX_TOKENS.value) is not None:
+        completion_args["max_tokens"] = effective_config[ConfigKey.MAX_TOKENS.value]
 
     # Add any additional kwargs
     completion_args.update(completion_kwargs)
 
-    # Make the request
+    # Make the request using unified llm/providers clients
     try:
-        response = await client.create_completion(**completion_args)
+        logger.debug(
+            f"Using provider client for {effective_provider}/{effective_model}"
+        )
+        # Convert dict messages/tools to Pydantic objects for type safety
+        pydantic_messages = _convert_dict_to_pydantic_messages(
+            completion_args["messages"]
+        )
+        pydantic_tools = _convert_dict_to_pydantic_tools(completion_args.get("tools"))
+
+        # Update completion_args with Pydantic objects
+        completion_args_pydantic = completion_args.copy()
+        completion_args_pydantic["messages"] = pydantic_messages
+        if pydantic_tools is not None:
+            completion_args_pydantic["tools"] = pydantic_tools
+
+        response = await client.create_completion(**completion_args_pydantic)
 
         # Extract response
         if isinstance(response, dict):
@@ -476,8 +568,8 @@ async def stream(
     model = kwargs.get("model")
 
     # Determine effective provider and settings (same logic as ask())
-    effective_provider = provider or config["provider"]
-    effective_model = model or config["model"]
+    effective_provider = provider or config[ConfigKey.PROVIDER.value]
+    effective_model = model or config[ConfigKey.MODEL.value]
 
     # Resolve model alias if provider is specified
     if effective_provider and effective_model:
@@ -497,11 +589,11 @@ async def stream(
 
         except Exception as e:
             logger.warning(f"Could not resolve provider '{provider}': {e}")
-            effective_api_key = config["api_key"]
-            effective_api_base = config["api_base"]
+            effective_api_key = config[ConfigKey.API_KEY.value]
+            effective_api_base = config[ConfigKey.API_BASE.value]
     else:
-        effective_api_key = config["api_key"]
-        effective_api_base = config["api_base"]
+        effective_api_key = config[ConfigKey.API_KEY.value]
+        effective_api_base = config[ConfigKey.API_BASE.value]
 
         if not effective_model:
             try:
@@ -530,51 +622,34 @@ async def stream(
         "model": effective_model,
         "api_key": effective_api_key,
         "api_base": effective_api_base,
-        "system_prompt": system_prompt or config.get("system_prompt"),
-        "temperature": kwargs.get("temperature")
-        if "temperature" in kwargs
-        else config.get("temperature"),
-        "max_tokens": kwargs.get("max_tokens")
-        if "max_tokens" in kwargs
-        else config.get("max_tokens"),
+        "system_prompt": system_prompt or config.get(ConfigKey.SYSTEM_PROMPT.value),
+        "temperature": (
+            kwargs.get("temperature")
+            if "temperature" in kwargs
+            else config.get(ConfigKey.TEMPERATURE.value)
+        ),
+        "max_tokens": (
+            kwargs.get("max_tokens")
+            if "max_tokens" in kwargs
+            else config.get(ConfigKey.MAX_TOKENS.value)
+        ),
     }
 
-    # Validate streaming support
-    try:
-        if not config_manager.supports_feature(
-            effective_provider, Feature.STREAMING, effective_model
-        ):
-            logger.warning(
-                f"{effective_provider}/{effective_model} doesn't support streaming"
-            )
-            # Fall back to non-streaming
-            response = await ask(prompt, **kwargs)
-
-            # Track the response if session is available
-            await _track_ai_response(
-                session_manager, response, effective_model, effective_provider
-            )
-
-            if return_tool_calls:
-                yield {"response": response, "tool_calls": []}
-            else:
-                yield response
-            return
-    except Exception:
-        pass  # Unknown provider, proceed anyway
+    # Don't validate streaming support upfront - let provider handle it
+    # Models can be dynamic and capability checks may be outdated
 
     # Get client
     client = get_client(
-        provider=effective_config["provider"],
-        model=effective_config["model"],
-        api_key=effective_config["api_key"],
-        api_base=effective_config["api_base"],
+        provider=effective_config[ConfigKey.PROVIDER.value],
+        model=effective_config[ConfigKey.MODEL.value],
+        api_key=effective_config[ConfigKey.API_KEY.value],
+        api_base=effective_config[ConfigKey.API_BASE.value],
     )
 
     # Build messages
     messages = _build_messages(
         prompt=prompt,
-        system_prompt=effective_config.get("system_prompt"),
+        system_prompt=effective_config.get(ConfigKey.SYSTEM_PROMPT.value),
         tools=tools,
         provider=effective_provider,
         model=effective_model,
@@ -593,22 +668,13 @@ async def stream(
         "stream": True,
     }
 
-    # Add tools if supported
+    # Add tools if provided - permissive approach
+    # Let the provider/API handle unsupported cases rather than blocking
     if tools:
-        try:
-            # Check configuration-based tool support
-            if config_manager.supports_feature(
-                effective_provider, Feature.TOOLS, effective_model
-            ):
-                completion_args["tools"] = tools
-            else:
-                logger.debug(
-                    f"{effective_provider}/{effective_model} doesn't support tools according to configuration"
-                )
-
-        except Exception:
-            # Unknown provider/model in configuration, let the client handle it
-            completion_args["tools"] = tools
+        completion_args["tools"] = tools
+        logger.debug(
+            f"Passing {len(tools)} tools to {effective_provider}/{effective_model}"
+        )
 
     # Add JSON mode if requested and supported
     json_mode = kwargs.get("json_mode", False)
@@ -633,10 +699,10 @@ async def stream(
                 completion_args["response_format"] = {"type": "json_object"}
 
     # Add temperature and max_tokens
-    if effective_config.get("max_tokens") is not None:
-        completion_args["max_tokens"] = effective_config["max_tokens"]
-    if effective_config.get("temperature") is not None:
-        completion_args["temperature"] = effective_config["temperature"]
+    if effective_config.get(ConfigKey.MAX_TOKENS.value) is not None:
+        completion_args["max_tokens"] = effective_config[ConfigKey.MAX_TOKENS.value]
+    if effective_config.get(ConfigKey.TEMPERATURE.value) is not None:
+        completion_args["temperature"] = effective_config[ConfigKey.TEMPERATURE.value]
 
     # Remove parameters that we've already handled from completion_kwargs
     for param in [
@@ -661,8 +727,20 @@ async def stream(
             f"Starting streaming with {effective_provider}/{effective_model}, return_tool_calls={return_tool_calls}"
         )
 
+        # Convert dict messages/tools to Pydantic objects for type safety
+        pydantic_messages = _convert_dict_to_pydantic_messages(
+            completion_args["messages"]
+        )
+        pydantic_tools = _convert_dict_to_pydantic_tools(completion_args.get("tools"))
+
+        # Update completion_args with Pydantic objects
+        completion_args_pydantic = completion_args.copy()
+        completion_args_pydantic["messages"] = pydantic_messages
+        if pydantic_tools is not None:
+            completion_args_pydantic["tools"] = pydantic_tools
+
         # Call client.create_completion with stream=True - this returns an async generator
-        response_stream = client.create_completion(**completion_args)
+        response_stream = client.create_completion(**completion_args_pydantic)
 
         chunk_count = 0
 
@@ -1052,8 +1130,8 @@ def validate_request(
 ) -> dict[str, Any]:
     """Validate a request before sending"""
     config = get_current_config()
-    effective_provider = provider or config["provider"]
-    effective_model = model or config["model"]
+    effective_provider = provider or config[ConfigKey.PROVIDER.value]
+    effective_model = model or config[ConfigKey.MODEL.value]
 
     # Build fake messages to check for vision content
     messages = [{"role": "user", "content": prompt}]

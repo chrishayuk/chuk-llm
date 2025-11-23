@@ -158,7 +158,7 @@ def _sanitize_name(name: str) -> str:
 
 
 def _check_ollama_available_models(timeout: float | None = None) -> list[str]:
-    """Check what Ollama models are actually available locally (non-blocking)"""
+    """Check what Ollama models are actually available locally using registry system."""
     # Check if Ollama discovery is disabled
     if not _is_discovery_enabled("ollama"):
         logger.debug("Ollama discovery disabled by environment variable")
@@ -169,29 +169,38 @@ def _check_ollama_available_models(timeout: float | None = None) -> list[str]:
         timeout = float(os.getenv("CHUK_LLM_DISCOVERY_QUICK_TIMEOUT", "2.0"))
 
     try:
-        import httpx
+        # Use the registry system's OllamaSource for discovery
+        from chuk_llm.registry import OllamaSource
 
-        # Quick check with timeout
-        with httpx.Client(timeout=timeout) as client:
-            try:
-                response = client.get("http://localhost:11434/api/tags")
-                if response.status_code == 200:
-                    data = response.json()
-                    available = [model["name"] for model in data.get("models", [])]
-                    logger.debug(f"Found {len(available)} available Ollama models")
-                    return available
-            except (httpx.ConnectError, httpx.TimeoutException):
-                logger.debug("Ollama not available or timeout - skipping model check")
-                return []
-            except Exception as e:
-                logger.debug(f"Error checking Ollama models: {e}")
-                return []
+        async def discover_ollama():
+            source = OllamaSource(timeout=timeout)
+            specs = await source.discover()
+            return [spec.name for spec in specs]
 
-    except ImportError:
-        logger.debug("httpx not available - skipping Ollama model check")
+        # Run the async discovery
+        import asyncio
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Can't run in an already-running loop
+                logger.debug("Event loop already running - skipping Ollama check")
+                return []
+            else:
+                models = loop.run_until_complete(discover_ollama())
+                logger.debug(
+                    f"Found {len(models)} available Ollama models via registry"
+                )
+                return models
+        except RuntimeError:
+            # No event loop available, create one
+            models = asyncio.run(discover_ollama())
+            logger.debug(f"Found {len(models)} available Ollama models via registry")
+            return models
+
+    except Exception as e:
+        logger.debug(f"Error checking Ollama models via registry: {e}")
         return []
-
-    return []
 
 
 def _ensure_provider_models_current(provider_name: str) -> list[str]:
@@ -230,51 +239,20 @@ def _ensure_provider_models_current(provider_name: str) -> list[str]:
             )
             return all_models
 
-        # For Ollama, also query the API directly to get current models
+        # For Ollama, use registry system to get current models
         if provider_name == "ollama":
             try:
-                import asyncio
-
-                import httpx
-
-                async def get_ollama_models():
-                    try:
-                        timeout = float(os.getenv("CHUK_LLM_DISCOVERY_TIMEOUT", "3"))
-                        async with httpx.AsyncClient(timeout=timeout) as client:
-                            response = await client.get(
-                                "http://localhost:11434/api/tags"
-                            )
-                            if response.status_code == 200:
-                                data = response.json()
-                                return [
-                                    model["name"] for model in data.get("models", [])
-                                ]
-                    except Exception:
-                        return []
-                    return []
-
-                # Get current models from Ollama API
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        # If we're in an async context, skip the API call to avoid blocking
-                        pass
-                    else:
-                        ollama_models = loop.run_until_complete(get_ollama_models())
-                        if ollama_models:
-                            # Merge with existing models
-                            all_models = list(
-                                set(provider_config.models + ollama_models)
-                            )
-                            provider_config.models = all_models
-                            logger.debug(
-                                f"Updated Ollama models: {len(all_models)} total"
-                            )
-                except Exception:
-                    # If async fails, continue with existing models
-                    pass
-            except ImportError:
-                # httpx not available, continue with existing models
+                ollama_models = _check_ollama_available_models()
+                if ollama_models:
+                    # Merge with existing models
+                    all_models = list(set(provider_config.models + ollama_models))
+                    provider_config.models = all_models
+                    logger.debug(
+                        f"Updated Ollama models via registry: {len(all_models)} total"
+                    )
+            except Exception as e:
+                logger.debug(f"Error updating Ollama models: {e}")
+                # Continue with existing models
                 pass
 
         # Check if discovery is enabled
@@ -525,6 +503,7 @@ def _create_provider_function(
                         return _run_sync(
                             provider_model_func_async(prompt, image, **kwargs)
                         )
+
         else:
 
             async def provider_model_func_async(prompt: str, **kwargs) -> str:
@@ -605,6 +584,7 @@ def _create_provider_function(
                         return _run_sync(
                             provider_func_async(prompt, image, model, **kwargs)
                         )
+
         else:
 
             async def provider_func_async(
@@ -660,6 +640,7 @@ def _create_stream_function(
                     prompt, provider=provider_name, model=model_name, **kwargs
                 ):
                     yield chunk
+
         else:
 
             async def stream_model_func(prompt: str, **kwargs) -> AsyncIterator[str]:
@@ -691,6 +672,7 @@ def _create_stream_function(
                     prompt, provider=provider_name, model=model, **kwargs
                 ):
                     yield chunk
+
         else:
 
             async def stream_func(
@@ -726,6 +708,7 @@ def _create_sync_function(
                 return _run_sync(
                     ask(prompt, provider=provider_name, model=model_name, **kwargs)
                 )
+
         else:
 
             def sync_model_func(prompt: str, **kwargs) -> str:
@@ -755,6 +738,7 @@ def _create_sync_function(
                     )
                     kwargs["messages"] = [vision_message]
                 return _run_sync(ask(prompt, provider=provider_name, **kwargs))
+
         else:
 
             def sync_func(prompt: str, model: str | None = None, **kwargs) -> str:
@@ -806,6 +790,7 @@ def _create_global_alias_function(
                 kwargs["messages"] = [vision_message]
             async for chunk in stream(prompt, provider=provider, model=model, **kwargs):
                 yield chunk
+
     else:
 
         async def alias_func(prompt: str, **kwargs) -> str:
@@ -1134,9 +1119,132 @@ def _generate_static_functions():
     return functions
 
 
+def _generate_family_aliases():
+    """
+    Generate family-based convenience function aliases.
+
+    Allows users to type:
+    - ask_claude instead of ask_anthropic
+    - ask_gpt instead of ask_openai (for GPT models)
+    - ask_granite, ask_llama, ask_gemma (for Ollama model families)
+    - ask_gpt_4, ask_gpt_5 (for specific GPT generations)
+    """
+    config_manager = get_config()
+    aliases = {}
+
+    # Provider-level family aliases
+    family_mappings = {
+        # Anthropic -> Claude
+        "claude": ("anthropic", None),  # ask_claude -> ask_anthropic with default model
+        "claude_sonnet": ("anthropic", "claude-sonnet-4-5"),  # Latest Sonnet
+        "claude_opus": ("anthropic", "claude-opus-4-1"),  # Latest Opus
+        "claude_haiku": ("anthropic", "claude-haiku-4-5"),  # Latest Haiku
+        "sonnet": ("anthropic", "claude-sonnet-4-5"),  # Short alias
+        "opus": ("anthropic", "claude-opus-4-1"),  # Short alias
+        "haiku": ("anthropic", "claude-haiku-4-5"),  # Short alias
+        # OpenAI GPT families
+        "gpt": ("openai", None),  # ask_gpt -> ask_openai with default model
+        "gpt_4": ("openai", "gpt-4o"),  # ask_gpt_4 -> GPT-4o (latest GPT-4)
+        "gpt_5": ("openai", "gpt-5"),  # ask_gpt_5 -> GPT-5 (if available)
+        "gpt_4o": ("openai", "gpt-4o"),
+        # Gemini
+        "gemini": ("gemini", None),
+        # Mistral AI (provider-level)
+        "mistral": ("mistral", None),  # Uses default mistral-medium-latest
+        # Groq - using GPT-OSS as default
+        "groq": ("groq", "openai/gpt-oss-20b"),  # Fast inference with GPT-OSS
+        "gpt_oss": ("groq", "openai/gpt-oss-20b"),  # GPT-OSS 20B
+        "gpt_oss_120": ("groq", "openai/gpt-oss-120b"),  # GPT-OSS 120B
+        # WatsonX / IBM - using latest Granite 3.3
+        "watsonx": ("watsonx", "ibm/granite-3-3-8b-instruct"),  # Latest Granite 3.3
+        "ibm": ("watsonx", "ibm/granite-3-3-8b-instruct"),  # IBM alias
+    }
+
+    # Add Ollama model family aliases (granite, llama, mistral, etc.)
+    try:
+        ollama_config = config_manager.get_provider("ollama")
+        ollama_models = _get_safe_models_for_provider("ollama", ollama_config)
+
+        # Track families we've seen to avoid duplicates
+        seen_families = set()
+
+        for model in ollama_models:
+            # Extract family from model name (e.g., "granite3-dense:8b" -> "granite")
+            family = None
+            model_lower = model.lower()
+
+            # Common Ollama families
+            if "granite" in model_lower:
+                family = "granite"
+            elif "llama" in model_lower:
+                family = "llama"
+            elif "mistral" in model_lower:
+                family = "mistral"
+            elif "gemma" in model_lower:
+                family = "gemma"
+            elif "qwen" in model_lower:
+                family = "qwen"
+            elif "phi" in model_lower:
+                family = "phi"
+            elif "deepseek" in model_lower:
+                family = "deepseek"
+            elif "moonshot" in model_lower or "kimi" in model_lower:
+                family = "moonshot"
+            elif "codellama" in model_lower:
+                family = "codellama"
+
+            # Add family alias if found and not already added
+            if family and family not in seen_families:
+                seen_families.add(family)
+                # Use the first model we find for this family as the default
+                family_mappings[family] = ("ollama", model)
+
+    except (ValueError, KeyError):
+        pass  # Ollama not configured
+
+    # Generate ask/stream/sync variants for each family
+    for family_name, (provider, model) in family_mappings.items():
+        try:
+            provider_config = config_manager.get_provider(provider)
+
+            # Determine vision support
+            if model:
+                model_caps = provider_config.get_model_capabilities(model)
+                supports_vision = Feature.VISION in model_caps.features
+            else:
+                supports_vision = Feature.VISION in provider_config.features
+
+            # Create the three function variants
+            aliases[f"ask_{family_name}"] = _create_provider_function(
+                provider, model, supports_vision
+            )
+            aliases[f"stream_{family_name}"] = _create_stream_function(
+                provider, model, supports_vision
+            )
+            aliases[f"ask_{family_name}_sync"] = _create_sync_function(
+                provider, model, supports_vision
+            )
+
+            logger.debug(
+                f"Created family alias: ask_{family_name} -> {provider}/{model or 'default'}"
+            )
+
+        except Exception as e:
+            logger.debug(f"Could not create family alias for {family_name}: {e}")
+            continue
+
+    return aliases
+
+
 def _generate_functions():
     """Generate all provider functions from YAML config"""
-    return _generate_static_functions()
+    static_functions = _generate_static_functions()
+    family_aliases = _generate_family_aliases()
+
+    # Merge family aliases into static functions (static functions take precedence)
+    all_functions = {**family_aliases, **static_functions}
+
+    return all_functions
 
 
 def _create_utility_functions():

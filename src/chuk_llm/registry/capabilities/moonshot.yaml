@@ -1,0 +1,115 @@
+# Moonshot AI (Kimi) Model Capabilities
+# Capabilities for models available on Moonshot AI platform
+
+provider: moonshot
+last_updated: '2025-01-23'
+families: {}
+models:
+  # Kimi K2 Models - Latest generation with advanced capabilities
+  "kimi-k2-turbo-preview":
+    tested_at: '2025-01-23'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    max_context: 256000  # 256K context window
+    max_output_tokens: 32000
+
+  "kimi-k2-0905-preview":
+    inherits_from: "kimi-k2-turbo-preview"
+    tested_at: '2025-01-23'
+    max_context: 256000
+
+  # Kimi K2 Thinking Models - Long-term reasoning capabilities
+  "kimi-k2-thinking":
+    tested_at: '2025-01-23'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    supports_reasoning: true
+    max_context: 256000
+    max_output_tokens: 32000
+
+  "kimi-k2-thinking-turbo":
+    inherits_from: "kimi-k2-thinking"
+    tested_at: '2025-01-23'
+
+  # Legacy Kimi K2 Models
+  "kimi-k2-0711-preview":
+    inherits_from: "kimi-k2-turbo-preview"
+    tested_at: '2025-01-23'
+
+  # Moonshot v1 Models - Legacy models
+  "moonshot-v1-8k":
+    tested_at: '2025-01-23'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: 8192
+    max_output_tokens: 4096
+
+  "moonshot-v1-32k":
+    inherits_from: "moonshot-v1-8k"
+    tested_at: '2025-01-23'
+    max_context: 32768
+
+  "moonshot-v1-128k":
+    inherits_from: "moonshot-v1-8k"
+    tested_at: '2025-01-23'
+    max_context: 131072
+
+  "moonshot-v1-auto":
+    inherits_from: "moonshot-v1-128k"
+    tested_at: '2025-01-23'
+
+  # Moonshot v1 Vision Models
+  "moonshot-v1-8k-vision-preview":
+    tested_at: '2025-01-23'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: true
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: 8192
+    max_output_tokens: 4096
+
+  "moonshot-v1-32k-vision-preview":
+    inherits_from: "moonshot-v1-8k-vision-preview"
+    tested_at: '2025-01-23'
+    max_context: 32768
+
+  "moonshot-v1-128k-vision-preview":
+    inherits_from: "moonshot-v1-8k-vision-preview"
+    tested_at: '2025-01-23'
+    max_context: 131072
+
+  # Kimi Latest - Matches kimi.com K1.5 assistant experience
+  "kimi-latest":
+    tested_at: '2025-01-23'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: true
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    max_context: 256000
+    max_output_tokens: 32000

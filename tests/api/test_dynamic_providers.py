@@ -16,6 +16,7 @@ from chuk_llm.api.dynamic_providers import (
     unregister_provider,
     update_provider,
 )
+from chuk_llm.configuration.models import Feature
 from chuk_llm.configuration.unified_config import get_config, reset_config
 
 
@@ -85,8 +86,8 @@ class TestDynamicProviderRegistration:
             provider.client_class
             == "chuk_llm.llm.providers.openai_client.OpenAILLMClient"
         )
-        assert "text" in provider.extra.get("features", [])
-        assert "streaming" in provider.extra.get("features", [])
+        assert Feature.TEXT in provider.features
+        assert Feature.STREAMING in provider.features
 
         # Check API base resolution
         resolved_base = self.config.get_api_base("test_openai")
@@ -101,7 +102,7 @@ class TestDynamicProviderRegistration:
         base = register_provider(
             name="base_provider",
             api_base="https://base.api.com/v1",
-            client_class="chuk_llm.llm.providers.openai_client.OpenAILLMClient",
+            client_class="chuk_llm.llm.providers.openai_client:OpenAILLMClient",  # Use colon format
             models=["base-model"],
             features=["text", "streaming"],
         )
@@ -142,7 +143,8 @@ class TestDynamicProviderRegistration:
         assert updated.api_base == "https://updated.com/v1"
         assert updated.models == ["model1", "model2", "model3"]
         assert updated.default_model == "model2"
-        assert updated.extra.get("new_feature") == "test_value"
+        # With Pydantic extra="allow", unknown fields become attributes
+        assert getattr(updated, "new_feature", None) == "test_value"
 
     def test_update_nonexistent_provider(self):
         """Test updating a provider that doesn't exist."""
@@ -270,12 +272,12 @@ class TestDynamicProviderRegistration:
         )
 
         # Check features are stored
-        assert provider.extra.get("features") == [
-            "text",
-            "streaming",
-            "tools",
-            "vision",
-        ]
+        assert provider.features == {
+            Feature.TEXT,
+            Feature.STREAMING,
+            Feature.TOOLS,
+            Feature.VISION,
+        }
 
     def test_extra_kwargs_storage(self):
         """Test extra kwargs are stored properly."""
@@ -363,7 +365,7 @@ class TestOpenAICompatibleRegistration:
 
         # Check configuration
         assert provider.name == "openai_test2"
-        assert provider.extra.get("api_base_env") == "CUSTOM_ENDPOINT"
+        assert provider.api_base_env == "CUSTOM_ENDPOINT"  # Now a proper field, not in extra
 
         # Check resolution
         resolved = self.config.get_api_base("openai_test2")
@@ -391,6 +393,42 @@ class TestOpenAICompatibleRegistration:
         resolved = self.config.get_api_base("openai_test3")
         assert resolved == "https://default.api.com/v1"
 
+    def test_register_with_auto_detected_env(self):
+        """Test registration with auto-detected environment variable."""
+        # Set environment variables that should be auto-detected
+        os.environ["MYAPI_API_BASE"] = "https://myapi.example.com/v1"
+
+        try:
+            provider = register_openai_compatible(
+                name="myapi",
+                models=["model1"]
+            )
+
+            # Should auto-detect MYAPI_API_BASE environment variable
+            assert provider.api_base_env == "MYAPI_API_BASE"
+            resolved = self.config.get_api_base("myapi")
+            assert resolved == "https://myapi.example.com/v1"
+        finally:
+            del os.environ["MYAPI_API_BASE"]
+
+    def test_register_with_auto_detected_base_url_env(self):
+        """Test registration with auto-detected BASE_URL environment variable."""
+        # Set alternative pattern environment variable
+        os.environ["MYAPI2_BASE_URL"] = "https://myapi2.example.com/v1"
+
+        try:
+            provider = register_openai_compatible(
+                name="myapi2",
+                models=["model1"]
+            )
+
+            # Should auto-detect MYAPI2_BASE_URL environment variable
+            assert provider.api_base_env == "MYAPI2_BASE_URL"
+            resolved = self.config.get_api_base("myapi2")
+            assert resolved == "https://myapi2.example.com/v1"
+        finally:
+            del os.environ["MYAPI2_BASE_URL"]
+
     def test_default_models(self):
         """Test default models when none specified."""
         provider = register_openai_compatible(
@@ -411,12 +449,11 @@ class TestOpenAICompatibleRegistration:
         )
 
         # Should have OpenAI features
-        features = provider.extra.get("features", [])
-        assert "text" in features
-        assert "streaming" in features
-        assert "system_messages" in features
-        assert "tools" in features
-        assert "json_mode" in features
+        assert Feature.TEXT in provider.features
+        assert Feature.STREAMING in provider.features
+        assert Feature.SYSTEM_MESSAGES in provider.features
+        assert Feature.TOOLS in provider.features
+        assert Feature.JSON_MODE in provider.features
 
     def test_extra_kwargs_passed_through(self):
         """Test that extra kwargs are passed through."""

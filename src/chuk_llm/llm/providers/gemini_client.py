@@ -13,6 +13,7 @@ UNIVERSAL COMPATIBILITY: Full integration with ToolCompatibilityMixin for seamle
 from __future__ import annotations
 
 import base64
+import contextlib
 import functools
 import json
 import logging
@@ -27,6 +28,9 @@ from typing import Any
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types as gtypes
+
+# core
+from chuk_llm.core.enums import Feature
 
 # providers
 from chuk_llm.llm.core.base import BaseLLMClient
@@ -290,16 +294,24 @@ AVAILABLE_GEMINI_MODELS = {
 
 
 def validate_and_map_model(requested_model: str) -> str:
-    """Validate model name against available models"""
-    if requested_model in AVAILABLE_GEMINI_MODELS:
-        return requested_model
+    """
+    Permissive model validation - accept any model name and let the API handle it.
 
-    # If not found, raise an error with available models
-    available_list = ", ".join(sorted(AVAILABLE_GEMINI_MODELS))
-    raise ValueError(
-        f"Model '{requested_model}' not available for provider 'gemini'. "
-        f"Available: [{available_list}]"
-    )
+    This allows new models to work automatically without code changes.
+    If the model is invalid, the Gemini API will return a clear error.
+    """
+    # Log a warning if model not in known list, but don't block it
+    if requested_model not in AVAILABLE_GEMINI_MODELS:
+        import logging
+
+        log = logging.getLogger(__name__)
+        log.debug(
+            f"Model '{requested_model}' not in known models list. "
+            f"Attempting to use it anyway (permissive approach). "
+            f"Known models: {sorted(AVAILABLE_GEMINI_MODELS)}"
+        )
+
+    return requested_model
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -622,23 +634,33 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
                 {
                     # Universal tool compatibility info
                     **tool_compatibility,
-                    "supports_function_calling": self.supports_feature("tools"),
-                    "supports_streaming": self.supports_feature("streaming"),
-                    "supports_vision": self.supports_feature("vision"),
-                    "supports_json_mode": self.supports_feature("json_mode"),
+                    "supports_function_calling": self.supports_feature(
+                        Feature.TOOLS.value
+                    ),
+                    "supports_streaming": self.supports_feature(
+                        Feature.STREAMING.value
+                    ),
+                    "supports_vision": self.supports_feature(Feature.VISION.value),
+                    "supports_json_mode": self.supports_feature(
+                        Feature.JSON_MODE.value
+                    ),
                     "supports_system_messages": self.supports_feature(
-                        "system_messages"
+                        Feature.SYSTEM_MESSAGES.value
                     ),
                     "gemini_specific": {
-                        "context_length": "2M tokens"
-                        if "2.5" in self.model
-                        else ("2M tokens" if "2.0" in self.model else "1M tokens"),
+                        "context_length": (
+                            "2M tokens"
+                            if "2.5" in self.model
+                            else ("2M tokens" if "2.0" in self.model else "1M tokens")
+                        ),
                         "model_family": self._detect_model_family(),
                         "experimental_features": "2.0" in self.model
                         or "2.5" in self.model,
                         "warning_suppression": "ultimate",
                         "enhanced_reasoning": "2.5" in self.model,
-                        "supports_function_calling": self.supports_feature("tools"),
+                        "supports_function_calling": self.supports_feature(
+                            Feature.TOOLS.value
+                        ),
                         "data_loss_protection": "enabled",
                     },
                     "vision_format": "universal_image_url",
@@ -745,19 +767,33 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
     def _check_json_mode(self, kwargs: dict[str, Any]) -> str | None:
         """Check if JSON mode is requested and return appropriate system instruction"""
         # Only proceed if the model supports JSON mode according to config
-        if not self.supports_feature("json_mode"):
+        if not self.supports_feature(Feature.JSON_MODE.value):
             log.debug(
                 f"Model {self.model} does not support JSON mode according to configuration"
             )
             return None
 
         # Check for OpenAI-style response_format
+        from chuk_llm.core import ResponseFormat
+
         response_format = kwargs.get("response_format")
-        if (
-            isinstance(response_format, dict)
-            and response_format.get("type") == "json_object"
-        ):
-            return "You must respond with valid JSON only. No markdown code blocks, no explanations, no text before or after. Just pure, valid JSON."
+        if response_format:
+            # Validate with Pydantic if it's a dict
+            if isinstance(response_format, dict):
+                with contextlib.suppress(Exception):
+                    response_format = ResponseFormat.model_validate(response_format)
+
+            # Check type regardless of whether it's dict or ResponseFormat
+            format_type = (
+                response_format.type
+                if isinstance(response_format, ResponseFormat)
+                else response_format.get("type")
+                if isinstance(response_format, dict)
+                else None
+            )
+
+            if format_type == "json_object":
+                return "You must respond with valid JSON only. No markdown code blocks, no explanations, no text before or after. Just pure, valid JSON."
 
         # Check for _json_mode_instruction from provider adapter
         json_instruction = kwargs.get("_json_mode_instruction")
@@ -851,32 +887,35 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
         contents: list[Any] = []
 
         for msg in messages:
-            role = msg.get("role")
+            role = _safe_get(msg, "role")
 
             if role == "system":
-                sys_txt.append(msg.get("content", ""))
+                sys_txt.append(_safe_get(msg, "content", ""))
                 continue
 
             # assistant function calls → need to be handled in tool result flow
-            if role == "assistant" and msg.get("tool_calls"):
+            if role == "assistant" and _safe_get(msg, "tool_calls"):
                 # Convert to text description for now
                 tool_text = "Assistant called functions: "
-                for tc in msg["tool_calls"]:
-                    fn = tc["function"]
-                    tool_text += f"{fn['name']}({fn.get('arguments', '{}')}) "
+                tool_calls = _safe_get(msg, "tool_calls")
+                for tc in tool_calls:
+                    fn = _safe_get(tc, "function")
+                    fn_name = _safe_get(fn, "name")
+                    fn_args = _safe_get(fn, "arguments", "{}")
+                    tool_text += f"{fn_name}({fn_args}) "
                 contents.append(tool_text)
                 continue
 
             # tool response → convert to user message
             if role == "tool":
-                tool_result = msg.get("content") or ""
-                fn_name = msg.get("name", "tool")
+                tool_result = _safe_get(msg, "content") or ""
+                fn_name = _safe_get(msg, "name", "tool")
                 contents.append(f"Tool {fn_name} returned: {tool_result}")
                 continue
 
             # normal / multimodal messages with universal vision support
             if role in {"user", "assistant"}:
-                cont = msg.get("content")
+                cont = _safe_get(msg, "content")
                 if cont is None:
                     continue
 
@@ -884,56 +923,34 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
                     # Simple text content
                     contents.append(cont)
                 elif isinstance(cont, list):
-                    # Multimodal content - check if vision is supported
-                    has_vision_content = any(
-                        isinstance(item, dict) and item.get("type") == "image_url"
-                        for item in cont
-                    )
-
-                    if has_vision_content and not self.supports_feature("vision"):
-                        log.warning(
-                            f"Vision content detected but model {self.model} doesn't support vision according to configuration"
-                        )
-                        # Convert to text-only by filtering out images
-                        text_only_content = [
-                            item.get("text", str(item))
-                            for item in cont
-                            if not (
-                                isinstance(item, dict)
-                                and item.get("type") == "image_url"
-                            )
-                        ]
-                        if text_only_content:
-                            contents.append(" ".join(text_only_content))
-                        continue
-
+                    # Permissive approach: Process all multimodal content (text, vision, audio)
+                    # Let Gemini API handle unsupported cases rather than filtering
                     # Process multimodal content with proper Gemini format
                     gemini_parts = []
                     for item in cont:
-                        if isinstance(item, dict):
-                            if item.get("type") == "text":
-                                gemini_parts.append(item.get("text", ""))
-                            elif item.get("type") == "image_url":
-                                # Convert to Gemini format
-                                try:
-                                    gemini_image = await self._convert_universal_vision_to_gemini_async(
-                                        item
-                                    )
-                                    if "inline_data" in gemini_image:
-                                        gemini_parts.append(gemini_image)
-                                    else:
-                                        # Fallback to text if conversion failed
-                                        gemini_parts.append(
-                                            gemini_image.get(
-                                                "text", "[Image processing failed]"
-                                            )
+                        item_type = _safe_get(item, "type")
+                        if item_type == "text":
+                            gemini_parts.append(_safe_get(item, "text", ""))
+                        elif item_type == "image_url":
+                            # Convert to Gemini format
+                            try:
+                                gemini_image = await self._convert_universal_vision_to_gemini_async(
+                                    item
+                                )
+                                if "inline_data" in gemini_image:
+                                    gemini_parts.append(gemini_image)
+                                else:
+                                    # Fallback to text if conversion failed
+                                    gemini_parts.append(
+                                        gemini_image.get(
+                                            "text", "[Image processing failed]"
                                         )
-                                except Exception as e:
-                                    log.warning(f"Failed to convert image: {e}")
-                                    gemini_parts.append("[Image conversion failed]")
-                            else:
-                                gemini_parts.append(str(item))
+                                    )
+                            except Exception as e:
+                                log.warning(f"Failed to convert image: {e}")
+                                gemini_parts.append("[Image conversion failed]")
                         else:
+                            # Other content types - pass through (shouldn't reach here normally)
                             gemini_parts.append(str(item))
 
                     # Add the multimodal content as a structured message
@@ -947,8 +964,8 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
 
     def create_completion(
         self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        messages: list,  # Pydantic Message objects
+        tools: list | None = None,  # Pydantic Tool objects
         *,
         stream: bool = False,
         max_tokens: int | None = None,
@@ -957,6 +974,10 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
     ) -> AsyncIterator[dict[str, Any]] | Any:
         """
         Configuration-aware completion generation with universal tool name compatibility.
+
+        Args:
+            messages: List of Pydantic Message objects
+            tools: List of Pydantic Tool objects
 
         Uses configuration to validate:
         - Tool support before processing tools
@@ -970,29 +991,42 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
         - database.sql.execute -> database_sql_execute (sanitized and restored)
         """
 
-        # Validate capabilities using configuration
-        if tools and not self.supports_feature("tools"):
-            log.warning(
-                f"Tools provided but model {self.model} doesn't support tools according to configuration"
-            )
-            tools = None
+        # Handle backward compatibility
+        from chuk_llm.llm.core.base import (
+            _ensure_pydantic_messages,
+            _ensure_pydantic_tools,
+        )
 
-        if stream and not self.supports_feature("streaming"):
-            log.warning(
-                f"Streaming requested but model {self.model} doesn't support streaming according to configuration"
-            )
-            stream = False
+        messages = _ensure_pydantic_messages(messages)
+        tools = _ensure_pydantic_tools(tools)
+
+        # Convert Pydantic to dicts
+        dict_messages = [msg.to_dict() for msg in messages]
+
+        # Permissive approach: Let Gemini API handle unsupported features
+        # Don't block based on capability checks - dynamic models should work
 
         # Apply universal tool name sanitization (stores mapping for restoration)
+        # Keep tools as Pydantic models through sanitization, then convert to dicts
         name_mapping = {}
+        dict_tools = None
         if tools:
-            tools = self._sanitize_tool_names(tools)
+            from chuk_llm.core.models import Tool as ToolModel
+
+            sanitized_tools = self._sanitize_tool_names(tools)
+            # After sanitization, tools are always Pydantic Tool models
+            assert isinstance(sanitized_tools, list) and all(
+                isinstance(t, ToolModel) for t in sanitized_tools
+            )
+
             name_mapping = self._current_name_mapping
             log.debug(
                 f"Tool sanitization: {len(name_mapping)} tools processed for Gemini compatibility"
             )
+            # Convert Pydantic models back to dicts for Gemini format conversion
+            dict_tools = [tool.model_dump() for tool in sanitized_tools]  # type: ignore[union-attr]
 
-        gemini_tools = _convert_tools_to_gemini_format(tools)
+        gemini_tools = _convert_tools_to_gemini_format(dict_tools)
 
         # Check for JSON mode (using configuration validation)
         json_instruction = self._check_json_mode(extra)
@@ -1007,7 +1041,7 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
             return self._stream_completion_async(
                 system,
                 json_instruction,
-                messages,
+                dict_messages,
                 gemini_tools,
                 filtered_params,
                 name_mapping,
@@ -1017,7 +1051,7 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
         return self._regular_completion_async(
             system,
             json_instruction,
-            messages,
+            dict_messages,
             gemini_tools,
             filtered_params,
             name_mapping,
@@ -1065,7 +1099,9 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
         config = None
         if config_params:
             try:
-                if final_system and self.supports_feature("system_messages"):
+                if final_system and self.supports_feature(
+                    Feature.SYSTEM_MESSAGES.value
+                ):
                     config_params["system_instruction"] = final_system
 
                 config = gtypes.GenerateContentConfig(**config_params)
@@ -1285,7 +1321,9 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
             config = None
             if config_params:
                 try:
-                    if final_system and self.supports_feature("system_messages"):
+                    if final_system and self.supports_feature(
+                        Feature.SYSTEM_MESSAGES.value
+                    ):
                         config_params["system_instruction"] = final_system
 
                     config = gtypes.GenerateContentConfig(**config_params)
@@ -1310,7 +1348,9 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
                 combined_content = "Hello"
 
             # Prepend system instruction if not supported in config
-            if final_system and not self.supports_feature("system_messages"):
+            if final_system and not self.supports_feature(
+                Feature.SYSTEM_MESSAGES.value
+            ):
                 if isinstance(combined_content, list):
                     combined_content.insert(0, f"System: {final_system}\n\nUser: ")
                 else:
@@ -1346,7 +1386,7 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
         tool_calls = []  # type: ignore[var-annotated]
 
         # Only extract tool calls if tools are supported
-        if not self.supports_feature("tools"):
+        if not self.supports_feature(Feature.TOOLS.value):
             return tool_calls
 
         try:

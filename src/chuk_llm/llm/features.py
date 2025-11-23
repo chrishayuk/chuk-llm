@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from chuk_llm.configuration import Feature, get_config
+from chuk_llm.llm.core.base import _ensure_pydantic_messages, _ensure_pydantic_tools
 
 logger = logging.getLogger(__name__)
 
@@ -82,14 +83,11 @@ class ProviderAdapter:
     def enable_streaming(
         provider: str, model: str | None, kwargs: dict[str, Any]
     ) -> dict[str, Any]:
-        """Enable streaming with feature validation"""
+        """Enable streaming - let the provider handle unsupported cases"""
         kwargs = kwargs.copy()
 
-        if not ProviderAdapter.supports_feature(provider, Feature.STREAMING, model):
-            logger.warning(f"{provider}/{model} doesn't support streaming")
-            kwargs["stream"] = False
-            return kwargs
-
+        # Don't check capabilities here - models can be dynamic
+        # Let the provider itself handle streaming support
         kwargs["stream"] = True
         return kwargs
 
@@ -346,9 +344,15 @@ class UnifiedLLMInterface:
             self.provider, self.model, tools or []
         )
 
-        # Make the request
-        return await self.client.create_completion(  # type: ignore[misc]
-            processed_messages, tools=processed_tools, **kwargs
+        # Convert to Pydantic models for type safety
+        pydantic_messages = _ensure_pydantic_messages(processed_messages)
+        pydantic_tools = (
+            _ensure_pydantic_tools(processed_tools) if processed_tools else None
+        )
+
+        # Make the request (returns AsyncIterator for streaming, or response dict for non-streaming)
+        return self.client.create_completion(
+            pydantic_messages, tools=pydantic_tools, **kwargs
         )
 
     async def simple_chat(self, message: str, **kwargs) -> str:
@@ -453,9 +457,7 @@ async def find_best_provider_for_task(
     feature_set.add(Feature.TEXT)
 
     # Find best provider
-    best_provider = CapabilityChecker.get_best_provider_for_features(
-        feature_set, exclude=set(exclude_providers)
-    )
+    best_provider = CapabilityChecker.get_best_provider_for_features(list(feature_set))
 
     if not best_provider:
         return None

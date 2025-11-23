@@ -21,10 +21,14 @@ import logging
 import os
 import uuid
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import openai
 
+if TYPE_CHECKING:
+    from chuk_llm.core.models import Message, Tool
+
+from chuk_llm.core.constants import AzureOpenAIParam
 from chuk_llm.llm.providers._config_mixin import ConfigAwareProviderMixin
 
 # mixins
@@ -78,8 +82,9 @@ class AzureOpenAILLMClient(
 
         # Azure OpenAI client configuration
         client_kwargs = {
-            "api_version": self.api_version,
-            "azure_endpoint": azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT"),
+            AzureOpenAIParam.API_VERSION.value: self.api_version,
+            AzureOpenAIParam.AZURE_ENDPOINT.value: azure_endpoint
+            or os.getenv("AZURE_OPENAI_ENDPOINT"),
         }
 
         # Authentication - priority order: token provider > token > api key
@@ -88,16 +93,22 @@ class AzureOpenAILLMClient(
         elif azure_ad_token:
             client_kwargs["azure_ad_token"] = azure_ad_token
         else:
-            client_kwargs["api_key"] = api_key or os.getenv("AZURE_OPENAI_API_KEY")
+            client_kwargs[AzureOpenAIParam.API_KEY.value] = api_key or os.getenv(
+                "AZURE_OPENAI_API_KEY"
+            )
 
         # Validate required parameters
-        if not client_kwargs.get("azure_endpoint"):
+        if not client_kwargs.get(AzureOpenAIParam.AZURE_ENDPOINT.value):
             raise ValueError(
                 "azure_endpoint is required for Azure OpenAI. Set AZURE_OPENAI_ENDPOINT or pass azure_endpoint parameter."
             )
 
         if not any(
-            [azure_ad_token_provider, azure_ad_token, client_kwargs.get("api_key")]
+            [
+                azure_ad_token_provider,
+                azure_ad_token,
+                client_kwargs.get(AzureOpenAIParam.API_KEY.value),
+            ]
         ):
             raise ValueError(
                 "Authentication required: provide api_key, azure_ad_token, or azure_ad_token_provider"
@@ -189,12 +200,16 @@ class AzureOpenAILLMClient(
             for pattern in ["o1", "o3", "o4", "o5", "gpt-5", "gpt5"]
         ):
             return {
-                "max_context_length": 272000
-                if "gpt-5" in deployment_lower or "gpt5" in deployment_lower
-                else 200000,
-                "max_output_tokens": 16384
-                if "gpt-5" in deployment_lower or "gpt5" in deployment_lower
-                else 65536,
+                "max_context_length": (
+                    272000
+                    if "gpt-5" in deployment_lower or "gpt5" in deployment_lower
+                    else 200000
+                ),
+                "max_output_tokens": (
+                    16384
+                    if "gpt-5" in deployment_lower or "gpt5" in deployment_lower
+                    else 65536
+                ),
                 "requires_max_completion_tokens": True,
                 "parameter_mapping": {"max_tokens": "max_completion_tokens"},
                 "unsupported_params": [
@@ -394,67 +409,121 @@ class AzureOpenAILLMClient(
 
     def _validate_request_with_config(
         self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        messages: list[Message],
+        tools: list[Any] | None = None,
         stream: bool = False,
         **kwargs,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]] | None, bool, dict[str, Any]]:
+    ) -> tuple[list[Message], list[Any] | None, bool, dict[str, Any]]:
         """
         Enhanced validation that uses smart defaults for unknown deployments.
         FIXED: Actually disable streaming when not supported.
         """
-        validated_messages = messages
-        validated_tools = tools
+        # Import here to avoid circular imports
+        from chuk_llm.core.models import Message as MessageModel
+        from chuk_llm.core.models import Tool as ToolModel
+
+        # Convert to Pydantic if needed
+        def _convert_content_item(item):
+            """Convert content item (for multimodal messages) to dict if needed."""
+            if isinstance(item, dict):
+                return item
+            # Handle objects with attributes
+            return dict(vars(item).items())
+
+        def _convert_message(msg):
+            if isinstance(msg, MessageModel):
+                return msg
+            elif isinstance(msg, dict):
+                return MessageModel.model_validate(msg)
+            else:
+                # Handle objects with attributes (convert to dict first)
+                content = getattr(msg, "content", None)
+                # Convert content list items if needed
+                if isinstance(content, list):
+                    content = [_convert_content_item(item) for item in content]
+
+                msg_dict = {
+                    "role": getattr(msg, "role", None),
+                    "content": content,
+                }
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    msg_dict["tool_calls"] = msg.tool_calls
+                if hasattr(msg, "tool_call_id") and msg.tool_call_id:
+                    msg_dict["tool_call_id"] = msg.tool_call_id
+                if hasattr(msg, "name") and msg.name:
+                    msg_dict["name"] = msg.name
+                return MessageModel.model_validate(msg_dict)
+
+        validated_messages = [_convert_message(msg) for msg in messages]
+
+        def _convert_tool(tool):
+            if isinstance(tool, ToolModel):
+                return tool
+            elif isinstance(tool, dict):
+                return ToolModel.model_validate(tool)
+            else:
+                # Handle objects with attributes
+                return ToolModel.model_validate(
+                    {"type": getattr(tool, "type", "function"), **vars(tool)}
+                )
+
+        validated_tools = [_convert_tool(tool) for tool in tools] if tools else None
         validated_stream = stream
         validated_kwargs = kwargs.copy()
 
-        # Check streaming support (use smart defaults if needed)
-        if stream and not self.supports_feature("streaming"):
-            log.warning(
-                f"Streaming requested but deployment '{self.azure_deployment}' doesn't support streaming"
-            )
-            # FIXED: Actually disable streaming when not supported
-            validated_stream = False
+        # Permissive approach: Don't block streaming
+        # Let Azure OpenAI API handle unsupported cases - deployments can be added dynamically
+        # and we shouldn't prevent attempts based on capability checks
 
-        # Check tool support (use smart defaults for unknown deployments)
-        if tools:
-            if not self.supports_feature("tools"):
-                log.warning(
-                    f"Tools provided but deployment '{self.azure_deployment}' doesn't support tools"
-                )
-                validated_tools = None
-            elif not self._has_explicit_deployment_config(self.azure_deployment):
-                # Log when using smart defaults for tool support
-                log.info(
-                    f"Using smart default: assuming deployment '{self.azure_deployment}' supports tools"
-                )
-
-        # Check vision support
-        has_vision = any(
-            isinstance(msg.get("content"), list)
-            and any(
-                isinstance(item, dict) and item.get("type") == "image_url"
-                for item in msg.get("content", [])
-            )
-            for msg in messages
-        )
-        if has_vision and not self.supports_feature("vision"):
-            log.warning(
-                f"Vision content detected but deployment '{self.azure_deployment}' doesn't support vision"
+        # Permissive approach: Pass all parameters to API (tools, vision, audio, JSON mode, etc.)
+        # Let Azure OpenAI API handle unsupported cases - deployments can be added dynamically
+        # Log when using smart defaults for unknown deployments
+        if tools and not self._has_explicit_deployment_config(self.azure_deployment):
+            log.info(
+                f"Using smart default: assuming deployment '{self.azure_deployment}' supports tools"
             )
 
-        # Check JSON mode
-        if kwargs.get("response_format", {}).get("type") == "json_object":
-            if not self.supports_feature("json_mode"):
-                log.warning(
-                    f"JSON mode requested but deployment '{self.azure_deployment}' doesn't support JSON mode"
-                )
-                validated_kwargs.pop("response_format", None)
+        # Get smart parameters for this deployment
+        smart_params = self._get_smart_default_parameters(self.azure_deployment)
 
-        # Use smart parameter defaults if no config
+        # Apply parameter mapping (e.g., max_tokens -> max_completion_tokens for GPT-5/o1+ models)
+        # This is applied REGARDLESS of whether there's explicit config, because it's based on model architecture
+        parameter_mapping = smart_params.get("parameter_mapping", {})
+        if parameter_mapping:
+            for old_param, new_param in parameter_mapping.items():
+                if old_param in validated_kwargs and new_param not in validated_kwargs:
+                    original_value = validated_kwargs[old_param]
+                    validated_kwargs[new_param] = original_value
+                    validated_kwargs.pop(old_param)
+
+                    # For reasoning models, ensure minimum max_completion_tokens
+                    # Reasoning models need tokens for BOTH reasoning AND output
+                    if new_param == "max_completion_tokens" and original_value < 1000:
+                        # If user specified a small value like 150, bump it to at least 2000
+                        # to allow room for reasoning tokens + output
+                        validated_kwargs[new_param] = max(2000, original_value * 10)
+                        log.debug(
+                            f"[azure_openai] Increased max_completion_tokens from {original_value} to {validated_kwargs[new_param]} "
+                            f"for reasoning model '{self.azure_deployment}' (needs tokens for reasoning + output)"
+                        )
+                    else:
+                        log.debug(
+                            f"[azure_openai] Mapped parameter '{old_param}' -> '{new_param}' for '{self.azure_deployment}'"
+                        )
+
+        # Remove unsupported parameters
+        # This is applied REGARDLESS of whether there's explicit config, because it's based on model architecture
+        unsupported_params = smart_params.get("unsupported_params", [])
+        if unsupported_params:
+            for param in unsupported_params:
+                if param in validated_kwargs:
+                    removed_value = validated_kwargs.pop(param)
+                    log.debug(
+                        f"[azure_openai] Removed unsupported parameter '{param}' (value: {removed_value}) for '{self.azure_deployment}'"
+                    )
+
+        # Apply smart parameter defaults only if no explicit config
         if not self._has_explicit_deployment_config(self.azure_deployment):
-            smart_params = self._get_smart_default_parameters(self.azure_deployment)
-
             # Apply smart defaults for max_tokens if not set
             if (
                 "max_tokens" not in validated_kwargs
@@ -498,8 +567,8 @@ class AzureOpenAILLMClient(
     # ------------------------------------------------------------------ #
     def create_completion(
         self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        messages: list[Message],
+        tools: list[Tool] | None = None,
         *,
         stream: bool = False,
         **kwargs: Any,
@@ -510,11 +579,13 @@ class AzureOpenAILLMClient(
         Supports discovered deployments with smart defaults!
         """
         # Validate request against configuration (with smart defaults for unknown deployments)
+        # Note: _validate_request_with_config handles Pydantic conversion internally
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
             self._validate_request_with_config(messages, tools, stream, **kwargs)
         )
 
         # Apply universal tool name sanitization (stores mapping for restoration)
+        # Keep tools as Pydantic objects throughout
         name_mapping = {}
         if validated_tools:
             validated_tools = self._sanitize_tool_names(validated_tools)
@@ -526,13 +597,21 @@ class AzureOpenAILLMClient(
         # Use configuration-aware parameter adjustment
         validated_kwargs = self._adjust_parameters_for_provider(validated_kwargs)
 
+        # Convert Pydantic models to dicts for OpenAI SDK (only at final step)
+        messages_dicts: list[dict[str, Any]] = [
+            msg.model_dump() if hasattr(msg, "model_dump") else msg
+            for msg in validated_messages
+        ]
+        # Use the helper method to convert tools to dicts at the final step
+        tools_dicts: list[dict[str, Any]] | None = self._tools_to_dicts(validated_tools)
+
         if validated_stream:
             return self._stream_completion_async(
-                validated_messages, validated_tools, name_mapping, **validated_kwargs
+                messages_dicts, tools_dicts, name_mapping, **validated_kwargs
             )
         else:
             return self._regular_completion(
-                validated_messages, validated_tools, name_mapping, **validated_kwargs
+                messages_dicts, tools_dicts, name_mapping, **validated_kwargs
             )
 
     async def _stream_completion_async(
@@ -567,6 +646,16 @@ class AzureOpenAILLMClient(
                 if tools:
                     request_params["tools"] = tools
                 request_params["stream"] = True
+
+                # For reasoning models (GPT-5, o1+), enable streaming of reasoning tokens
+                # This allows seeing the thinking process in real-time
+                if self.supports_feature("reasoning"):
+                    # Use stream_options to get reasoning content in the stream
+                    if "stream_options" not in request_params:
+                        request_params["stream_options"] = {"include_usage": True}
+                    log.debug(
+                        f"[azure_openai] Enabled stream_options for reasoning model '{self.azure_deployment}'"
+                    )
 
                 response_stream = await self.async_client.chat.completions.create(
                     **request_params
@@ -711,9 +800,9 @@ class AzureOpenAILLMClient(
                     # Prepare result
                     result = {
                         "response": content,
-                        "tool_calls": completed_tool_calls
-                        if completed_tool_calls
-                        else None,
+                        "tool_calls": (
+                            completed_tool_calls if completed_tool_calls else None
+                        ),
                     }
 
                     # Restore tool names using universal restoration
@@ -992,13 +1081,49 @@ class AzureOpenAILLMClient(
         adjusted = kwargs.copy()
 
         try:
+            # Get smart parameters for this deployment
+            smart_params = self._get_smart_default_parameters(self.azure_deployment)
+
+            # Apply parameter mapping (e.g., max_tokens -> max_completion_tokens)
+            # This must be done BEFORE validation to ensure correct parameter names
+            parameter_mapping = smart_params.get("parameter_mapping", {})
+            if parameter_mapping:
+                for old_param, new_param in parameter_mapping.items():
+                    if old_param in adjusted and new_param not in adjusted:
+                        original_value = adjusted[old_param]
+                        adjusted[new_param] = original_value
+                        adjusted.pop(old_param)
+
+                        # For reasoning models, ensure minimum max_completion_tokens
+                        if (
+                            new_param == "max_completion_tokens"
+                            and original_value < 1000
+                        ):
+                            adjusted[new_param] = max(2000, original_value * 10)
+                            log.debug(
+                                f"[azure_openai] Increased max_completion_tokens from {original_value} to {adjusted[new_param]} "
+                                f"for reasoning model (needs tokens for reasoning + output)"
+                            )
+                        else:
+                            log.debug(
+                                f"[azure_openai] Mapped parameter '{old_param}' -> '{new_param}' in adjust_parameters"
+                            )
+
+            # Remove unsupported parameters
+            unsupported_params = smart_params.get("unsupported_params", [])
+            if unsupported_params:
+                for param in unsupported_params:
+                    if param in adjusted:
+                        removed_value = adjusted.pop(param)
+                        log.debug(
+                            f"[azure_openai] Removed unsupported parameter '{param}' (value: {removed_value}) in adjust_parameters"
+                        )
+
             # Use the configuration-aware parameter validation
             adjusted = self.validate_parameters(**adjusted)
 
             # If no explicit config, use smart defaults
             if not self._has_explicit_deployment_config(self.azure_deployment):
-                smart_params = self._get_smart_default_parameters(self.azure_deployment)
-
                 # Apply smart defaults if not already set
                 if (
                     "max_tokens" not in adjusted
@@ -1010,7 +1135,7 @@ class AzureOpenAILLMClient(
                     else:
                         adjusted["max_tokens"] = max_output
                     log.debug(
-                        f"[azure_openai] Applied smart default max_tokens={max_output} for '{self.azure_deployment}'"
+                        f"[azure_openai] Applied smart default for max output tokens={max_output} for '{self.azure_deployment}'"
                     )
 
             # Additional Azure OpenAI-specific parameter handling
@@ -1034,9 +1159,14 @@ class AzureOpenAILLMClient(
 
         except Exception as e:
             log.debug(f"Could not adjust parameters using config: {e}")
-            # Fallback: ensure max_tokens is set
-            if "max_tokens" not in adjusted:
-                adjusted["max_tokens"] = 4096
+            # Fallback: check if we need max_completion_tokens instead
+            smart_params = self._get_smart_default_parameters(self.azure_deployment)
+            if smart_params.get("requires_max_completion_tokens"):
+                if "max_completion_tokens" not in adjusted:
+                    adjusted["max_completion_tokens"] = 4096
+            else:
+                if "max_tokens" not in adjusted:
+                    adjusted["max_tokens"] = 4096
 
         return adjusted
 
@@ -1044,10 +1174,20 @@ class AzureOpenAILLMClient(
         """Cleanup resources"""
         # Reset name mapping
         self._current_name_mapping = {}
-        if hasattr(self.async_client, "close"):
-            await self.async_client.close()
-        if hasattr(self.client, "close"):
-            self.client.close()
+        try:
+            if hasattr(self.async_client, "close"):
+                await self.async_client.close()
+        except RuntimeError as e:
+            # Event loop may already be closed, which is fine
+            if "Event loop is closed" not in str(e):
+                raise
+        try:
+            if hasattr(self.client, "close"):
+                self.client.close()
+        except RuntimeError as e:
+            # Event loop may already be closed, which is fine
+            if "Event loop is closed" not in str(e):
+                raise
 
     def __repr__(self) -> str:
         return f"AzureOpenAILLMClient(deployment={self.azure_deployment}, model={self.model}, endpoint={self.azure_endpoint})"

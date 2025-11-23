@@ -1,375 +1,149 @@
 # chuk_llm/api/discovery.py
 """
-Universal model discovery API that works with any provider
+Model discovery API - Registry-based implementation.
+
+Provides backward-compatible API using the new registry system.
 """
 
 import asyncio
 import logging
 from typing import Any
 
-from chuk_llm.configuration import get_config
-from chuk_llm.llm.discovery.engine import (
-    UniversalModelDiscoveryManager,
-)
-from chuk_llm.llm.discovery.providers import DiscovererFactory
+from chuk_llm.core.constants import CapabilityKey
+from chuk_llm.core.enums import Provider
+from chuk_llm.registry import QualityTier, get_registry
 
 log = logging.getLogger(__name__)
-
-# Global discovery managers cache
-_discovery_managers: dict[str, UniversalModelDiscoveryManager] = {}
-
-
-def get_discovery_manager(
-    provider_name: str,
-    force_recreate: bool = False,
-    inference_config: dict[str, Any] | None = None,
-    **discoverer_config,
-) -> UniversalModelDiscoveryManager:
-    """
-    Get or create a discovery manager for a provider.
-
-    Args:
-        provider_name: Name of the provider
-        force_recreate: Force recreation of manager
-        inference_config: Custom inference configuration
-        **discoverer_config: Provider-specific discoverer configuration
-
-    Returns:
-        Universal discovery manager for the provider
-    """
-    cache_key = f"{provider_name}_{hash(str(inference_config))}"
-
-    if force_recreate or cache_key not in _discovery_managers:
-        # Get provider configuration for discoverer
-        try:
-            config_manager = get_config()
-            provider_config = config_manager.get_provider(provider_name)
-
-            # Merge provider config with discoverer config
-            merged_config = {
-                "api_base": provider_config.api_base,
-                **provider_config.extra,
-                **discoverer_config,
-            }
-
-            # Add API key if available
-            api_key = config_manager.get_api_key(provider_name)
-            if api_key:
-                merged_config["api_key"] = api_key
-
-        except Exception as e:
-            log.debug(f"Could not load provider config for {provider_name}: {e}")
-            merged_config = discoverer_config
-
-        # Create discoverer
-        discoverer = DiscovererFactory.create_discoverer(provider_name, **merged_config)
-
-        # Create universal manager
-        manager = UniversalModelDiscoveryManager(
-            provider_name=provider_name,
-            discoverer=discoverer,
-            inference_config=inference_config,
-        )
-
-        _discovery_managers[cache_key] = manager
-
-    return _discovery_managers[cache_key]
 
 
 async def discover_models(
     provider_name: str,
     force_refresh: bool = False,
-    inference_config: dict[str, Any] | None = None,
-    inference_config_path: str | None = None,
-    **discoverer_config,
+    **kwargs,
 ) -> list[dict[str, Any]]:
     """
-    Universal model discovery that works with any provider.
+    Discover models from a provider using the registry system.
 
     Args:
-        provider_name: Name of the provider (ollama, openai, huggingface, etc.)
+        provider_name: Name of the provider (openai, anthropic, gemini, ollama)
         force_refresh: Force refresh of model cache
-        inference_config: Custom inference configuration dict
-        inference_config_path: Path to custom inference config YAML
-        **discoverer_config: Provider-specific configuration
+        **kwargs: Additional arguments (ignored for compatibility)
 
     Returns:
         List of discovered model dictionaries
+
+    Example:
+        >>> models = await discover_models("openai")
+        >>> print(f"Found {len(models)} models")
     """
-    # Load inference config from file if provided
-    if inference_config_path and not inference_config:
-        try:
-            import yaml
+    # Get registry instance
+    registry = await get_registry(use_provider_apis=True, force_refresh=force_refresh)
 
-            with open(inference_config_path) as f:
-                inference_config = yaml.safe_load(f)
-        except Exception as e:
-            log.error(
-                f"Failed to load inference config from {inference_config_path}: {e}"
-            )
-            inference_config = None
+    # Get all models
+    all_models = await registry.get_models()
 
-    # Get discovery manager
-    manager = get_discovery_manager(
-        provider_name=provider_name,
-        force_recreate=bool(inference_config or inference_config_path),
-        inference_config=inference_config,
-        **discoverer_config,
-    )
+    # Filter by provider
+    provider_models = [m for m in all_models if m.spec.provider == provider_name]
 
-    # Discover models
-    models = await manager.discover_models(force_refresh=force_refresh)
+    if not provider_models:
+        log.warning(f"No models found for provider: {provider_name}")
+        return []
 
-    # Convert to API format
+    # Convert to API format (backward compatible)
     return [
         {
-            "name": model.name,
-            "provider": model.provider,
-            "family": model.family,
-            "size_gb": round(model.size_bytes / (1024**3), 1)
-            if model.size_bytes
-            else None,
-            "parameters": model.parameters,
-            "context_length": model.context_length,
-            "max_output_tokens": model.max_output_tokens,
-            "features": [f.value for f in model.capabilities],
-            "created_at": model.created_at,
-            "modified_at": model.modified_at,
-            "metadata": model.metadata,
+            "name": model.spec.name,
+            "provider": model.spec.provider,
+            "family": model.spec.family,
+            "context_length": model.capabilities.max_context,
+            "max_output_tokens": model.capabilities.max_output_tokens,
+            "features": _capabilities_to_features(model.capabilities),
+            CapabilityKey.SUPPORTS_TOOLS.value: model.capabilities.supports_tools
+            or False,
+            CapabilityKey.SUPPORTS_VISION.value: model.capabilities.supports_vision
+            or False,
+            CapabilityKey.SUPPORTS_JSON_MODE.value: model.capabilities.supports_json_mode
+            or False,
+            CapabilityKey.SUPPORTS_STREAMING.value: model.capabilities.supports_streaming
+            or False,
+            "quality_tier": model.capabilities.quality_tier.value
+            if model.capabilities.quality_tier
+            else "unknown",
+            "tokens_per_second": model.capabilities.tokens_per_second,
         }
-        for model in models
+        for model in provider_models
     ]
 
 
+def _capabilities_to_features(capabilities) -> list[str]:
+    """Convert capabilities to feature list (backward compatibility)"""
+    features = ["text"]  # All models support text
+
+    if capabilities.supports_tools:
+        features.append("tools")
+    if capabilities.supports_vision:
+        features.append("vision")
+    if capabilities.supports_json_mode:
+        features.append("json")
+    if capabilities.supports_streaming:
+        features.append("streaming")
+
+    return features
+
+
 def discover_models_sync(provider_name: str, **kwargs) -> list[dict[str, Any]]:
-    """Sync version of discover_models"""
+    """Synchronous version of discover_models"""
     return asyncio.run(discover_models(provider_name, **kwargs))
 
 
-async def update_provider_configuration(
-    provider_name: str,
-    inference_config: dict[str, Any] | None = None,
-    inference_config_path: str | None = None,
-    **discoverer_config,
-) -> dict[str, Any]:
-    """
-    Update provider configuration with discovered models.
-
-    Args:
-        provider_name: Name of the provider
-        inference_config: Custom inference configuration dict
-        inference_config_path: Path to custom inference config YAML
-        **discoverer_config: Provider-specific configuration
-
-    Returns:
-        Update results dictionary
-    """
-    try:
-        # Discover models
-        models = await discover_models(
-            provider_name=provider_name,
-            force_refresh=True,
-            inference_config=inference_config,
-            inference_config_path=inference_config_path,
-            **discoverer_config,
-        )
-
-        if not models:
-            return {
-                "success": False,
-                "error": f"No models discovered for {provider_name}",
-                "total_models": 0,
-            }
-
-        # Update provider configuration
-        config_manager = get_config()
-        provider = config_manager.get_provider(provider_name)
-
-        # Get discovery manager for capabilities
-        manager = get_discovery_manager(
-            provider_name=provider_name,
-            inference_config=inference_config,
-            **discoverer_config,
-        )
-
-        # Update models list (exclude models without text capability)
-        text_models = [m["name"] for m in models if "text" in m["features"]]
-        if text_models:
-            provider.models = text_models
-            if not provider.default_model or provider.default_model not in text_models:
-                provider.default_model = text_models[0]
-
-        # Update model capabilities
-        provider.model_capabilities.clear()
-        for model_name in text_models:
-            caps = manager.get_model_capabilities(model_name)
-            if caps:
-                provider.model_capabilities.append(caps)
-
-        # Store discovery configuration
-        if not hasattr(provider.extra, "model_discovery"):
-            provider.extra["model_discovery"] = {}
-
-        if inference_config:
-            provider.extra["model_discovery"]["inference_config"] = inference_config
-        elif inference_config_path:
-            provider.extra["model_discovery"]["inference_config_path"] = (
-                inference_config_path
-            )
-
-        # Collect stats
-        families = {m["family"] for m in models}
-        feature_counts: dict[str, int] = {}  # type: ignore[var-annotated]
-        for model in models:
-            for feature in model["features"]:
-                feature_counts[feature] = feature_counts.get(feature, 0) + 1
-
-        return {
-            "success": True,
-            "provider": provider_name,
-            "total_models": len(models),
-            "text_models": len(text_models),
-            "other_models": len(models) - len(text_models),
-            "default_model": text_models[0] if text_models else None,
-            "families": list(families),
-            "feature_summary": feature_counts,
-            "config_source": "custom"
-            if (inference_config or inference_config_path)
-            else "provider",
-        }
-
-    except Exception as e:
-        log.error(f"Failed to update {provider_name} configuration: {e}")
-        return {
-            "success": False,
-            "provider": provider_name,
-            "error": str(e),
-        }
-
-
-def update_provider_configuration_sync(provider_name: str, **kwargs) -> dict[str, Any]:
-    """Sync version of update_provider_configuration"""
-    return asyncio.run(update_provider_configuration(provider_name, **kwargs))
-
-
-async def show_discovered_models(
-    provider_name: str,
-    force_refresh: bool = False,
-    inference_config: dict[str, Any] | None = None,
-    inference_config_path: str | None = None,
-    **discoverer_config,
-) -> None:
-    """
-    Display discovered models in a nice format.
-
-    Args:
-        provider_name: Name of the provider
-        force_refresh: Force refresh of model cache
-        inference_config: Custom inference configuration dict
-        inference_config_path: Path to custom inference config YAML
-        **discoverer_config: Provider-specific configuration
-    """
-    # Get discovery manager for stats
-    manager = get_discovery_manager(
-        provider_name=provider_name,
-        inference_config=inference_config,
-        **discoverer_config,
-    )
-
-    models = await manager.discover_models(force_refresh=force_refresh)
-    stats = manager.get_discovery_stats()
-
-    # Show header
-    print(f"\n🔍 Discovered {stats['total']} {provider_name.title()} Models")
-    print("=" * 60)
-
-    # Show config source
-    if inference_config or inference_config_path:
-        config_source = inference_config_path or "custom dict"
-        print(f"🔧 Using custom inference config: {config_source}")
-    else:
-        print("🔧 Using provider inference config")
-
-    # Show stats
-    if stats["total_size_gb"] > 0:
-        print(f"📊 Total size: {stats['total_size_gb']}GB")
-    if stats["cache_age_seconds"] > 0:
-        print(f"⏰ Cache age: {stats['cache_age_seconds']}s")
-
-    # Group by family
-    families: dict[str, list] = {}  # type: ignore[var-annotated]
-    for model in models:
-        family = model.family
-        if family not in families:
-            families[family] = []  # type: ignore[assignment]
-        families[family].append(model)
-
-    for family, family_models in sorted(families.items()):
-        print(f"\n📁 {family.title()} Models ({len(family_models)}):")
-
-        for model in sorted(family_models, key=lambda x: x.name):
-            size_gb = (
-                f"{model.size_bytes / (1024**3):.1f}GB"
-                if model.size_bytes
-                else "Unknown"
-            )
-            features = ", ".join(f.value for f in sorted(model.capabilities))
-
-            print(f"  • {model.name}")
-            print(f"    Size: {size_gb} | Context: {model.context_length or 'Unknown'}")
-            if model.parameters:
-                print(f"    Parameters: {model.parameters}")
-            print(f"    Features: {features}")
-            if model.metadata:
-                if "downloads" in model.metadata:
-                    print(f"    Downloads: {model.metadata['downloads']:,}")
-                if "likes" in model.metadata:
-                    print(f"    Likes: {model.metadata['likes']:,}")
-            print()
-
-
-def show_discovered_models_sync(provider_name: str, **kwargs) -> None:
-    """Sync version of show_discovered_models"""
-    asyncio.run(show_discovered_models(provider_name, **kwargs))
-
-
 async def get_model_info(
-    provider_name: str, model_name: str, **discoverer_config
+    provider_name: str,
+    model_name: str,
+    **kwargs,
 ) -> dict[str, Any] | None:
     """
-    Get detailed information about a specific discovered model.
+    Get detailed information about a specific model.
 
     Args:
         provider_name: Name of the provider
         model_name: Name of the model
-        **discoverer_config: Provider-specific configuration
+        **kwargs: Additional arguments (ignored)
 
     Returns:
         Model information dictionary or None if not found
-    """
-    manager = get_discovery_manager(provider_name=provider_name, **discoverer_config)
-    models = await manager.discover_models()
 
-    for model in models:
-        if model.name == model_name:
+    Example:
+        >>> info = await get_model_info("openai", "gpt-4o")
+        >>> print(info["context_length"])
+    """
+    registry = await get_registry(use_provider_apis=True)
+    all_models = await registry.get_models()
+
+    # Find the model
+    for model in all_models:
+        if model.spec.provider == provider_name and model.spec.name == model_name:
             return {
-                "name": model.name,
-                "provider": model.provider,
-                "family": model.family,
-                "size_gb": round(model.size_bytes / (1024**3), 1)
-                if model.size_bytes
-                else None,
-                "size_bytes": model.size_bytes,
-                "parameters": model.parameters,
-                "context_length": model.context_length,
-                "max_output_tokens": model.max_output_tokens,
-                "features": [f.value for f in model.capabilities],
-                "supports_chat": "text" in [f.value for f in model.capabilities],
-                "supports_vision": "vision" in [f.value for f in model.capabilities],
-                "supports_tools": "tools" in [f.value for f in model.capabilities],
-                "created_at": model.created_at,
-                "modified_at": model.modified_at,
-                "metadata": model.metadata,
+                "name": model.spec.name,
+                "provider": model.spec.provider,
+                "family": model.spec.family,
+                "context_length": model.capabilities.max_context,
+                "max_output_tokens": model.capabilities.max_output_tokens,
+                "features": _capabilities_to_features(model.capabilities),
+                CapabilityKey.SUPPORTS_TOOLS.value: model.capabilities.supports_tools
+                or False,
+                CapabilityKey.SUPPORTS_VISION.value: model.capabilities.supports_vision
+                or False,
+                CapabilityKey.SUPPORTS_JSON_MODE.value: model.capabilities.supports_json_mode
+                or False,
+                CapabilityKey.SUPPORTS_STREAMING.value: model.capabilities.supports_streaming
+                or False,
+                "quality_tier": model.capabilities.quality_tier.value
+                if model.capabilities.quality_tier
+                else "unknown",
+                "tokens_per_second": model.capabilities.tokens_per_second,
+                "known_params": list(model.capabilities.known_params)
+                if model.capabilities.known_params
+                else [],
             }
 
     return None
@@ -378,53 +152,181 @@ async def get_model_info(
 def get_model_info_sync(
     provider_name: str, model_name: str, **kwargs
 ) -> dict[str, Any] | None:
-    """Sync version of get_model_info"""
+    """Synchronous version of get_model_info"""
     return asyncio.run(get_model_info(provider_name, model_name, **kwargs))
 
 
-async def generate_provider_config_yaml(provider_name: str, **discoverer_config) -> str:
+async def find_best_model(
+    provider: str | None = None,
+    requires_tools: bool = False,
+    requires_vision: bool = False,
+    requires_json_mode: bool = False,
+    min_context: int | None = None,
+    quality_tier: str = "any",
+    **kwargs,
+) -> dict[str, Any] | None:
     """
-    Generate YAML configuration for discovered models.
+    Find the best model matching requirements.
+
+    Args:
+        provider: Filter to specific provider (optional)
+        requires_tools: Model must support function calling
+        requires_vision: Model must support vision/images
+        requires_json_mode: Model must support JSON mode
+        min_context: Minimum context length required
+        quality_tier: Quality tier (best, balanced, cheap, any)
+        **kwargs: Additional arguments (ignored)
+
+    Returns:
+        Best matching model info or None
+
+    Example:
+        >>> model = await find_best_model(requires_tools=True, quality_tier="balanced")
+        >>> print(f"Use: {model['provider']}:{model['name']}")
+    """
+    registry = await get_registry(use_provider_apis=True)
+
+    # Convert quality tier string to enum
+    tier = QualityTier(quality_tier) if quality_tier != "any" else "any"
+
+    # Find best match
+    best_model = await registry.find_best(
+        provider=provider,
+        requires_tools=requires_tools,
+        requires_vision=requires_vision,
+        requires_json_mode=requires_json_mode,
+        min_context=min_context,
+        quality_tier=tier,
+    )
+
+    if not best_model:
+        return None
+
+    return {
+        "name": best_model.spec.name,
+        "provider": best_model.spec.provider,
+        "family": best_model.spec.family,
+        "context_length": best_model.capabilities.max_context,
+        "max_output_tokens": best_model.capabilities.max_output_tokens,
+        "features": _capabilities_to_features(best_model.capabilities),
+        "quality_tier": best_model.capabilities.quality_tier.value
+        if best_model.capabilities.quality_tier
+        else "unknown",
+    }
+
+
+def find_best_model_sync(**kwargs) -> dict[str, Any] | None:
+    """Synchronous version of find_best_model"""
+    return asyncio.run(find_best_model(**kwargs))
+
+
+async def list_providers() -> list[str]:
+    """
+    List all available providers with discovered models.
+
+    Returns:
+        List of provider names
+
+    Example:
+        >>> providers = await list_providers()
+        >>> print(f"Available: {', '.join(providers)}")
+    """
+    registry = await get_registry(use_provider_apis=True)
+    all_models = await registry.get_models()
+
+    # Get unique providers
+    providers = sorted({m.spec.provider for m in all_models})
+    return providers
+
+
+def list_providers_sync() -> list[str]:
+    """Synchronous version of list_providers"""
+    return asyncio.run(list_providers())
+
+
+async def show_discovered_models(
+    provider_name: str,
+    force_refresh: bool = False,
+    **kwargs,
+) -> None:
+    """
+    Display discovered models in a nice format.
 
     Args:
         provider_name: Name of the provider
-        **discoverer_config: Provider-specific configuration
+        force_refresh: Force refresh of model cache
+        **kwargs: Additional arguments (ignored)
 
-    Returns:
-        YAML configuration string
+    Example:
+        >>> await show_discovered_models("openai")
     """
-    manager = get_discovery_manager(provider_name=provider_name, **discoverer_config)
-    await manager.discover_models()
-    return manager.generate_config_yaml()
+    models = await discover_models(provider_name, force_refresh=force_refresh)
+
+    if not models:
+        print(f"\n❌ No models found for {provider_name}")
+        return
+
+    print(f"\n🔍 Discovered {len(models)} {provider_name.title()} Models")
+    print("=" * 70)
+
+    # Group by family
+    families: dict[str, list] = {}
+    for model in models:
+        family = model["family"] or "unknown"
+        if family not in families:
+            families[family] = []
+        families[family].append(model)
+
+    for family, family_models in sorted(families.items()):
+        print(f"\n📁 {family.title()} ({len(family_models)} models):")
+
+        for model in sorted(family_models, key=lambda x: x["name"]):
+            ctx = (
+                f"{model['context_length']:,}" if model["context_length"] else "Unknown"
+            )
+            tier = model["quality_tier"]
+            features = ", ".join(model["features"])
+
+            print(f"  • {model['name']}")
+            print(f"    Context: {ctx} | Tier: {tier}")
+            print(f"    Features: {features}")
+
+            if model["tokens_per_second"]:
+                print(f"    Speed: {model['tokens_per_second']:.1f} tokens/sec")
+            print()
 
 
-def generate_provider_config_yaml_sync(provider_name: str, **kwargs) -> str:
-    """Sync version of generate_provider_config_yaml"""
-    return asyncio.run(generate_provider_config_yaml(provider_name, **kwargs))
+def show_discovered_models_sync(provider_name: str, **kwargs) -> None:
+    """Synchronous version of show_discovered_models"""
+    asyncio.run(show_discovered_models(provider_name, **kwargs))
 
 
 def list_supported_providers() -> list[str]:
-    """List providers that support dynamic discovery"""
-    return DiscovererFactory.list_supported_providers()
+    """
+    List providers that support discovery.
+
+    Returns:
+        List of supported provider names
+    """
+    return [
+        Provider.OPENAI.value,
+        Provider.ANTHROPIC.value,
+        Provider.GEMINI.value,
+        Provider.OLLAMA.value,
+    ]
 
 
-def register_custom_discoverer(provider_name: str, discoverer_class: type):
-    """Register a custom discoverer for a provider"""
-    DiscovererFactory.register_discoverer(provider_name, discoverer_class)
-
-
-# Export universal API
+# Export public API
 __all__ = [
     "discover_models",
     "discover_models_sync",
-    "update_provider_configuration",
-    "update_provider_configuration_sync",
-    "show_discovered_models",
-    "show_discovered_models_sync",
     "get_model_info",
     "get_model_info_sync",
-    "generate_provider_config_yaml",
-    "generate_provider_config_yaml_sync",
+    "find_best_model",
+    "find_best_model_sync",
+    "list_providers",
+    "list_providers_sync",
+    "show_discovered_models",
+    "show_discovered_models_sync",
     "list_supported_providers",
-    "register_custom_discoverer",
 ]

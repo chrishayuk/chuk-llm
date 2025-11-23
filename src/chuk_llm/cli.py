@@ -17,10 +17,18 @@ Usage:
     chuk-llm functions
 """
 
-import argparse
-import re
-import sys
-from typing import Any
+# Suppress Pydantic v2 validator warning from session_manager before any imports
+import warnings
+
+warnings.filterwarnings(
+    "ignore", category=UserWarning, module="chuk_ai_session_manager.*"
+)
+
+# Standard library imports - must come after warning filters to suppress session_manager warnings  # noqa: E402
+import argparse  # noqa: E402
+import re  # noqa: E402
+import sys  # noqa: E402
+from typing import Any  # noqa: E402
 
 try:
     from rich.console import Console
@@ -128,10 +136,8 @@ def trigger_discovery_for_provider(provider: str, quiet: bool = True) -> bool:
                     discovery_config = DiscoveryConfig(
                         enabled=True,
                         discoverer_type=discovery_data.get("discoverer_type", "openai"),
-                        cache_timeout=0
-                        if not quiet
-                        else discovery_data.get(
-                            "cache_timeout", 300
+                        cache_timeout=(
+                            0 if not quiet else discovery_data.get("cache_timeout", 300)
                         ),  # Force refresh in CLI
                         inference_config=discovery_data.get("inference_config", {}),
                         discoverer_config=discovery_data.get("discoverer_config", {}),
@@ -253,15 +259,10 @@ class ChukLLMCLI:
                         # (user explicitly specified a provider)
 
                 # Now try resolution with the config (handles provider-specific aliases and discovery)
-                resolved_model = self.config._ensure_model_available(provider, model)
+                # Note: _ensure_model_available returns True/False, not the resolved model
+                model_available = self.config._ensure_model_available(provider, model)
 
-                if resolved_model and resolved_model != model:
-                    if self.verbose:
-                        self.print_rich(
-                            f"📝 Using model '{resolved_model}' for '{model}'", "info"
-                        )
-                    model = resolved_model
-                elif not resolved_model:
+                if not model_available:
                     # Model couldn't be resolved
                     # Let it pass through - the API will give a proper error message
                     if self.verbose:
@@ -456,6 +457,14 @@ class ChukLLMCLI:
 
             # Try non-streaming fallback
             try:
+                # Debug: print what we're passing
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.debug(
+                    f"Fallback ask_sync: provider={provider}, model={model}, kwargs={kwargs}"
+                )
+
                 if provider and model:
                     response = ask_sync(
                         prompt, provider=provider, model=model, **kwargs
@@ -468,6 +477,10 @@ class ChukLLMCLI:
                 print(response)  # Print the fallback response
                 return response
             except Exception as fallback_error:
+                logger.debug(f"Fallback error: {fallback_error}")
+                import traceback
+
+                logger.debug(traceback.format_exc())
                 error_msg = (
                     f"Both streaming and non-streaming failed: {e}, {fallback_error}"
                 )
@@ -511,49 +524,40 @@ class ChukLLMCLI:
     def show_models(self, provider: str) -> None:
         """List models for a specific provider with discovery"""
         try:
+            # Use the new registry-based discovery API
+            import asyncio
+
+            from chuk_llm.api.discovery import discover_models
+
             provider_config = self.config.get_provider(provider)
 
-            # Trigger discovery based on provider type
+            # Trigger discovery using registry
             self.print_rich(
                 f"🔍 Fetching available {provider} models from API...", "info"
             )
 
-            # Use the discovery system properly
+            # Use registry for discovery
             discovered_models = set()
             discovery_succeeded = False
 
-            if provider == "ollama":
-                try:
-                    from chuk_llm.api.providers import (
-                        trigger_ollama_discovery_and_refresh,
+            try:
+                # Run discovery
+                async def run_discovery():
+                    return await discover_models(provider, force_refresh=False)
+
+                models_list = asyncio.run(run_discovery())
+                if models_list:
+                    discovered_models = {m["name"] for m in models_list}
+                    discovery_succeeded = True
+                    self.print_rich(
+                        f"✅ Found {len(discovered_models)} available models", "success"
                     )
+            except Exception as e:
+                self.print_rich(f"⚠️  Discovery failed for {provider}: {e}", "error")
 
-                    trigger_ollama_discovery_and_refresh()
-                    # Get discovered models from config manager
-                    discovered_models = self.config.get_discovered_models(provider)
-                    discovery_succeeded = bool(discovered_models)
-                except Exception as e:
-                    self.print_rich(f"⚠️  Ollama discovery unavailable: {e}", "error")
-            else:
-                # Use the config manager's discovery instead of making direct API calls
-                try:
-                    # Trigger discovery through config manager
-                    success = trigger_discovery_for_provider(provider, quiet=False)
-                    if success:
-                        # Get discovered models from config manager
-                        discovered_models = self.config.get_discovered_models(provider)
-                        discovery_succeeded = bool(discovered_models)
-                        if discovered_models:
-                            self.print_rich(
-                                f"✅ Found {len(discovered_models)} available models",
-                                "success",
-                            )
-                except Exception as e:
-                    self.print_rich(f"⚠️  Discovery failed for {provider}: {e}", "error")
-
-            # Get all models (static + discovered) from config manager
-            all_models = self.config.get_all_available_models(provider)
+            # Get all models (static + discovered)
             static_models = set(provider_config.models)
+            all_models = static_models | discovered_models
 
             if not all_models:
                 self.print_rich(f"No models found for provider '{provider}'", "error")
@@ -712,34 +716,33 @@ class ChukLLMCLI:
             self.print_rich(f"Error testing provider '{provider}': {e}", "error")
 
     def discover_models(self, provider: str) -> None:
-        """Discover new models for a provider"""
+        """Discover new models for a provider using the registry"""
         try:
             self.print_rich(f"Discovering models for {provider}...", "info")
 
-            if provider == "ollama":
-                new_functions = trigger_ollama_discovery_and_refresh()
+            # Use the new registry-based discovery API
+            import asyncio
+
+            from chuk_llm.api.discovery import discover_models, show_discovered_models
+
+            # Run the discovery with force refresh
+            async def run_discovery():
+                return await discover_models(provider, force_refresh=True)
+
+            models = asyncio.run(run_discovery())
+
+            if models:
                 self.print_rich(
-                    f"✓ Discovered {len(new_functions)} new Ollama functions", "success"
-                )
-            else:
-                new_functions = refresh_provider_functions(provider)
-                self.print_rich(
-                    f"✓ Refreshed {len(new_functions)} functions for {provider}",
-                    "success",
+                    f"✓ Discovered {len(models)} models for {provider}", "success"
                 )
 
-            # Show some discovered functions
-            if new_functions:
-                provider_funcs = [
-                    name
-                    for name in new_functions
-                    if name.startswith(f"ask_{provider}_")
-                    and not name.endswith("_sync")
-                ][:5]
-                if provider_funcs:
-                    self.print_rich("Example functions:", "info")
-                    for func_name in provider_funcs:
-                        self.print_rich(f'  - chuk-llm {func_name} "your question"')
+                # Show the discovered models in nice format
+                asyncio.run(show_discovered_models(provider))
+            else:
+                self.print_rich(
+                    f"No models found for {provider}. Is the provider configured correctly?",
+                    "error",
+                )
 
         except Exception as e:
             self.print_rich(f"Error discovering models for {provider}: {e}", "error")
@@ -1100,13 +1103,18 @@ def main() -> None:
 
     cli = ChukLLMCLI(verbose=verbose)
 
-    # 🎯 AUTO-DISCOVERY: Check if this is a convenience function and trigger discovery if needed
-    parsed_convenience = parse_convenience_function(normalized_command)
-    if parsed_convenience:
-        provider, model, is_sync, is_stream = parsed_convenience
+    # 🎯 Check if function exists first (handles family aliases like ask_claude, ask_granite)
+    function_exists = has_function(normalized_command)
 
-        # Check if function exists, if not trigger discovery silently
-        if not has_function(normalized_command):
+    # 🎯 AUTO-DISCOVERY: Parse as provider_model pattern and trigger discovery if needed
+    parsed_convenience = None
+    if not function_exists:
+        # Only try parsing if function doesn't exist yet
+        parsed_convenience = parse_convenience_function(normalized_command)
+        if parsed_convenience:
+            provider, model, is_sync, is_stream = parsed_convenience
+
+            # Trigger discovery silently
             trigger_discovery_for_provider(provider, quiet=True)
 
             # Check again after discovery
@@ -1118,9 +1126,12 @@ def main() -> None:
                 )
                 sys.exit(1)
 
+            # Function now exists after discovery
+            function_exists = True
+
     try:
-        # 🎯 Handle convenience functions first (ask_provider_model pattern)
-        if parsed_convenience:
+        # 🎯 Handle all convenience functions (both provider_model and family aliases)
+        if function_exists:
             # Parse arguments for convenience functions
             parser = argparse.ArgumentParser(description=f"Use {command} function")
             parser.add_argument("prompt", help="The question to ask")
@@ -1152,46 +1163,6 @@ def main() -> None:
                     normalized_command, parsed_args.prompt, **kwargs
                 )
                 return
-            except SystemExit:
-                # argparse calls sys.exit on error, catch and show usage
-                print(
-                    f'Usage: chuk-llm {command} "your question here" [--system-prompt "..."]'
-                )
-                sys.exit(1)
-
-        # Handle ask_alias commands (ask_granite, ask_claude, etc.)
-        elif normalized_command.startswith("ask_"):
-            # Parse arguments for ask_alias commands
-            parser = argparse.ArgumentParser(description=f"Use {command} alias")
-            parser.add_argument("prompt", help="The question to ask")
-            parser.add_argument(
-                "--system-prompt",
-                "-s",
-                help="System prompt to set the AI's behavior/personality",
-            )
-            parser.add_argument(
-                "--max-tokens", type=int, help="Maximum tokens in response"
-            )
-            parser.add_argument(
-                "--temperature", type=float, help="Temperature for sampling"
-            )
-
-            try:
-                parsed_args = parser.parse_args(args[1:])
-
-                alias = normalized_command[4:]  # Remove 'ask_' prefix
-
-                # Build kwargs from parsed args
-                kwargs = {}
-                if parsed_args.system_prompt:
-                    kwargs["system_prompt"] = parsed_args.system_prompt
-                if parsed_args.max_tokens:
-                    kwargs["max_tokens"] = parsed_args.max_tokens
-                if parsed_args.temperature:
-                    kwargs["temperature"] = parsed_args.temperature
-
-                # Note: We don't need to print the response since streaming handles it
-                cli.handle_ask_alias(alias, parsed_args.prompt, **kwargs)
             except SystemExit:
                 # argparse calls sys.exit on error, catch and show usage
                 print(

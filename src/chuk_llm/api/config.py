@@ -133,7 +133,7 @@ class APIConfig:
 
     def validate_current_config(self) -> dict[str, Any]:
         """Validate current configuration"""
-        from chuk_llm.configuration.unified_config import ConfigValidator
+        from chuk_llm.configuration import ConfigValidator
 
         config = self.get_current_config()
 

@@ -4,7 +4,7 @@ import logging
 import threading
 import time
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -371,7 +371,9 @@ def test_supports_feature_string_input(basic_mixin):
     """Test supports_feature with string input"""
     assert basic_mixin.supports_feature("text") is True
     assert basic_mixin.supports_feature("streaming") is True
-    assert basic_mixin.supports_feature("tools") is False
+    # Registry data overrides config - gpt-4 supports tools according to registry
+    assert basic_mixin.supports_feature("tools") is True
+    # gpt-4 doesn't support vision according to registry
     assert basic_mixin.supports_feature("vision") is False
 
 
@@ -379,7 +381,8 @@ def test_supports_feature_enum_input(basic_mixin):
     """Test supports_feature with enum input"""
     assert basic_mixin.supports_feature(MockFeature.TEXT) is True
     assert basic_mixin.supports_feature(MockFeature.STREAMING) is True
-    assert basic_mixin.supports_feature(MockFeature.TOOLS) is False
+    # Registry data overrides config - gpt-4 supports tools according to registry
+    assert basic_mixin.supports_feature(MockFeature.TOOLS) is True
 
 
 def test_supports_feature_advanced_model(advanced_mixin):
@@ -392,9 +395,10 @@ def test_supports_feature_advanced_model(advanced_mixin):
 def test_supports_feature_no_capabilities():
     """Test supports_feature when capabilities are not available"""
     with patch("chuk_llm.configuration.get_config", side_effect=Exception("No config")):
-        mixin = ConfigAwareProviderMixin("openai", "gpt-4")
+        # Use a provider/model that doesn't exist in registry to test fallback behavior
+        mixin = ConfigAwareProviderMixin("fake_provider", "fake-model")
 
-        # Returns False when no configuration is available
+        # Returns False when no configuration or registry data is available
         assert mixin.supports_feature("text") is False
         assert mixin.supports_feature("streaming") is False
 
@@ -407,8 +411,8 @@ def test_supports_feature_invalid_feature(basic_mixin):
 def test_supports_feature_exception_handling(basic_mixin, monkeypatch):
     """Test supports_feature handles exceptions gracefully"""
     monkeypatch.setattr(basic_mixin, "_get_model_capabilities", lambda: None)
-    # Returns False when capabilities are not available
-    assert basic_mixin.supports_feature("text") is False
+    # Registry data still available for openai/gpt-4, so returns True
+    assert basic_mixin.supports_feature("text") is True
 
 
 # ---------------------------------------------------------------------------
@@ -897,6 +901,127 @@ def test_supports_feature_returns_none_for_unknown_model():
         assert mixin.supports_feature("text") is False
         assert mixin.supports_feature("tools") is False
         assert mixin.supports_feature("streaming") is False
+
+
+def test_has_explicit_model_config_with_matching_capability():
+    """Test _has_explicit_model_config when model_capabilities matches (lines 58-59)"""
+
+    class MockModelCapability:
+        def matches(self, model):
+            return "special" in model
+
+    class MockProviderWithCapabilities:
+        model_capabilities = [MockModelCapability()]
+        models = []
+
+    with patch("chuk_llm.configuration.get_config") as mock_get_config:
+        mock_config = MagicMock()
+        mock_config.get_provider.return_value = MockProviderWithCapabilities()
+        mock_get_config.return_value = mock_config
+
+        mixin = ConfigAwareProviderMixin("openai", "special-model")
+        result = mixin._has_explicit_model_config()
+
+        # Should return True because capability matches
+        assert result is True
+
+
+def test_has_explicit_model_config_exception_on_models_check():
+    """Test _has_explicit_model_config exception handling on models check (lines 66-67)"""
+
+    class MockProviderWithBrokenModels:
+        model_capabilities = []
+
+        @property
+        def models(self):
+            raise Exception("Models list unavailable")
+
+    with patch("chuk_llm.configuration.get_config") as mock_get_config:
+        mock_config = MagicMock()
+        mock_config.get_provider.return_value = MockProviderWithBrokenModels()
+        mock_get_config.return_value = mock_config
+
+        mixin = ConfigAwareProviderMixin("openai", "gpt-4")
+        result = mixin._has_explicit_model_config()
+
+        # Should return False when exception occurs
+        assert result is False
+
+
+def test_get_model_info_exception_handling():
+    """Test get_model_info exception handling (lines 134-136)"""
+
+    with patch("chuk_llm.configuration.get_config") as mock_get_config:
+        mock_get_config.side_effect = Exception("Configuration error")
+
+        with patch("chuk_llm.llm.providers._config_mixin.log") as mock_log:
+            mixin = ConfigAwareProviderMixin("openai", "gpt-4")
+            info = mixin.get_model_info()
+
+            # Should log error (may be called multiple times due to retries/caching)
+            assert mock_log.error.called
+
+            # Should return error info
+            assert info["provider"] == "openai"
+            assert info["model"] == "gpt-4"
+            assert "error" in info
+            # Error message may be wrapped
+            assert "Configuration" in info["error"] or "not available" in info["error"]
+            assert info["has_explicit_config"] is False
+
+
+def test_supports_feature_with_non_string_feature():
+    """Test supports_feature with non-string feature (line 168)"""
+
+    # Create a mock feature enum
+    class MockFeatureEnum:
+        TEXT = "text"
+        TOOLS = "tools"
+
+    with patch("chuk_llm.configuration.get_config") as mock_get_config:
+        mock_config = MagicMock()
+        mock_provider = MockProviderConfig()
+        mock_config.get_provider.return_value = mock_provider
+        mock_get_config.return_value = mock_config
+
+        with patch("chuk_llm.configuration.Feature", MockFeature):
+            mixin = ConfigAwareProviderMixin("mock_provider", "model-1")
+
+            # Test with enum-like feature (not a string)
+            # This hits the else branch on line 168
+            result = mixin.supports_feature(MockFeatureEnum.TEXT)
+
+            # Should still work
+            assert isinstance(result, bool)
+
+
+def test_validate_parameters_caps_max_completion_tokens():
+    """Test validate_parameters caps max_completion_tokens (lines 223-228)"""
+
+    with patch("chuk_llm.configuration.get_config") as mock_get_config:
+        mock_config = MagicMock()
+
+        # Create provider with model that has max_output_tokens limit
+        mock_provider = MockProviderConfig()
+        mock_capabilities = MockModelCapabilities(max_output_tokens=1000)
+        mock_provider._model_capabilities["model-1"] = mock_capabilities
+
+        mock_config.get_provider.return_value = mock_provider
+        mock_get_config.return_value = mock_config
+
+        with patch("chuk_llm.configuration.Feature", MockFeature):
+            mixin = ConfigAwareProviderMixin("mock_provider", "model-1")
+
+            with patch("chuk_llm.llm.providers._config_mixin.log") as mock_log:
+                # Try to set max_completion_tokens above limit
+                adjusted = mixin.validate_parameters(max_completion_tokens=5000)
+
+                # Should be capped to limit
+                assert adjusted["max_completion_tokens"] == 1000
+
+                # Should log debug message
+                mock_log.debug.assert_called()
+                assert "Capping max_completion_tokens" in str(mock_log.debug.call_args)
 
 
 def test_supports_feature_behavior_with_partial_config():

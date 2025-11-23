@@ -1,0 +1,133 @@
+# Groq Model Capabilities
+# Tested capabilities for models available on Groq
+
+provider: groq
+last_updated: '2025-01-21'
+families: {}
+models:
+  # GPT-OSS Models (OpenAI-compatible models)
+  "openai/gpt-oss-120b":
+    tested_at: '2025-01-21'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    max_context: 128000
+    max_output_tokens: 8000
+
+  "openai/gpt-oss-20b":
+    inherits_from: "openai/gpt-oss-120b"
+    tested_at: '2025-01-21'
+
+  # Meta Llama Models
+  "llama-3.3-70b-versatile":
+    tested_at: '2025-01-21'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: 128000
+    max_output_tokens: 8000
+
+  "llama-3.1-8b-instant":
+    tested_at: '2025-01-21'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: 128000
+    max_output_tokens: 8000
+
+  "llama-3.1-70b-versatile":
+    inherits_from: "llama-3.3-70b-versatile"
+    tested_at: '2025-01-21'
+
+  # Moonshot Kimi Models
+  "moonshotai/kimi-k2-instruct":
+    tested_at: '2025-01-21'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: 128000
+    max_output_tokens: 8000
+
+  "moonshotai/kimi-k2-instruct-0905":
+    inherits_from: "moonshotai/kimi-k2-instruct"
+    tested_at: '2025-01-21'
+
+  # Mixtral Models
+  "mixtral-8x7b-32768":
+    tested_at: '2025-01-21'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: 32768
+    max_output_tokens: 8000
+
+  # Gemma Models
+  "gemma2-9b-it":
+    tested_at: '2025-01-21'
+    supports_chat: true
+    supports_tools: false
+    supports_text: true
+    supports_vision: false
+    supports_audio_input: false
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: 8192
+    max_output_tokens: 8000
+
+  # Llama 4 Vision Models
+  "meta-llama/llama-4-scout-17b-16e-instruct":
+    tested_at: '2025-01-21'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: true
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: false
+    supports_streaming: true
+    max_context: 128000
+    max_output_tokens: 8000
+
+  "meta-llama/llama-4-maverick-17b-128e-instruct":
+    inherits_from: "meta-llama/llama-4-scout-17b-16e-instruct"
+    tested_at: '2025-01-21'
+
+  # Whisper (Audio transcription - different API)
+  "whisper-large-v3":
+    tested_at: '2025-01-21'
+    supports_chat: false
+    supports_tools: false
+    supports_text: false
+    supports_vision: false
+    supports_audio_input: true
+    supports_json_mode: false
+    supports_structured_outputs: false
+    supports_streaming: false
+    max_context: 0
+    max_output_tokens: 0

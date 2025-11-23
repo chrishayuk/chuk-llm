@@ -354,7 +354,7 @@ class TestGetLLMClient:
             mock_openai.side_effect = Exception("Client init error")
 
             with pytest.raises(ValueError, match="Failed to create .* client"):
-                get_client(provider="openai")
+                get_client(provider="openai", use_cache=False)
 
     def test_get_client_invalid_import_path(self, mock_config_system):
         """Test error handling for invalid client import paths."""
@@ -479,7 +479,7 @@ class TestOpenAIClient:
             }
             mock_client_class.return_value = mock_client_instance
 
-            client = get_client("openai", model="gpt-4o-mini")
+            client = get_client("openai", model="gpt-4o-mini", use_cache=False)
             messages = [{"role": "user", "content": "Hello"}]
             result = await client.create_completion(messages, stream=False)
 
@@ -514,7 +514,7 @@ class TestOpenAIClient:
             }
             mock_client_class.return_value = mock_client_instance
 
-            client = get_client("openai", model="gpt-4o-mini")
+            client = get_client("openai", model="gpt-4o-mini", use_cache=False)
 
             tools = [{"type": "function", "function": {"name": "test_function"}}]
             messages = [{"role": "user", "content": "Test"}]
@@ -539,20 +539,27 @@ class TestOpenAIClient:
             yield {"response": " World", "tool_calls": [], "error": False}
 
         # Mock the actual client to return a streaming generator
+        # The real create_completion returns _stream_completion_async() which is a coroutine
+        # So our mock needs to return a coroutine that produces the generator
+        async def mock_create_completion_stream(*args, **kwargs):
+            return mock_streaming_generator()
+
         with patch(
             "chuk_llm.llm.providers.openai_client.OpenAILLMClient"
         ) as mock_client_class:
             mock_client_instance = AsyncMock()
-            mock_client_instance.create_completion.return_value = (
-                mock_streaming_generator()
-            )
+            # Return a coroutine that will yield the generator
+            mock_client_instance.create_completion = mock_create_completion_stream
             mock_client_class.return_value = mock_client_instance
 
-            client = get_client("openai", model="gpt-4o-mini")
+            client = get_client("openai", model="gpt-4o-mini", use_cache=False)
             messages = [{"role": "user", "content": "Hello"}]
 
-            # The create_completion method should return an async generator when stream=True
-            stream_generator = await client.create_completion(messages, stream=True)
+            # The create_completion method returns a coroutine when stream=True
+            stream_result = client.create_completion(messages, stream=True)
+
+            # Await to get the generator
+            stream_generator = await stream_result
 
             # Collect chunks from the stream
             chunks = []
@@ -583,7 +590,7 @@ class TestOpenAIClient:
             }
             mock_client_class.return_value = mock_client_instance
 
-            client = get_client("openai", model="gpt-4o-mini")
+            client = get_client("openai", model="gpt-4o-mini", use_cache=False)
             messages = [{"role": "user", "content": "Hello"}]
             result = await client.create_completion(messages, stream=False)
 
@@ -622,7 +629,7 @@ class TestClientIntegration:
             mock_instance = MagicMock()
             mock_client.return_value = mock_instance
 
-            get_client(provider="openai")
+            get_client(provider="openai", use_cache=False)
 
             # Should have been called with the API key from config manager
             call_kwargs = mock_client.call_args.kwargs

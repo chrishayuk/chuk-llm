@@ -192,8 +192,6 @@ async def execute_with_tools(
     Returns:
         Final response after tool execution
     """
-    from .core import ask
-
     executor = ToolExecutor()
     executor.register_from_definitions(tools, tool_functions)
 
@@ -204,7 +202,7 @@ async def execute_with_tools(
         logger.debug(f"Tool execution round {round_num + 1}/{max_rounds}")
 
         # Call with tools - automatically includes tool calls in response
-        response = await ask(current_prompt, tools=tools, **kwargs)
+        response = await ask_func(current_prompt, tools=tools, **kwargs)
 
         # Check if we got tool calls
         if isinstance(response, dict) and response.get("tool_calls"):
@@ -280,8 +278,6 @@ def execute_with_tools_sync(
     """
     Synchronous version of execute_with_tools.
     """
-    from .sync import ask_sync
-
     executor = ToolExecutor()
     executor.register_from_definitions(tools, tool_functions)
 
@@ -292,7 +288,7 @@ def execute_with_tools_sync(
         logger.debug(f"Tool execution round {round_num + 1}/{max_rounds}")
 
         # Call with tools - automatically includes tool calls in response
-        response = ask_sync(current_prompt, tools=tools, **kwargs)
+        response = ask_func(current_prompt, tools=tools, **kwargs)
 
         # Check if we got tool calls
         if isinstance(response, dict) and response.get("tool_calls"):

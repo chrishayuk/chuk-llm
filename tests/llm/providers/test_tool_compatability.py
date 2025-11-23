@@ -490,8 +490,8 @@ def test_sanitize_tool_names_basic(basic_mixin, sample_tools):
 
     assert len(sanitized_tools) == len(sample_tools)
 
-    # Check that names were sanitized
-    names = [tool["function"]["name"] for tool in sanitized_tools]
+    # Check that names were sanitized (Pydantic native)
+    names = [tool.function.name for tool in sanitized_tools]
     assert "stdio_read_query" in names
     assert "web_api_search" in names
     assert "database_sql_execute" in names
@@ -507,19 +507,13 @@ def test_sanitize_tool_names_preserves_structure(basic_mixin, sample_tools):
     sanitized_tools = basic_mixin._sanitize_tool_names([original_tool])
     sanitized_tool = sanitized_tools[0]
 
-    # Structure should be preserved
-    assert sanitized_tool["type"] == original_tool["type"]
-    assert (
-        sanitized_tool["function"]["description"]
-        == original_tool["function"]["description"]
-    )
-    assert (
-        sanitized_tool["function"]["parameters"]
-        == original_tool["function"]["parameters"]
-    )
+    # Structure should be preserved (Pydantic native)
+    assert sanitized_tool.type == original_tool["type"]
+    assert sanitized_tool.function.description == original_tool["function"]["description"]
+    assert sanitized_tool.function.parameters == original_tool["function"]["parameters"]
 
     # Only name should change
-    assert sanitized_tool["function"]["name"] != original_tool["function"]["name"]
+    assert sanitized_tool.function.name != original_tool["function"]["name"]
 
 
 def test_sanitize_tool_names_empty_cases(basic_mixin):
@@ -537,7 +531,12 @@ def test_sanitize_tool_names_empty_cases(basic_mixin):
 
 def test_sanitize_tools_with_mapping(basic_mixin, sample_tools):
     """Test sanitization with explicit mapping return"""
-    sanitized_tools, mapping = basic_mixin._sanitize_tools_with_mapping(sample_tools)
+    # Convert dict tools to Pydantic Tool objects first
+    from chuk_llm.core.models import Tool as ToolModel
+
+    pydantic_tools = [ToolModel.model_validate(tool) for tool in sample_tools]
+
+    sanitized_tools, mapping = basic_mixin._sanitize_tools_with_mapping(pydantic_tools)
 
     assert len(sanitized_tools) == len(sample_tools)
     assert len(mapping) == len(sample_tools)
@@ -546,7 +545,7 @@ def test_sanitize_tools_with_mapping(basic_mixin, sample_tools):
     for sanitized_name, original_name in mapping.items():
         assert sanitized_name != original_name  # Should be different
         assert (
-            "." not in sanitized_name or ":" not in sanitized_name
+            "." not in sanitized_name and ":" not in sanitized_name
         )  # Should be sanitized
 
 
@@ -688,9 +687,9 @@ def test_mistral_compatibility(mistral_mixin, sample_tools):
     """Test compatibility with Mistral's strict requirements"""
     sanitized_tools = mistral_mixin._sanitize_tool_names(sample_tools)
 
-    # All names should meet Mistral requirements
+    # All names should meet Mistral requirements (Pydantic native)
     for tool in sanitized_tools:
-        name = tool["function"]["name"]
+        name = tool.function.name
         assert all(c.isalnum() or c in "_-" for c in name)
         assert len(name) <= 64
         assert "." not in name
@@ -701,9 +700,9 @@ def test_watsonx_enterprise_compatibility(enterprise_mixin, sample_tools):
     """Test compatibility with WatsonX enterprise requirements"""
     sanitized_tools = enterprise_mixin._sanitize_tool_names(sample_tools)
 
-    # Should use enterprise-grade sanitization
+    # Should use enterprise-grade sanitization (Pydantic native)
     for tool in sanitized_tools:
-        name = tool["function"]["name"]
+        name = tool.function.name
         # Enterprise mode should be very conservative
         assert all(c.isalnum() or c == "_" for c in name)
         assert len(name) <= 64
@@ -715,7 +714,7 @@ def test_openai_compatibility(basic_mixin, sample_tools):
     sanitized_tools = basic_mixin._sanitize_tool_names(sample_tools)
 
     for tool in sanitized_tools:
-        name = tool["function"]["name"]
+        name = tool.function.name  # Pydantic native
 
         # Check what OpenAI actually requires according to the configuration
         try:
@@ -758,8 +757,8 @@ def test_ollama_native_support():
 
     sanitized_tools = ollama_mixin._sanitize_tool_names(tools)
 
-    # Ollama should be more permissive with dots
-    name = sanitized_tools[0]["function"]["name"]
+    # Ollama should be more permissive with dots (Pydantic native)
+    name = sanitized_tools[0].function.name
     # Depending on implementation, might keep dots or sanitize colons only
     assert "tool" in name  # Should contain the base name
 
@@ -774,9 +773,9 @@ def test_full_sanitization_and_restoration_workflow(basic_mixin, sample_tools):
     # Step 1: Sanitize tools
     sanitized_tools = basic_mixin._sanitize_tool_names(sample_tools)
 
-    # Verify sanitization occurred
+    # Verify sanitization occurred (Pydantic native)
     assert len(sanitized_tools) == len(sample_tools)
-    sanitized_names = [tool["function"]["name"] for tool in sanitized_tools]
+    sanitized_names = [tool.function.name for tool in sanitized_tools]
     original_names = [tool["function"]["name"] for tool in sample_tools]
 
     # At least some names should have changed
@@ -789,7 +788,7 @@ def test_full_sanitization_and_restoration_workflow(basic_mixin, sample_tools):
             {
                 "id": f"call_{i}",
                 "type": "function",
-                "function": {"name": tool["function"]["name"], "arguments": "{}"},
+                "function": {"name": tool.function.name, "arguments": "{}"},
             }
             for i, tool in enumerate(sanitized_tools)
         ],
@@ -850,7 +849,7 @@ def test_complex_naming_conventions(basic_mixin):
             {
                 "id": f"call_{i}",
                 "type": "function",
-                "function": {"name": tool["function"]["name"], "arguments": "{}"},
+                "function": {"name": tool.function.name, "arguments": "{}"},
             }
             for i, tool in enumerate(sanitized_tools)
         ],
@@ -988,7 +987,7 @@ def test_unicode_and_special_character_handling(basic_mixin):
     sanitized_tools = basic_mixin._sanitize_tool_names(unicode_tools)
 
     for i, tool in enumerate(sanitized_tools):
-        name = tool["function"]["name"]
+        name = tool.function.name
         original_tool = unicode_tools[i]
         original_tool["function"]["name"]
 
@@ -997,10 +996,10 @@ def test_unicode_and_special_character_handling(basic_mixin):
         assert len(name) > 0  # Should not be empty
 
         # Check that the function is well-formed
-        assert "function" in tool
-        assert "name" in tool["function"]
+        assert hasattr(tool, "function")
+        assert hasattr(tool.function, "name")
         assert (
-            tool["function"]["description"] == original_tool["function"]["description"]
+            tool.function.description == original_tool["function"]["description"]
         )
 
         # For providers like OpenAI that may be more permissive, unicode might be preserved
@@ -1043,7 +1042,7 @@ def test_very_long_tool_names(basic_mixin):
     }
 
     sanitized_tools = basic_mixin._sanitize_tool_names([long_tool])
-    sanitized_name = sanitized_tools[0]["function"]["name"]
+    sanitized_name = sanitized_tools[0].function.name
 
     # Should be truncated to reasonable length
     req = basic_mixin.get_tool_requirements()
@@ -1079,7 +1078,7 @@ def test_empty_and_whitespace_names(basic_mixin):
 
     # Should get reasonable default names
     for tool in sanitized_tools:
-        name = tool["function"]["name"]
+        name = tool.function.name
         assert name  # Should not be empty
         assert name.strip()  # Should not be just whitespace
         assert len(name) > 0
@@ -1157,7 +1156,7 @@ def test_mapping_consistency_under_stress(basic_mixin):
     sanitized_tools = basic_mixin._sanitize_tool_names(similar_tools)
 
     # All sanitized names should be unique
-    sanitized_names = [tool["function"]["name"] for tool in sanitized_tools]
+    sanitized_names = [tool.function.name for tool in sanitized_tools]
     assert len(sanitized_names) == len(set(sanitized_names))
 
     # Check mappings where sanitization actually occurred
@@ -1277,8 +1276,8 @@ def test_mcp_tools_integration(basic_mixin):
     sanitized = basic_mixin._sanitize_tool_names(mcp_tools)
 
     # Should sanitize MCP dots
-    assert sanitized[0]["function"]["name"] == "stdio_list_tables"
-    assert sanitized[1]["function"]["name"] == "stdio_describe_table"
+    assert sanitized[0].function.name == "stdio_list_tables"
+    assert sanitized[1].function.name == "stdio_describe_table"
 
     # Test restoration
     mock_response = {
@@ -1390,7 +1389,7 @@ def test_end_to_end_tool_compatibility():
 
         # Verify sanitization occurred appropriately for each provider
         for tool in sanitized_tools:
-            name = tool["function"]["name"]
+            name = tool.function.name
             req = mixin.get_tool_requirements()
 
             # Should meet provider requirements
@@ -1414,7 +1413,7 @@ def test_end_to_end_tool_compatibility():
                 {
                     "id": f"call_{i}",
                     "type": "function",
-                    "function": {"name": tool["function"]["name"], "arguments": "{}"},
+                    "function": {"name": tool.function.name, "arguments": "{}"},
                 }
                 for i, tool in enumerate(sanitized_tools)
             ],

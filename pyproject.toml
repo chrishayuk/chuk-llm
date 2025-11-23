@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chuk-llm"
-version = "0.12.7"
+version = "0.14"
 description = "A unified, production-ready Python library for Large Language Model (LLM) providers with real-time streaming, function calling, middleware support, automatic session tracking, dynamic model discovery, and intelligent system prompt generation."
 readme = "README.md"
 authors = [
@@ -58,6 +58,7 @@ dependencies = [
     "pyyaml>=6.0.2",
     "tiktoken>=0.11.0",
     "transformers>=4.53.2",
+    "ujson>=5.11.0",
 ]
 
 [project.urls]
@@ -84,6 +85,8 @@ dev = [
     "pytest>=8.3.5",
     "pytest-cov>=6.1.1",
     "rich>=14.0.0",
+    "orjson>=3.10.0",
+    "ujson>=5.10.0",
 ]
 
 # All optional features
@@ -107,6 +110,7 @@ asyncio_default_fixture_loop_scope = "function"
 asyncio_default_test_loop_scope = "function"
 testpaths = ["tests"]
 python_files = "test_*.py"
+norecursedirs = ["src", ".git", ".tox", "dist", "build", "*.egg"]
 markers = [
     "asyncio: mark a test as an async test",
     "slow: mark test as slow",
@@ -195,6 +199,7 @@ skip_gitignore = true
 
 [tool.mypy]
 python_version = "3.11"
+plugins = ["pydantic.mypy"]
 warn_return_any = false  # Too many dynamic returns
 warn_unused_configs = true
 disallow_untyped_defs = false

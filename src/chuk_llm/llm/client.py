@@ -13,7 +13,7 @@ import logging
 import os
 from typing import Any
 
-from chuk_llm.configuration.unified_config import ConfigValidator, Feature, get_config
+from chuk_llm.configuration import ConfigValidator, Feature, get_config
 from chuk_llm.llm.core.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
@@ -83,7 +83,7 @@ def _constructor_kwargs(cls: type, config: dict[str, Any]) -> dict[str, Any]:
     return args
 
 
-def get_client(
+def _create_client_internal(
     provider: str,
     model: str | None = None,
     api_key: str | None = None,
@@ -91,9 +91,7 @@ def get_client(
     **kwargs,
 ) -> BaseLLMClient:
     """
-    Enhanced client factory with transparent discovery support.
-
-    FIXED: Skips model validation for Azure OpenAI to support custom deployments.
+    Internal client creation logic (no caching).
 
     Args:
         provider: Provider name (from YAML config)
@@ -141,27 +139,144 @@ def get_client(
         if "azure_deployment" not in kwargs:
             kwargs["azure_deployment"] = target_model
 
+    # Special handling for llamacpp: resolve model names to GGUF paths
+    elif provider == "llamacpp" and target_model:
+        from pathlib import Path
+
+        # Check if target_model is already a valid file path
+        model_path = Path(target_model)
+        if not model_path.exists():
+            # Try to resolve from llama.cpp cache first, then Ollama
+            try:
+                # Check llama.cpp cache directory
+                llamacpp_cache = Path.home() / "Library" / "Caches" / "llama.cpp"
+                if llamacpp_cache.exists():
+                    # Look for GGUF files matching the model name
+                    # Convert model name format: "gpt-oss:20b" -> "gpt-oss-20b"
+                    model_name_normalized = target_model.lower().replace(":", "-")
+
+                    for gguf_file in llamacpp_cache.glob("*.gguf"):
+                        # Skip .etag files and mmproj files (vision projections)
+                        if (
+                            gguf_file.suffix == ".etag"
+                            or "mmproj" in gguf_file.name.lower()
+                        ):
+                            continue
+
+                        # For llama.cpp cache, we want an exact match of the model name pattern
+                        # Files are named like: ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf
+                        filename_lower = gguf_file.stem.lower()
+
+                        # Check if the normalized model name appears in the filename
+                        # But also check it's not a vision model (has -vl suffix)
+                        if (
+                            model_name_normalized in filename_lower
+                            and "-vl-" not in filename_lower
+                            and not filename_lower.endswith("-vl")
+                        ):
+                            logger.info(
+                                f"Resolved llamacpp model '{target_model}' to cached file: "
+                                f"{gguf_file.name} ({gguf_file.stat().st_size / 1e9:.1f} GB)"
+                            )
+                            target_model = str(gguf_file)
+                            break
+
+                # If not found in llama.cpp cache, try Ollama models
+                if (
+                    target_model == target_model
+                ):  # Model name unchanged, not resolved yet
+                    pass  # Fall through to Ollama resolution below
+            except Exception as e:
+                logger.debug(f"Error checking llama.cpp cache: {e}")
+
+            # Try to resolve from Ollama models if not found in cache
+            if model_path == Path(target_model) or not Path(target_model).exists():
+                try:
+                    from chuk_llm.registry.resolvers.llamacpp_ollama import (
+                        OllamaModel,
+                        discover_ollama_models,
+                    )
+
+                    models = [
+                        m
+                        for m in discover_ollama_models()
+                        if not m.name.startswith("sha256-")
+                    ]
+
+                    # Try to find matching model by name
+                    resolved_ollama_model: OllamaModel | None = None
+                    target_lower = target_model.lower()
+
+                    # Try exact match first
+                    for m in models:
+                        if m.name.lower() == target_lower:
+                            resolved_ollama_model = m
+                            break
+
+                    # Try exact match with library/ prefix
+                    if not resolved_ollama_model:
+                        for m in models:
+                            if m.name.lower() == f"library/{target_lower}":
+                                resolved_ollama_model = m
+                                break
+
+                    # Try partial match (e.g., "qwen3" matches "library/qwen3:0.6b")
+                    if not resolved_ollama_model:
+                        for m in models:
+                            # Match if target is in the model name (after library/)
+                            model_name_parts = m.name.lower().split("/")
+                            model_basename = (
+                                model_name_parts[-1]
+                                if model_name_parts
+                                else m.name.lower()
+                            )
+                            if target_lower in model_basename:
+                                resolved_ollama_model = m
+                                break
+
+                    if resolved_ollama_model:
+                        logger.info(
+                            f"Resolved llamacpp model '{target_model}' to {resolved_ollama_model.name} "
+                            f"({resolved_ollama_model.size_bytes / 1e9:.1f} GB)"
+                        )
+                        target_model = str(resolved_ollama_model.gguf_path)
+                    else:
+                        # Model not found in Ollama, provide helpful error
+                        available = [m.name for m in models[:5]]
+                        raise ValueError(
+                            f"llamacpp model '{target_model}' not found. "
+                            f"Provide a GGUF file path or install via Ollama.\n"
+                            f"Available Ollama models: {available}{'...' if len(models) > 5 else ''}\n"
+                            f"Install with: ollama pull {target_model}"
+                        )
+                except ImportError:
+                    # Ollama discovery not available, just pass through
+                    logger.warning(
+                        f"Could not resolve llamacpp model '{target_model}' - "
+                        f"provide full GGUF file path"
+                    )
+
     elif target_model:
         # For non-Azure providers, validate the model exists
         # Try to ensure model is available (triggers discovery if needed)
-        resolved_model = config_manager._ensure_model_available(provider, target_model)
-        if resolved_model:
-            target_model = resolved_model
-        elif (
-            target_model not in provider_config.models
-            and "*" not in provider_config.models
-        ):
-            # Check if it's an alias
-            resolved_model = provider_config.model_aliases.get(target_model)
-            if resolved_model and resolved_model in provider_config.models:
-                target_model = resolved_model
-            else:
-                # Model not found after discovery attempt
-                available = provider_config.models[:5]  # Show first 5
-                raise ValueError(
-                    f"Model '{target_model}' not available for provider '{provider}'. "
-                    f"Available: {available}{'...' if len(provider_config.models) > 5 else ''}"
-                )
+        model_available = config_manager._ensure_model_available(provider, target_model)
+        if not model_available:
+            # Model not found, check if it's an alias
+            if (
+                target_model not in provider_config.models
+                and "*" not in provider_config.models
+            ):
+                # Check if it's an alias
+                resolved_model = provider_config.model_aliases.get(target_model)
+                if resolved_model and resolved_model in provider_config.models:
+                    target_model = resolved_model
+                else:
+                    # Model not found after discovery attempt
+                    available = provider_config.models[:5]  # Show first 5
+                    raise ValueError(
+                        f"Model '{target_model}' not available for provider '{provider}'. "
+                        f"Available: {available}{'...' if len(provider_config.models) > 5 else ''}"
+                    )
 
     if not target_model:
         raise ValueError(
@@ -222,6 +337,11 @@ def get_client(
     # Get constructor arguments
     constructor_args = _constructor_kwargs(client_class_type, client_config)
 
+    # Special handling for llamacpp: remove api_base since it constructs it internally
+    if provider == "llamacpp" and "api_base" in constructor_args:
+        # LlamaCppLLMClient constructs api_base from host:port internally
+        del constructor_args["api_base"]
+
     # Create client instance
     try:
         client = client_class_type(**constructor_args)
@@ -235,6 +355,71 @@ def get_client(
             ) from e
         else:
             raise ValueError(f"Failed to create {provider} client: {e}") from e
+
+
+def get_client(
+    provider: str,
+    model: str | None = None,
+    api_key: str | None = None,
+    api_base: str | None = None,
+    use_cache: bool = True,
+    **kwargs,
+) -> BaseLLMClient:
+    """
+    Enhanced client factory with transparent discovery support and automatic caching.
+
+    FIXED: Skips model validation for Azure OpenAI to support custom deployments.
+
+    Client Caching:
+        By default, clients are automatically cached and reused when the same
+        provider/model/config is requested. This saves ~12ms per duplicate client
+        creation. Caching can be disabled via:
+        - use_cache=False parameter
+        - CHUK_LLM_CACHE_CLIENTS=0 environment variable
+
+    Args:
+        provider: Provider name (from YAML config)
+        model: Model override (uses provider default if not specified)
+        api_key: API key override (uses environment if not specified)
+        api_base: API base URL override (uses provider default if not specified)
+        use_cache: Whether to use client registry caching (default: True)
+        **kwargs: Additional client arguments
+
+    Returns:
+        Configured LLM client (cached if use_cache=True)
+
+    Examples:
+        >>> # Automatic caching (saves 12ms per duplicate)
+        >>> client1 = get_client("openai", model="gpt-4o")
+        >>> client2 = get_client("openai", model="gpt-4o")  # Returns same instance
+        >>> assert client1 is client2
+
+        >>> # Disable caching
+        >>> client = get_client("openai", model="gpt-4o", use_cache=False)
+    """
+    # Check if caching is enabled (environment variable or parameter)
+    cache_enabled = use_cache and os.getenv("CHUK_LLM_CACHE_CLIENTS", "1") == "1"
+
+    if cache_enabled:
+        # Use registry for automatic client caching
+        from chuk_llm.client_registry import get_cached_client
+
+        return get_cached_client(
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            api_base=api_base,
+            **kwargs,
+        )
+
+    # Non-cached path - create client directly
+    return _create_client_internal(
+        provider=provider,
+        model=model,
+        api_key=api_key,
+        api_base=api_base,
+        **kwargs,
+    )
 
 
 def validate_request_compatibility(
@@ -316,7 +501,7 @@ def list_available_providers() -> dict[str, dict[str, Any]]:
             if discovery_data and discovery_data.get("enabled"):
                 discovery_enabled = True
                 # Get discovery stats if available
-                cached_data = config_manager._discovery_cache.get(provider_name)
+                cached_data = config_manager._discovery_cache.get(provider_name)  # type: ignore[attr-defined]
                 if cached_data:
                     discovery_stats = {
                         "total_models": len(provider_config.models),
@@ -366,7 +551,7 @@ def get_provider_info(provider: str, model: str | None = None) -> dict[str, Any]
         # Check if model was discovered dynamically
         is_discovered = False
         discovery_info = {}
-        cached_data = config_manager._discovery_cache.get(provider)
+        cached_data = config_manager._discovery_cache.get(provider)  # type: ignore[attr-defined]
         if cached_data and target_model in cached_data.get("models", []):
             # Check if this model was added by discovery
             static_models = set()
@@ -463,7 +648,7 @@ def validate_provider_setup(provider: str) -> dict[str, Any]:
     discovery_data = provider_config.extra.get("dynamic_discovery")
     if discovery_data and discovery_data.get("enabled"):
         discovery_enabled = True
-        cached_data = config_manager._discovery_cache.get(provider)
+        cached_data = config_manager._discovery_cache.get(provider)  # type: ignore[attr-defined]
         if cached_data:
             discovery_stats = {
                 "total_models": len(provider_config.models),
@@ -515,11 +700,10 @@ def find_best_provider_for_request(
     from chuk_llm.configuration.unified_config import CapabilityChecker
 
     if required_features:
-        feature_set = {Feature.from_string(f) for f in required_features}
-        exclude_set = set(exclude_providers or [])
+        feature_list = [Feature.from_string(f) for f in required_features]
 
         best_provider = CapabilityChecker.get_best_provider_for_features(
-            feature_set, model_name=model_pattern, exclude=exclude_set
+            feature_list, model=model_pattern
         )
 
         if best_provider:

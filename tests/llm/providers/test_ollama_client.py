@@ -3,9 +3,26 @@ import asyncio
 import json
 import types
 from contextlib import contextmanager
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from chuk_llm.core.enums import MessageRole, ContentType, ToolType
+from chuk_llm.core.models import Message, Tool, ToolFunction, ToolCall, FunctionCall, TextContent, ImageUrlContent
+
+# ---------------------------------------------------------------------------
+# Test Helper: Convert dict to Pydantic (for backward compat with existing tests)
+# ---------------------------------------------------------------------------
+
+def ensure_pydantic_messages(messages):
+    """Convert dict messages to Pydantic Message objects for tests."""
+    from chuk_llm.llm.core.base import _ensure_pydantic_messages
+    return _ensure_pydantic_messages(messages)
+
+def ensure_pydantic_tools(tools):
+    """Convert dict tools to Pydantic Tool objects for tests."""
+    from chuk_llm.llm.core.base import _ensure_pydantic_tools
+    return _ensure_pydantic_tools(tools)
 
 # ---------------------------------------------------------------------------
 # Stub the `ollama` SDK before importing the adapter.
@@ -502,42 +519,26 @@ def test_get_model_info_reasoning(reasoning_client):
 def test_validate_request_with_config(client):
     """Test request validation against configuration."""
     messages = [{"role": "user", "content": "Hello"}]
-    tools = [{"type": "function", "function": {"name": "test_tool"}}]
+    tools = [{"type": "function", "function": {"name": "test_tool", "description": "", "parameters": {}}}]
+
+    # Convert to Pydantic
+    pydantic_messages = ensure_pydantic_messages(messages)
+    pydantic_tools = ensure_pydantic_tools(tools)
 
     # Mock configuration support
     client.supports_feature = lambda feature: feature in ["streaming", "tools"]
 
     validated_messages, validated_tools, validated_stream, validated_kwargs = (
         client._validate_request_with_config(
-            messages, tools, stream=True, temperature=0.7, logit_bias={"test": 1}
+            pydantic_messages, pydantic_tools, stream=True, temperature=0.7, logit_bias={"test": 1}
         )
     )
 
-    assert validated_messages == messages
-    assert validated_tools == tools
+    assert len(validated_messages) == len(pydantic_messages)
+    assert len(validated_tools) == len(pydantic_tools)
     assert validated_stream is True
     assert "temperature" in validated_kwargs
     assert "logit_bias" not in validated_kwargs  # Should be removed
-
-
-def test_validate_request_unsupported_features(client):
-    """Test request validation when features are not supported."""
-    messages = [{"role": "user", "content": "Hello"}]
-    tools = [{"type": "function", "function": {"name": "test_tool"}}]
-
-    # Mock configuration to not support streaming or tools
-    client.supports_feature = lambda feature: False
-
-    validated_messages, validated_tools, validated_stream, validated_kwargs = (
-        client._validate_request_with_config(
-            messages, tools, stream=True, temperature=0.7
-        )
-    )
-
-    assert validated_messages == messages
-    assert validated_tools is None  # Should be None when not supported
-    assert validated_stream is False  # Should be False when not supported
-    assert "temperature" in validated_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -545,7 +546,8 @@ def test_validate_request_unsupported_features(client):
 # ---------------------------------------------------------------------------
 
 
-def test_prepare_ollama_messages_basic(client):
+@pytest.mark.asyncio
+async def test_prepare_ollama_messages_basic(client):
     """Test basic message preparation."""
     messages = [
         {"role": "system", "content": "You are helpful"},
@@ -553,10 +555,13 @@ def test_prepare_ollama_messages_basic(client):
         {"role": "assistant", "content": "Hi there"},
     ]
 
+    # Convert to Pydantic
+    pydantic_messages = ensure_pydantic_messages(messages)
+
     # Mock system message support
     client.supports_feature = lambda feature: feature == "system_messages"
 
-    prepared = client._prepare_ollama_messages(messages)
+    prepared = await client._prepare_ollama_messages(pydantic_messages)
 
     assert len(prepared) == 3
     assert prepared[0]["role"] == "system"
@@ -565,17 +570,21 @@ def test_prepare_ollama_messages_basic(client):
     assert prepared[2]["role"] == "assistant"
 
 
-def test_prepare_ollama_messages_no_system_support(client):
+@pytest.mark.asyncio
+async def test_prepare_ollama_messages_no_system_support(client):
     """Test message preparation when system messages are not supported."""
     messages = [
         {"role": "system", "content": "You are helpful"},
         {"role": "user", "content": "Hello"},
     ]
 
+    # Convert to Pydantic
+    pydantic_messages = ensure_pydantic_messages(messages)
+
     # Mock no system message support
     client.supports_feature = lambda feature: feature != "system_messages"
 
-    prepared = client._prepare_ollama_messages(messages)
+    prepared = await client._prepare_ollama_messages(pydantic_messages)
 
     assert len(prepared) == 2
     # System message should be converted to user message
@@ -584,7 +593,8 @@ def test_prepare_ollama_messages_no_system_support(client):
     assert prepared[1]["role"] == "user"
 
 
-def test_prepare_ollama_messages_with_vision(client):
+@pytest.mark.asyncio
+async def test_prepare_ollama_messages_with_vision(client):
     """Test message preparation with vision content."""
     messages = [
         {
@@ -604,7 +614,8 @@ def test_prepare_ollama_messages_with_vision(client):
     # Mock vision support
     client.supports_feature = lambda feature: feature == "vision"
 
-    prepared = client._prepare_ollama_messages(messages)
+    pydantic_messages = ensure_pydantic_messages(messages)
+    prepared = await client._prepare_ollama_messages(pydantic_messages)
 
     assert len(prepared) == 1
     assert prepared[0]["role"] == "user"
@@ -612,34 +623,8 @@ def test_prepare_ollama_messages_with_vision(client):
     assert len(prepared[0]["images"]) == 1
 
 
-def test_prepare_ollama_messages_vision_not_supported(client):
-    """Test message preparation when vision is not supported."""
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Look at this"},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": "data:image/png;base64,..."},
-                },
-            ],
-        }
-    ]
-
-    # Mock no vision support
-    client.supports_feature = lambda feature: feature != "vision"
-
-    prepared = client._prepare_ollama_messages(messages)
-
-    assert len(prepared) == 1
-    assert prepared[0]["role"] == "user"
-    # Should only have text content
-    assert "Look at this" in prepared[0]["content"]
-    assert "images" not in prepared[0]
-
-
-def test_prepare_ollama_messages_multi_turn_tools(client):
+@pytest.mark.asyncio
+async def test_prepare_ollama_messages_multi_turn_tools(client):
     """Test message preparation when there are tool calls in historical messages
     that need to be resent to the server.
     """
@@ -662,7 +647,8 @@ def test_prepare_ollama_messages_multi_turn_tools(client):
         },
     ]
 
-    prepared = client._prepare_ollama_messages(messages)
+    pydantic_messages = ensure_pydantic_messages(messages)
+    prepared = await client._prepare_ollama_messages(pydantic_messages)
 
     assert len(prepared) == 2
     assert prepared[0]["role"] == "user"
@@ -819,28 +805,31 @@ def test_parse_response_no_message(client):
 # ---------------------------------------------------------------------------
 
 
-def test_create_sync_basic(client):
+@pytest.mark.asyncio
+async def test_create_sync_basic(client):
     """Test synchronous completion creation."""
     messages = [{"role": "user", "content": "Hello"}]
 
-    # Mock the sync client
+    # Mock the async client (not sync client!)
     mock_response = MockOllamaResponse("Hello from sync Ollama")
-    client.sync_client.chat = MagicMock(return_value=mock_response)
+    client.async_client.chat = AsyncMock(return_value=mock_response)
 
-    result = client._create_sync(messages)
+    pydantic_messages = ensure_pydantic_messages(messages)
+    result = await client._create_sync(pydantic_messages)
 
     assert result["response"] == "Hello from sync Ollama"
     assert result["tool_calls"] == []
 
     # Verify the call was made correctly
-    client.sync_client.chat.assert_called_once()
-    call_kwargs = client.sync_client.chat.call_args.kwargs
+    client.async_client.chat.assert_called_once()
+    call_kwargs = client.async_client.chat.call_args.kwargs
     assert call_kwargs["model"] == "qwen3"
     assert call_kwargs["stream"] is False
     assert len(call_kwargs["messages"]) == 1
 
 
-def test_create_sync_with_tools(client):
+@pytest.mark.asyncio
+async def test_create_sync_with_tools(client):
     """Test synchronous completion with tools."""
     messages = [{"role": "user", "content": "Use a tool"}]
     tools = [
@@ -858,32 +847,36 @@ def test_create_sync_with_tools(client):
     client.supports_feature = lambda feature: feature == "tools"
 
     mock_response = MockOllamaResponse("Tool used")
-    client.sync_client.chat = MagicMock(return_value=mock_response)
+    client.async_client.chat = AsyncMock(return_value=mock_response)
 
-    result = client._create_sync(messages, tools)
+    pydantic_messages = ensure_pydantic_messages(messages)
+    pydantic_tools = ensure_pydantic_tools(tools)
+    result = await client._create_sync(pydantic_messages, pydantic_tools)
 
     assert result["response"] == "Tool used"
 
     # Verify tools were passed correctly
-    call_kwargs = client.sync_client.chat.call_args.kwargs
+    call_kwargs = client.async_client.chat.call_args.kwargs
     assert "tools" in call_kwargs
     assert len(call_kwargs["tools"]) == 1
     assert call_kwargs["tools"][0]["function"]["name"] == "test_tool"
 
 
-def test_create_sync_with_options(client):
+@pytest.mark.asyncio
+async def test_create_sync_with_options(client):
     """Test synchronous completion with Ollama options."""
     messages = [{"role": "user", "content": "Hello"}]
 
     mock_response = MockOllamaResponse("Hello with options")
-    client.sync_client.chat = MagicMock(return_value=mock_response)
+    client.async_client.chat = AsyncMock(return_value=mock_response)
 
-    result = client._create_sync(messages, temperature=0.8, max_tokens=200)
+    pydantic_messages = ensure_pydantic_messages(messages)
+    result = await client._create_sync(pydantic_messages, temperature=0.8, max_tokens=200)
 
     assert result["response"] == "Hello with options"
 
     # Verify options were passed correctly
-    call_kwargs = client.sync_client.chat.call_args.kwargs
+    call_kwargs = client.async_client.chat.call_args.kwargs
     assert "options" in call_kwargs
     assert call_kwargs["options"]["temperature"] == 0.8
     assert call_kwargs["options"]["num_predict"] == 200
@@ -899,11 +892,14 @@ async def test_regular_completion(client):
     """Test regular (non-streaming) completion."""
     messages = [{"role": "user", "content": "Hello"}]
 
+    # Convert to Pydantic
+    pydantic_messages = ensure_pydantic_messages(messages)
+
     # Mock the _create_sync method
     expected_result = {"response": "Hello from Ollama!", "tool_calls": []}
+    client._create_sync = AsyncMock(return_value=expected_result)
 
-    with patch("asyncio.to_thread", return_value=expected_result):
-        result = await client._regular_completion(messages)
+    result = await client._regular_completion(pydantic_messages)
 
     assert result == expected_result
 
@@ -913,9 +909,12 @@ async def test_regular_completion_error_handling(client):
     """Test error handling in regular completion."""
     messages = [{"role": "user", "content": "Hello"}]
 
-    # Mock asyncio.to_thread to raise an exception
-    with patch("asyncio.to_thread", side_effect=Exception("Ollama error")):
-        result = await client._regular_completion(messages)
+    # Convert to Pydantic
+    pydantic_messages = ensure_pydantic_messages(messages)
+
+    # Mock _create_sync to raise an exception
+    client._create_sync = AsyncMock(side_effect=Exception("Ollama error"))
+    result = await client._regular_completion(pydantic_messages)
 
     assert "error" in result
     assert result["error"] is True
@@ -932,6 +931,12 @@ async def test_stream_completion_async(client):
     """Test streaming completion."""
     messages = [{"role": "user", "content": "Tell a story"}]
 
+    # Convert to Pydantic
+    pydantic_messages = ensure_pydantic_messages(messages)
+
+    # Convert to Pydantic
+    pydantic_messages = ensure_pydantic_messages(messages)
+
     # Mock the async client's streaming response
     async def mock_stream():
         yield MockOllamaStreamChunk("Once")
@@ -947,7 +952,7 @@ async def test_stream_completion_async(client):
 
     # Collect streaming results
     chunks = []
-    async for chunk in client._stream_completion_async(messages):
+    async for chunk in client._stream_completion_async(pydantic_messages):
         chunks.append(chunk)
 
     assert len(chunks) == 3
@@ -960,6 +965,9 @@ async def test_stream_completion_async(client):
 async def test_stream_completion_async_reasoning_model(reasoning_client):
     """Test streaming completion with reasoning model."""
     messages = [{"role": "user", "content": "Solve this problem"}]
+
+    # Convert to Pydantic
+    pydantic_messages = ensure_pydantic_messages(messages)
 
     # Mock streaming with thinking content
     async def mock_stream():
@@ -974,7 +982,7 @@ async def test_stream_completion_async_reasoning_model(reasoning_client):
 
     # Collect streaming results
     chunks = []
-    async for chunk in reasoning_client._stream_completion_async(messages):
+    async for chunk in reasoning_client._stream_completion_async(pydantic_messages):
         chunks.append(chunk)
 
     assert len(chunks) == 3
@@ -992,6 +1000,9 @@ async def test_stream_completion_async_reasoning_model(reasoning_client):
 async def test_stream_completion_async_with_tools(client):
     """Test streaming completion with tools."""
     messages = [{"role": "user", "content": "Use tools"}]
+
+    # Convert to Pydantic
+    pydantic_messages = ensure_pydantic_messages(messages)
     tools = [{"function": {"name": "test_tool", "parameters": {}}}]
 
     # Mock tool call in streaming
@@ -1011,9 +1022,12 @@ async def test_stream_completion_async_with_tools(client):
     client.async_client.chat = mock_chat
     client.supports_feature = lambda feature: feature == "tools"
 
+    # Convert tools to Pydantic
+    pydantic_tools = ensure_pydantic_tools(tools)
+
     # Collect streaming results
     chunks = []
-    async for chunk in client._stream_completion_async(messages, tools):
+    async for chunk in client._stream_completion_async(pydantic_messages, pydantic_tools):
         chunks.append(chunk)
 
     assert len(chunks) == 3
@@ -1028,6 +1042,9 @@ async def test_stream_completion_async_error_handling(client):
     """Test error handling in streaming completion."""
     messages = [{"role": "user", "content": "Hello"}]
 
+    # Convert to Pydantic
+    pydantic_messages = ensure_pydantic_messages(messages)
+
     # Mock the async client to raise an exception
     async def mock_chat_error(**kwargs):
         raise Exception("Streaming error")
@@ -1036,7 +1053,7 @@ async def test_stream_completion_async_error_handling(client):
 
     # Collect streaming results
     chunks = []
-    async for chunk in client._stream_completion_async(messages):
+    async for chunk in client._stream_completion_async(pydantic_messages):
         chunks.append(chunk)
 
     # Should yield an error chunk
@@ -1207,6 +1224,9 @@ async def test_streaming_error_handling(client):
     """Test error handling in streaming mode."""
     messages = [{"role": "user", "content": "test"}]
 
+    # Convert to Pydantic
+    pydantic_messages = ensure_pydantic_messages(messages)
+
     # Mock streaming with error
     async def error_stream(messages, tools, **kwargs):
         yield {"response": "Starting...", "tool_calls": []}
@@ -1258,14 +1278,15 @@ async def test_full_integration_non_streaming(client):
         {"role": "user", "content": "Hello"},
     ]
 
-    # Mock the actual Ollama API call through _create_sync
+    # Mock the actual Ollama API call
     expected_response = {
         "response": "Hello! How can I help you today?",
         "tool_calls": [],
     }
 
-    with patch("asyncio.to_thread", return_value=expected_response):
-        result = await client.create_completion(messages, stream=False)
+    client._create_sync = AsyncMock(return_value=expected_response)
+
+    result = await client.create_completion(messages, stream=False)
 
     assert result["response"] == "Hello! How can I help you today?"
     assert result["tool_calls"] == []
@@ -1314,45 +1335,6 @@ async def test_configuration_feature_validation(client):
     # Test with tools - should be filtered out
     result = client.create_completion(messages, tools=tools, stream=True)
     assert hasattr(result, "__aiter__")  # Should still return stream
-
-
-@pytest.mark.asyncio
-async def test_unsupported_features_graceful_handling(client):
-    """Test graceful handling when features are not supported."""
-    # Mock all features as unsupported
-    client.supports_feature = lambda feature: False
-
-    messages = [
-        {"role": "system", "content": "System message"},
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "Text with image"},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": "data:image/png;base64,..."},
-                },
-            ],
-        },
-    ]
-
-    tools = [{"function": {"name": "test_tool", "parameters": {}}}]
-
-    # Mock completion
-    async def mock_completion(messages, tools, **kwargs):
-        # Verify that unsupported features were handled gracefully
-        assert tools is None  # Should be None when not supported
-        return {"response": "Features handled gracefully", "tool_calls": []}
-
-    client._regular_completion = mock_completion
-
-    result = await client.create_completion(
-        messages,
-        tools=tools,
-        stream=False,  # Should be converted to False when not supported
-    )
-
-    assert result["response"] == "Features handled gracefully"
 
 
 # ---------------------------------------------------------------------------
@@ -1447,7 +1429,8 @@ def test_response_parsing_edge_cases(client):
 # ---------------------------------------------------------------------------
 
 
-def test_prepare_ollama_messages_with_tool_responses(client):
+@pytest.mark.asyncio
+async def test_prepare_ollama_messages_with_tool_responses(client):
     """Test that tool responses are properly formatted for context preservation."""
     messages = [
         {"role": "user", "content": "What's the weather?"},
@@ -1473,7 +1456,8 @@ def test_prepare_ollama_messages_with_tool_responses(client):
         {"role": "user", "content": "Is that warm?"},
     ]
 
-    prepared = client._prepare_ollama_messages(messages)
+    pydantic_messages = ensure_pydantic_messages(messages)
+    prepared = await client._prepare_ollama_messages(pydantic_messages)
 
     assert len(prepared) == 4
 
@@ -1498,7 +1482,8 @@ def test_prepare_ollama_messages_with_tool_responses(client):
     assert prepared[3]["content"] == "Is that warm?"
 
 
-def test_prepare_ollama_messages_empty_assistant_content_with_tools(client):
+@pytest.mark.asyncio
+async def test_prepare_ollama_messages_empty_assistant_content_with_tools(client):
     """Test that assistant messages with only tool calls get descriptive content."""
     messages = [
         {"role": "user", "content": "Calculate something"},
@@ -1522,7 +1507,8 @@ def test_prepare_ollama_messages_empty_assistant_content_with_tools(client):
         },
     ]
 
-    prepared = client._prepare_ollama_messages(messages)
+    pydantic_messages = ensure_pydantic_messages(messages)
+    prepared = await client._prepare_ollama_messages(pydantic_messages)
 
     assert len(prepared) == 2
     assert prepared[1]["role"] == "assistant"
@@ -1541,7 +1527,7 @@ def test_validate_conversation_context_valid(client):
         {"role": "assistant", "content": "I'm doing well, thanks!"},
     ]
 
-    result = client._validate_conversation_context(messages)
+    result = client._validate_conversation_context(ensure_pydantic_messages(messages))
     assert result is True
 
 
@@ -1557,7 +1543,7 @@ def test_validate_conversation_context_duplicate_roles(client, caplog):
         {"role": "assistant", "content": "Yes, I'm here!"},
     ]
 
-    result = client._validate_conversation_context(messages)
+    result = client._validate_conversation_context(ensure_pydantic_messages(messages))
     assert result is True  # Still returns True but logs warning
     assert "Duplicate consecutive user messages detected" in caplog.text
 
@@ -1584,7 +1570,7 @@ def test_validate_conversation_context_missing_tool_responses(client, caplog):
         {"role": "user", "content": "Never mind, tell me a joke instead"},
     ]
 
-    result = client._validate_conversation_context(messages)
+    result = client._validate_conversation_context(ensure_pydantic_messages(messages))
     assert result is True  # Still returns True but logs warning
     assert "tool calls without responses" in caplog.text
 
@@ -1612,12 +1598,13 @@ def test_validate_conversation_context_with_complete_tool_flow(client):
         {"role": "assistant", "content": "2+2 equals 4"},
     ]
 
-    result = client._validate_conversation_context(messages)
+    result = client._validate_conversation_context(ensure_pydantic_messages(messages))
     assert result is True
     # Should not log any warnings for this valid flow
 
 
-def test_prepare_messages_preserves_full_context(client):
+@pytest.mark.asyncio
+async def test_prepare_messages_preserves_full_context(client):
     """Test that full conversation context is preserved through message preparation."""
     # Simulate a multi-turn conversation
     messages = [
@@ -1645,7 +1632,8 @@ def test_prepare_messages_preserves_full_context(client):
         {"role": "user", "content": "What's my name?"},  # Tests context memory
     ]
 
-    prepared = client._prepare_ollama_messages(messages)
+    pydantic_messages = ensure_pydantic_messages(messages)
+    prepared = await client._prepare_ollama_messages(pydantic_messages)
 
     # All messages should be preserved
     assert len(prepared) == 8
@@ -1671,7 +1659,8 @@ def test_prepare_messages_preserves_full_context(client):
     assert prepared[7]["content"] == "What's my name?"
 
 
-def test_prepare_messages_handles_mixed_content_types(client):
+@pytest.mark.asyncio
+async def test_prepare_messages_handles_mixed_content_types(client):
     """Test context preservation with mixed content types (text, images, tools)."""
     # Use valid base64 image data
     valid_base64_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
@@ -1702,7 +1691,8 @@ def test_prepare_messages_handles_mixed_content_types(client):
     # Mock vision support
     client.supports_feature = lambda feature: feature in ["vision", "tools"]
 
-    prepared = client._prepare_ollama_messages(messages)
+    pydantic_messages = ensure_pydantic_messages(messages)
+    prepared = await client._prepare_ollama_messages(pydantic_messages)
 
     # Verify all context is preserved
     assert len(prepared) == 7
@@ -1722,7 +1712,8 @@ def test_prepare_messages_handles_mixed_content_types(client):
     assert prepared[6]["content"] == "What's my name again?"
 
 
-def test_prepare_messages_tool_arguments_parsing(client):
+@pytest.mark.asyncio
+async def test_prepare_messages_tool_arguments_parsing(client):
     """Test that tool arguments are properly parsed from strings to dicts."""
     messages = [
         {
@@ -1739,7 +1730,8 @@ def test_prepare_messages_tool_arguments_parsing(client):
         }
     ]
 
-    prepared = client._prepare_ollama_messages(messages)
+    pydantic_messages = ensure_pydantic_messages(messages)
+    prepared = await client._prepare_ollama_messages(pydantic_messages)
 
     assert len(prepared) == 1
     assert prepared[0]["role"] == "assistant"
@@ -1751,14 +1743,19 @@ def test_prepare_messages_tool_arguments_parsing(client):
     assert tool_call["function"]["arguments"]["number"] == 42
 
 
-def test_prepare_messages_malformed_tool_arguments(client):
-    """Test handling of malformed tool arguments."""
+@pytest.mark.asyncio
+async def test_prepare_messages_malformed_tool_arguments(client):
+    """Test that malformed tool arguments are rejected by Pydantic."""
+    from pydantic_core import ValidationError
+
     messages = [
         {
             "role": "assistant",
             "content": "",
             "tool_calls": [
                 {
+                    "id": "call_1",
+                    "type": "function",
                     "function": {
                         "name": "bad_tool",
                         "arguments": "not valid json",  # Invalid JSON
@@ -1768,36 +1765,32 @@ def test_prepare_messages_malformed_tool_arguments(client):
         }
     ]
 
-    prepared = client._prepare_ollama_messages(messages)
-
-    assert len(prepared) == 1
-    assert prepared[0]["role"] == "assistant"
-    assert "tool_calls" in prepared[0]
-
-    # Should handle gracefully by wrapping in raw field
-    tool_call = prepared[0]["tool_calls"][0]
-    assert "raw" in tool_call["function"]["arguments"]
-    assert tool_call["function"]["arguments"]["raw"] == "not valid json"
+    # Pydantic should reject invalid JSON in arguments
+    with pytest.raises(ValidationError, match="arguments must be valid JSON"):
+        pydantic_messages = ensure_pydantic_messages(messages)
 
 
 @pytest.mark.asyncio
 async def test_create_completion_preserves_context(client):
     """Test that create_completion preserves conversation context."""
-    # Multi-turn conversation
+    from chuk_llm.core.models import Message
+
+    # Multi-turn conversation - Pydantic native!
     messages = [
-        {"role": "user", "content": "My favorite color is blue"},
-        {"role": "assistant", "content": "Blue is a nice color!"},
-        {"role": "user", "content": "What's my favorite color?"},
+        Message(role=MessageRole.USER, content="My favorite color is blue"),
+        Message(role=MessageRole.ASSISTANT, content="Blue is a nice color!"),
+        Message(role=MessageRole.USER, content="What's my favorite color?"),
     ]
 
-    # Mock the sync client to verify messages are passed correctly
-    def mock_chat(**kwargs):
-        # Verify all messages are passed
-        assert len(kwargs["messages"]) == 3
+    # Mock _create_sync to verify messages are passed correctly
+    async def mock_create_sync(msgs, tools=None, **kwargs):
+        # Verify all messages are passed as Pydantic
+        assert len(msgs) == 3
+        assert all(isinstance(m, Message) for m in msgs)
         # Return response that shows context was used
-        return MockOllamaResponse("Your favorite color is blue")
+        return {"response": "Your favorite color is blue", "tool_calls": []}
 
-    client.sync_client.chat = mock_chat
+    client._create_sync = mock_create_sync
 
     result = await client._regular_completion(messages)
 
@@ -1813,6 +1806,9 @@ async def test_streaming_preserves_context(client):
         {"role": "user", "content": "What city do I live in?"},
     ]
 
+    # Convert to Pydantic
+    pydantic_messages = ensure_pydantic_messages(messages)
+
     # Mock streaming response that uses context
     async def mock_stream():
         yield MockOllamaStreamChunk("You live in")
@@ -1826,27 +1822,30 @@ async def test_streaming_preserves_context(client):
     client.async_client.chat = mock_chat
 
     chunks = []
-    async for chunk in client._stream_completion_async(messages):
+    async for chunk in client._stream_completion_async(pydantic_messages):
         chunks.append(chunk["response"])
 
     full_response = "".join(chunks)
     assert "Tokyo" in full_response
 
 
-def test_context_logging(client, caplog):
+@pytest.mark.asyncio
+async def test_context_logging(client, caplog):
     """Test that context is properly logged for debugging."""
     import logging
+    from chuk_llm.core.models import Message
 
     caplog.set_level(logging.DEBUG)
 
+    # Pydantic native messages
     messages = [
-        {"role": "system", "content": "System prompt"},
-        {"role": "user", "content": "First message"},
-        {"role": "assistant", "content": "First response"},
-        {"role": "user", "content": "Second message"},
+        Message(role=MessageRole.SYSTEM, content="System prompt"),
+        Message(role=MessageRole.USER, content="First message"),
+        Message(role=MessageRole.ASSISTANT, content="First response"),
+        Message(role=MessageRole.USER, content="Second message"),
     ]
 
-    client._prepare_ollama_messages(messages)
+    await client._prepare_ollama_messages(messages)
 
     # Should log context information
     assert "Prepared 4 messages for Ollama with full context" in caplog.text
@@ -1883,11 +1882,13 @@ async def test_conversation_flow_logging(client, caplog):
     assert "user -> assistant -> user -> assistant -> user" in caplog.text
 
 
-def test_tool_response_metadata(client):
+@pytest.mark.asyncio
+async def test_tool_response_metadata(client):
     """Test that tool response metadata is properly added."""
     messages = [{"role": "tool", "name": "calculator", "content": "Result: 42"}]
 
-    prepared = client._prepare_ollama_messages(messages)
+    pydantic_messages = ensure_pydantic_messages(messages)
+    prepared = await client._prepare_ollama_messages(pydantic_messages)
 
     assert len(prepared) == 1
     assert prepared[0]["role"] == "user"  # Converted to user
@@ -1900,23 +1901,27 @@ def test_tool_response_metadata(client):
     assert prepared[0]["metadata"]["tool_name"] == "calculator"
 
 
-def test_empty_messages_list(client):
+@pytest.mark.asyncio
+async def test_empty_messages_list(client):
     """Test handling of empty message list."""
     messages = []
 
-    prepared = client._prepare_ollama_messages(messages)
+    pydantic_messages = ensure_pydantic_messages(messages)
+    prepared = await client._prepare_ollama_messages(pydantic_messages)
     assert prepared == []
 
     # Validation should pass for empty list
-    result = client._validate_conversation_context(messages)
+    result = client._validate_conversation_context(ensure_pydantic_messages(messages))
     assert result is True
 
 
-def test_system_message_passthrough(client):
+@pytest.mark.asyncio
+async def test_system_message_passthrough(client):
     """Test that system messages are passed through without conversion."""
     messages = [{"role": "system", "content": "You are a helpful assistant"}]
 
-    prepared = client._prepare_ollama_messages(messages)
+    pydantic_messages = ensure_pydantic_messages(messages)
+    prepared = await client._prepare_ollama_messages(pydantic_messages)
 
     assert len(prepared) == 1
     assert prepared[0]["role"] == "system"
@@ -1924,7 +1929,8 @@ def test_system_message_passthrough(client):
     # Should NOT be converted to user message
 
 
-def test_complex_tool_call_preservation(client):
+@pytest.mark.asyncio
+async def test_complex_tool_call_preservation(client):
     """Test preservation of complex tool calls with nested arguments."""
     messages = [
         {
@@ -1958,7 +1964,8 @@ def test_complex_tool_call_preservation(client):
         }
     ]
 
-    prepared = client._prepare_ollama_messages(messages)
+    pydantic_messages = ensure_pydantic_messages(messages)
+    prepared = await client._prepare_ollama_messages(pydantic_messages)
 
     assert len(prepared) == 1
     assert prepared[0]["role"] == "assistant"
@@ -1973,3 +1980,644 @@ def test_complex_tool_call_preservation(client):
     assert args["filters"]["location"] == ["Paris", "London"]
     assert args["filters"]["date_range"]["start"] == "2024-01-01"
     assert args["options"]["include_forecast"] is True
+
+
+# ---------------------------------------------------------------------------
+# Additional coverage tests for missing lines
+# ---------------------------------------------------------------------------
+
+
+def test_client_initialization_without_chat_attribute(mock_configuration):
+    """Test client initialization when ollama doesn't have chat attribute."""
+    with patch("ollama.chat", create=False):
+        # Remove chat attribute temporarily
+        import ollama
+        if hasattr(ollama, "chat"):
+            delattr(ollama, "chat")
+
+        with pytest.raises(ValueError, match="does not expose 'chat'"):
+            OllamaLLMClient(model="qwen3")
+
+
+def test_client_initialization_old_ollama_fallback(mock_configuration):
+    """Test client initialization with old ollama version (no host parameter)."""
+    # Mock old-style clients that don't accept host parameter
+    class OldMockAsyncClient:
+        def __init__(self):
+            pass
+
+    class OldMockClient:
+        def __init__(self):
+            pass
+
+        def show(self, model: str):
+            return MockOllamaShowResponse([])
+
+    with patch("ollama.AsyncClient", OldMockAsyncClient):
+        with patch("ollama.Client", OldMockClient):
+            # Should fall back to old initialization
+            client = OllamaLLMClient(model="qwen3", api_base="http://custom:11434")
+
+            assert client.async_client is not None
+            assert client.sync_client is not None
+
+
+def test_client_initialization_old_ollama_with_set_host(mock_configuration):
+    """Test client initialization with old ollama that has set_host method."""
+    # Mock old-style clients
+    class OldMockAsyncClient:
+        def __init__(self):
+            pass
+
+    class OldMockClient:
+        def __init__(self):
+            pass
+
+        def show(self, model: str):
+            return MockOllamaShowResponse([])
+
+    with patch("ollama.AsyncClient", OldMockAsyncClient):
+        with patch("ollama.Client", OldMockClient):
+            # Create a mock module with set_host attribute
+            with patch("ollama.set_host", create=True) as mock_set_host:
+                client = OllamaLLMClient(model="qwen3", api_base="http://custom:11434")
+
+                # Should call set_host
+                mock_set_host.assert_called_once_with("http://custom:11434")
+
+
+def test_get_model_info_with_error(mock_configuration, monkeypatch):
+    """Test get_model_info when there's an error in base info."""
+    client = OllamaLLMClient(model="qwen3")
+
+    # Mock get_model_info to return error
+    def mock_base_info():
+        return {"error": "Configuration not found"}
+
+    monkeypatch.setattr(
+        "chuk_llm.llm.providers._config_mixin.ConfigAwareProviderMixin.get_model_info",
+        lambda self: mock_base_info()
+    )
+
+    info = client.get_model_info()
+
+    # Should not add ollama_specific when there's an error
+    assert "error" in info
+    assert "ollama_specific" not in info
+
+
+def test_detect_model_family_code(client):
+    """Test model family detection for code models."""
+    client.model = "starcoder"
+    assert client._detect_model_family() == "code"
+
+    client.model = "deepseek-coder"
+    assert client._detect_model_family() == "code"
+
+
+@pytest.mark.asyncio
+async def test_prepare_messages_tool_args_as_list(client):
+    """Test that list arguments are rejected by Pydantic (must be JSON string)."""
+    from pydantic_core import ValidationError
+
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "test_tool",
+                        "arguments": [1, 2, 3],  # List instead of JSON string - invalid!
+                    }
+                }
+            ],
+        }
+    ]
+
+    # Pydantic expects arguments to be a JSON string, not a list
+    with pytest.raises(ValidationError):
+        pydantic_messages = ensure_pydantic_messages(messages)
+
+
+@pytest.mark.asyncio
+async def test_prepare_messages_with_pydantic_image_content(client):
+    """Test message preparation with actual Pydantic image content."""
+    from chuk_llm.core.models import TextContent, ImageUrlContent, Message
+
+    # Use real Pydantic content objects
+    message = Message(
+        role=MessageRole.USER,
+        content=[
+            TextContent(type=ContentType.TEXT, text="Look at this"),
+            ImageUrlContent(
+                type=ContentType.IMAGE_URL,
+                image_url="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+            ),
+        ],
+    )
+
+    client.supports_feature = lambda feature: feature == "vision"
+
+    prepared = await client._prepare_ollama_messages([message])
+
+    assert len(prepared) == 1
+    assert "images" in prepared[0]
+
+
+@pytest.mark.asyncio
+async def test_prepare_messages_unknown_role(client):
+    """Test that unknown roles are rejected by Pydantic."""
+    messages = [
+        {"role": "custom_role", "content": "Custom content"}
+    ]
+
+    # Pydantic should reject invalid role
+    with pytest.raises(ValueError, match="not a valid MessageRole"):
+        pydantic_messages = ensure_pydantic_messages(messages)
+
+
+@pytest.mark.asyncio
+async def test_create_sync_tools_not_supported(client):
+    """Test _create_sync when tools are provided but not supported."""
+    messages = [{"role": "user", "content": "Hello"}]
+    tools = [{"function": {"name": "test_tool"}}]
+
+    # Mock no tool support
+    client.supports_feature = lambda feature: feature != "tools"
+
+    mock_response = MockOllamaResponse("Hello")
+    client.async_client.chat = AsyncMock(return_value=mock_response)
+
+    pydantic_messages = ensure_pydantic_messages(messages)
+    pydantic_tools = ensure_pydantic_tools(tools)
+    result = await client._create_sync(pydantic_messages, pydantic_tools)
+
+    # Should succeed but not pass tools
+    assert result["response"] == "Hello"
+    call_kwargs = client.async_client.chat.call_args.kwargs
+    assert "tools" not in call_kwargs
+
+
+@pytest.mark.asyncio
+async def test_create_sync_with_think_parameter(client):
+    """Test _create_sync with think parameter for reasoning models."""
+    messages = [{"role": "user", "content": "Solve this"}]
+
+    mock_response = MockOllamaResponse("Solution")
+
+    # Mock async_client.chat to accept think parameter
+    async def mock_chat(model, messages, stream, think=None, **kwargs):
+        return mock_response
+
+    client.async_client.chat = mock_chat
+
+    # Test with boolean think
+    pydantic_messages = ensure_pydantic_messages(messages)
+    result = await client._create_sync(pydantic_messages, think=True)
+    assert result["response"] == "Solution"
+
+    # Test with string think
+    pydantic_messages = ensure_pydantic_messages(messages)
+    result = await client._create_sync(pydantic_messages, think="high")
+    assert result["response"] == "Solution"
+
+
+@pytest.mark.asyncio
+async def test_create_sync_with_think_parameter_not_supported(client):
+    """Test _create_sync when think parameter is not supported by async client."""
+    messages = [{"role": "user", "content": "Solve this"}]
+
+    mock_response = MockOllamaResponse("Solution")
+
+    # Mock async_client.chat that doesn't accept think parameter
+    async def mock_chat(model, messages, stream, **kwargs):
+        if "think" in kwargs:
+            raise TypeError("Unexpected keyword argument 'think'")
+        return mock_response
+
+    client.async_client.chat = mock_chat
+
+    # Should handle gracefully by not passing think
+    pydantic_messages = ensure_pydantic_messages(messages)
+    result = await client._create_sync(pydantic_messages, think="medium")
+    assert result["response"] == "Solution"
+
+
+def test_build_ollama_options_with_special_parameters(client, caplog):
+    """Test that special parameters are logged but not included in options."""
+    import logging
+    caplog.set_level(logging.DEBUG)
+
+    kwargs = {
+        "temperature": 0.7,
+        "think": "medium",
+        "stream": True,
+        "tools": [],
+        "messages": [],
+        "model": "qwen3",
+    }
+
+    options = client._build_ollama_options(kwargs)
+
+    # Special parameters should not be in options
+    assert "think" not in options
+    assert "stream" not in options
+    assert "tools" not in options
+    assert "messages" not in options
+    assert "model" not in options
+
+    # Regular parameter should be in options
+    assert "temperature" in options
+
+
+def test_parse_response_tool_args_as_other_type(client):
+    """Test parsing response when tool arguments are neither dict nor string."""
+    mock_tool_call = types.SimpleNamespace(
+        id="call_123",
+        function=types.SimpleNamespace(
+            name="test_tool",
+            arguments=12345  # Integer instead of dict/string
+        ),
+    )
+
+    mock_response = MockOllamaResponse(content="", tool_calls=[mock_tool_call])
+    client.supports_feature = lambda feature: feature == "tools"
+
+    result = client._parse_response(mock_response)
+
+    # Should convert to string
+    assert result["tool_calls"][0]["function"]["arguments"] == "12345"
+
+
+@pytest.mark.asyncio
+async def test_create_completion_context_validation_failure(client, caplog):
+    """Test create_completion when context validation fails."""
+    import logging
+    caplog.set_level(logging.DEBUG)
+
+    messages = [
+        {"role": "user", "content": "Hello"},
+        {"role": "user", "content": "Hello again"},  # Duplicate user messages
+    ]
+
+    async def mock_completion(messages, tools, **kwargs):
+        return {"response": "Hello!", "tool_calls": []}
+
+    client._regular_completion = mock_completion
+
+    await client.create_completion(messages, stream=False)
+
+    # Should log debug about duplicate roles
+    assert "Duplicate consecutive user messages detected" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_stream_completion_tools_not_supported(client):
+    """Test streaming when tools are provided but not supported."""
+    messages = [{"role": "user", "content": "Hello"}]
+
+    # Convert to Pydantic
+    pydantic_messages = ensure_pydantic_messages(messages)
+    tools = [{"function": {"name": "test_tool"}}]
+
+    # Mock no tool support
+    client.supports_feature = lambda feature: feature != "tools"
+
+    async def mock_stream():
+        yield MockOllamaStreamChunk("Hello")
+
+    async def mock_chat(**kwargs):
+        # Verify tools were not passed
+        assert "tools" not in kwargs
+        return mock_stream()
+
+    client.async_client.chat = mock_chat
+
+    chunks = []
+    async for chunk in client._stream_completion_async(messages, tools):
+        chunks.append(chunk)
+
+    assert len(chunks) == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_completion_with_think_parameter(client):
+    """Test streaming with think parameter."""
+    messages = [{"role": "user", "content": "Solve this"}]
+
+    # Convert to Pydantic
+    pydantic_messages = ensure_pydantic_messages(messages)
+
+    async def mock_stream():
+        yield MockOllamaStreamChunk("Solution")
+
+    async def mock_chat(**kwargs):
+        # Verify think parameter was passed
+        assert "think" in kwargs
+        assert kwargs["think"] == "high"
+        return mock_stream()
+
+    client.async_client.chat = mock_chat
+
+    chunks = []
+    async for chunk in client._stream_completion_async(messages, think="high"):
+        chunks.append(chunk)
+
+    assert len(chunks) == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_completion_with_think_boolean(client):
+    """Test streaming with boolean think parameter."""
+    messages = [{"role": "user", "content": "Solve this"}]
+
+    # Convert to Pydantic
+    pydantic_messages = ensure_pydantic_messages(messages)
+
+    async def mock_stream():
+        yield MockOllamaStreamChunk("Solution")
+
+    async def mock_chat(**kwargs):
+        # Boolean should be converted to "medium"
+        assert "think" in kwargs
+        assert kwargs["think"] == "medium"
+        return mock_stream()
+
+    client.async_client.chat = mock_chat
+
+    chunks = []
+    async for chunk in client._stream_completion_async(messages, think=True):
+        chunks.append(chunk)
+
+    assert len(chunks) == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_completion_tool_extraction_various_attributes(client):
+    """Test tool call extraction with various attribute names."""
+    messages = [{"role": "user", "content": "Use tools"}]
+
+    # Convert to Pydantic
+    pydantic_messages = ensure_pydantic_messages(messages)
+
+    # Mock tool call with different attribute names
+    class ToolCallWithCapitalAttrs:
+        def __init__(self):
+            self.Id = "call_caps"
+            self.Function = types.SimpleNamespace()
+            self.Function.Name = "tool_caps"
+            self.Function.Arguments = {"arg": "value"}
+
+    async def mock_stream():
+        yield MockOllamaStreamChunk("", tool_calls=[ToolCallWithCapitalAttrs()])
+
+    async def mock_chat(**kwargs):
+        return mock_stream()
+
+    client.async_client.chat = mock_chat
+    client.supports_feature = lambda feature: feature == "tools"
+
+    chunks = []
+    async for chunk in client._stream_completion_async(pydantic_messages):
+        chunks.append(chunk)
+
+    assert len(chunks) == 1
+    assert len(chunks[0]["tool_calls"]) == 1
+    assert chunks[0]["tool_calls"][0]["function"]["name"] == "tool_caps"
+
+
+@pytest.mark.asyncio
+async def test_stream_completion_tool_at_chunk_level(client):
+    """Test tool calls at chunk level (not in message)."""
+    messages = [{"role": "user", "content": "Use tools"}]
+
+    # Convert to Pydantic
+    pydantic_messages = ensure_pydantic_messages(messages)
+
+    # Create mock where tool_calls is at chunk level
+    class MockChunkWithToolCalls:
+        def __init__(self):
+            self.message = MockOllamaMessage("")
+            self.tool_calls = [
+                types.SimpleNamespace(
+                    id="chunk_call",
+                    function=types.SimpleNamespace(
+                        name="chunk_tool",
+                        arguments={}
+                    )
+                )
+            ]
+
+    async def mock_stream():
+        yield MockChunkWithToolCalls()
+
+    async def mock_chat(**kwargs):
+        return mock_stream()
+
+    client.async_client.chat = mock_chat
+    client.supports_feature = lambda feature: feature == "tools"
+
+    chunks = []
+    async for chunk in client._stream_completion_async(pydantic_messages):
+        chunks.append(chunk)
+
+    assert len(chunks) == 1
+    assert len(chunks[0]["tool_calls"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_completion_final_chunk_with_tools(client):
+    """Test final chunk (done=True) with tool calls."""
+    messages = [{"role": "user", "content": "Use tools"}]
+
+    # Convert to Pydantic
+    pydantic_messages = ensure_pydantic_messages(messages)
+
+    # Create mock final chunk with done=True
+    class MockFinalChunk:
+        def __init__(self):
+            self.message = MockOllamaMessage("Done", tool_calls=[
+                types.SimpleNamespace(
+                    id="final_call",
+                    function=types.SimpleNamespace(
+                        name="final_tool",
+                        arguments={}
+                    )
+                )
+            ])
+            self.done = True
+            self.tool_calls = None  # Tool calls only in message
+
+    async def mock_stream():
+        yield MockOllamaStreamChunk("Starting")
+        yield MockFinalChunk()
+
+    async def mock_chat(**kwargs):
+        return mock_stream()
+
+    client.async_client.chat = mock_chat
+    client.supports_feature = lambda feature: feature == "tools"
+
+    chunks = []
+    async for chunk in client._stream_completion_async(pydantic_messages):
+        chunks.append(chunk)
+
+    assert len(chunks) == 2
+    # Final chunk should have tool calls
+    assert len(chunks[1]["tool_calls"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_completion_empty_chunks_and_asyncio_sleep(client):
+    """Test empty chunk handling and asyncio sleep for large chunk counts."""
+    messages = [{"role": "user", "content": "Hello"}]
+
+    # Convert to Pydantic
+    pydantic_messages = ensure_pydantic_messages(messages)
+
+    async def mock_stream():
+        # Yield many chunks to trigger asyncio.sleep
+        for i in range(25):
+            if i % 5 == 0:
+                yield MockOllamaStreamChunk(f"chunk{i}")
+            else:
+                # Empty chunks
+                yield MockOllamaStreamChunk("")
+
+    async def mock_chat(**kwargs):
+        return mock_stream()
+
+    client.async_client.chat = mock_chat
+
+    chunks = []
+    async for chunk in client._stream_completion_async(pydantic_messages):
+        chunks.append(chunk)
+
+    # Should only get non-empty chunks
+    assert len(chunks) == 5
+
+
+@pytest.mark.asyncio
+async def test_stream_completion_deduplication(client):
+    """Test that duplicate tool calls are deduplicated."""
+    messages = [{"role": "user", "content": "Use tools"}]
+
+    # Convert to Pydantic
+    pydantic_messages = ensure_pydantic_messages(messages)
+
+    # Same tool call appears twice
+    mock_tool_call = types.SimpleNamespace(
+        id="dup_call",
+        function=types.SimpleNamespace(
+            name="dup_tool",
+            arguments={"arg": "value"}
+        )
+    )
+
+    class MockChunkWithDuplicates:
+        def __init__(self):
+            self.message = MockOllamaMessage("", tool_calls=[mock_tool_call])
+            self.tool_calls = [mock_tool_call]  # Same tool call in both places
+
+    async def mock_stream():
+        yield MockChunkWithDuplicates()
+
+    async def mock_chat(**kwargs):
+        return mock_stream()
+
+    client.async_client.chat = mock_chat
+    client.supports_feature = lambda feature: feature == "tools"
+
+    chunks = []
+    async for chunk in client._stream_completion_async(pydantic_messages):
+        chunks.append(chunk)
+
+    # Should only have one tool call (deduplicated)
+    assert len(chunks) == 1
+    assert len(chunks[0]["tool_calls"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_completion_tool_without_function_name(client):
+    """Test tool call extraction when function name is missing."""
+    messages = [{"role": "user", "content": "Use tools"}]
+
+    # Convert to Pydantic
+    pydantic_messages = ensure_pydantic_messages(messages)
+
+    # Tool call without function name
+    class ToolCallNoName:
+        def __init__(self):
+            self.id = "no_name_call"
+            self.function = types.SimpleNamespace()
+            # No name attribute
+            self.function.arguments = {}
+
+    async def mock_stream():
+        yield MockOllamaStreamChunk("", tool_calls=[ToolCallNoName()])
+
+    async def mock_chat(**kwargs):
+        return mock_stream()
+
+    client.async_client.chat = mock_chat
+    client.supports_feature = lambda feature: feature == "tools"
+
+    chunks = []
+    async for chunk in client._stream_completion_async(pydantic_messages):
+        chunks.append(chunk)
+
+    # Should not add tool call without name
+    assert len(chunks) == 0  # No content, no valid tool calls
+
+
+def test_validate_request_with_vision_content(client):
+    """Test request validation with vision content detection."""
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Look"},
+                {"type": "image_url", "image_url": {"url": "http://example.com/img.jpg"}},
+            ],
+        }
+    ]
+
+    # Convert to Pydantic
+    pydantic_messages = ensure_pydantic_messages(messages)
+
+    # Mock no vision support
+    client.supports_feature = lambda feature: feature != "vision"
+
+    validated_messages, validated_tools, validated_stream, validated_kwargs = (
+        client._validate_request_with_config(pydantic_messages, None, False)
+    )
+
+    # Should still pass through (warning logged)
+    assert len(validated_messages) == len(pydantic_messages)
+
+
+@pytest.mark.asyncio
+async def test_prepare_messages_with_pydantic_image_url_object(client):
+    """Test image handling with Pydantic ImageUrlContent object."""
+    from chuk_llm.core.models import ImageUrlContent, Message
+
+    # Use real Pydantic ImageUrlContent
+    message = Message(
+        role=MessageRole.USER,
+        content=[
+            ImageUrlContent(
+                type=ContentType.IMAGE_URL,
+                image_url="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+            )
+        ],
+    )
+
+    client.supports_feature = lambda feature: feature == "vision"
+
+    prepared = await client._prepare_ollama_messages([message])
+
+    assert len(prepared) == 1
+    assert "images" in prepared[0]

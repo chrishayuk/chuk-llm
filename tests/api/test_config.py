@@ -113,8 +113,9 @@ class TestAPIConfigClass:
         assert api_config._cached_client is None
         assert api_config._cache_key is None
 
+    @patch("chuk_llm.configuration.models.os.getenv", return_value=None)  # Prevent real env vars from leaking
     @patch("chuk_llm.configuration.get_config")
-    def test_api_config_get_current_config_success(self, mock_get_config):
+    def test_api_config_get_current_config_success(self, mock_get_config, mock_getenv):
         """Test APIConfig.get_current_config() with successful config loading."""
         # Mock the unified config manager
         mock_config_manager = Mock()
@@ -171,8 +172,9 @@ class TestAPIConfigClass:
         assert "text" in caps["features"]
         assert "streaming" in caps["features"]
 
+    @patch("chuk_llm.configuration.models.os.getenv", return_value=None)  # Prevent real env vars from leaking
     @patch("chuk_llm.configuration.get_config")
-    def test_api_config_get_current_config_no_global_settings(self, mock_get_config):
+    def test_api_config_get_current_config_no_global_settings(self, mock_get_config, mock_getenv):
         """Test get_current_config when global config fails to load."""
         mock_get_config.side_effect = ImportError("Module not found")
 
@@ -187,7 +189,7 @@ class TestAPIConfigClass:
         assert current_config["api_key"] is None
         assert current_config["api_base"] is None
 
-    @patch("chuk_llm.configuration.get_config")
+    @patch("chuk_llm.configuration.unified_config.get_config")
     def test_api_config_get_current_config_provider_error(self, mock_get_config):
         """Test get_current_config when provider lookup fails."""
         mock_config_manager = Mock()
@@ -322,7 +324,7 @@ class TestAPIConfigClass:
             with pytest.raises(RuntimeError, match="API connection failed"):
                 api_config.get_client()
 
-    @patch("chuk_llm.configuration.unified_config.ConfigValidator")
+    @patch("chuk_llm.configuration.ConfigValidator")
     def test_api_config_validate_current_config_valid(self, mock_validator):
         """Test validate_current_config with valid configuration."""
         mock_validator.validate_request_compatibility.return_value = (True, [])
@@ -350,7 +352,7 @@ class TestAPIConfigClass:
                 provider_name="openai", model="gpt-4", tools=None, stream=False
             )
 
-    @patch("chuk_llm.configuration.unified_config.ConfigValidator")
+    @patch("chuk_llm.configuration.ConfigValidator")
     def test_api_config_validate_current_config_invalid(self, mock_validator):
         """Test validate_current_config with invalid configuration."""
         mock_validator.validate_request_compatibility.return_value = (
@@ -367,7 +369,7 @@ class TestAPIConfigClass:
         assert "Missing API key" in result["issues"]
         assert "Model not supported" in result["issues"]
 
-    @patch("chuk_llm.configuration.unified_config.ConfigValidator")
+    @patch("chuk_llm.configuration.ConfigValidator")
     def test_api_config_validate_current_config_exception(self, mock_validator):
         """Test validate_current_config handles validation exceptions."""
         mock_validator.validate_request_compatibility.side_effect = RuntimeError(
@@ -436,7 +438,7 @@ class TestAPIConfigClass:
         # Based on the actual implementation, when get_config fails,
         # the method logs a warning but may still return True due to default behavior
         # Let's test that it doesn't crash and returns a boolean
-        with patch("chuk_llm.configuration.get_config") as mock_get_config:
+        with patch("chuk_llm.configuration.unified_config.get_config") as mock_get_config:
             mock_get_config.side_effect = RuntimeError("Config unavailable")
 
             result = api_config.supports_feature("streaming")
@@ -445,7 +447,7 @@ class TestAPIConfigClass:
             # The important thing is it doesn't crash
             assert isinstance(result, bool)
 
-    @patch("chuk_llm.configuration.get_config")
+    @patch("chuk_llm.configuration.unified_config.get_config")
     def test_api_config_auto_configure_for_task_success(self, mock_get_config):
         """Test auto_configure_for_task successfully configures."""
         mock_config_manager = Mock()
@@ -464,7 +466,7 @@ class TestAPIConfigClass:
 
         assert result is True
         # The implementation uses the first provider from the list
-        assert api_config.overrides["provider"] in ["openai", "anthropic", "groq"]
+        assert api_config.overrides["provider"] == "openai"
 
     def test_api_config_auto_configure_for_task_no_providers(self):
         """Test auto_configure_for_task when no providers available."""
@@ -472,7 +474,7 @@ class TestAPIConfigClass:
 
         # Looking at the actual implementation, it seems to have different behavior
         # Let's test what actually happens when no providers are available
-        with patch("chuk_llm.configuration.get_config") as mock_get_config:
+        with patch("chuk_llm.configuration.unified_config.get_config") as mock_get_config:
             mock_config_manager = Mock()
             mock_config_manager.get_all_providers.return_value = []
             mock_get_config.return_value = mock_config_manager
@@ -488,7 +490,7 @@ class TestAPIConfigClass:
         api_config = APIConfig()
 
         # Test that the method handles exceptions gracefully
-        with patch("chuk_llm.configuration.get_config") as mock_get_config:
+        with patch("chuk_llm.configuration.unified_config.get_config") as mock_get_config:
             mock_get_config.side_effect = RuntimeError("Config service down")
 
             result = api_config.auto_configure_for_task("general")
@@ -825,7 +827,7 @@ class TestErrorHandlingAndEdgeCases:
         assert config3["temperature"] == 0.9  # Overwritten
         assert config3["max_tokens"] == 1000  # Preserved
 
-    @patch("chuk_llm.configuration.get_config")
+    @patch("chuk_llm.configuration.unified_config.get_config")
     def test_get_current_config_partial_failure(self, mock_get_config):
         """Test get_current_config when some operations fail."""
         # Mock config manager that works for global settings but fails for provider
