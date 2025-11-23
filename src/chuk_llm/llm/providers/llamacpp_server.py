@@ -239,12 +239,16 @@ class LlamaCppServerManager:
                     if test_response.status_code == 200:
                         log.debug("Model loaded and ready")
                         return
-                    elif test_response.status_code != 503:  # 503 means still loading
-                        # Some other error, but server is responding
+                    elif test_response.status_code == 503:
+                        # 503 means model is still loading, keep waiting
+                        log.debug("Model still loading (503), waiting...")
+                    else:
+                        # Some other error (400, etc.) - log it but keep waiting
+                        # The model might still be initializing
                         log.debug(
-                            f"Got response code {test_response.status_code}, considering ready"
+                            f"Got response code {test_response.status_code} during startup, "
+                            "continuing to wait for 200..."
                         )
-                        return
                 except (httpx.ConnectError, httpx.ReadTimeout):
                     pass
 
@@ -263,18 +267,30 @@ class LlamaCppServerManager:
         if self.process is None:
             return
 
+        # Check if process already exited
+        if self.process.returncode is not None:
+            log.debug(f"Process already exited with code {self.process.returncode}")
+            self.process = None
+            return
+
         log.info("Stopping llama-server...")
 
-        # Try graceful shutdown first
-        self.process.terminate()
-
         try:
-            await asyncio.wait_for(self.process.wait(), timeout=5.0)
-        except TimeoutError:
-            # Force kill if graceful shutdown fails
-            log.warning("Graceful shutdown failed, force killing...")
-            self.process.kill()
-            await self.process.wait()
+            # Try graceful shutdown first
+            self.process.terminate()
+
+            try:
+                await asyncio.wait_for(self.process.wait(), timeout=5.0)
+            except TimeoutError:
+                # Force kill if graceful shutdown fails
+                log.warning("Graceful shutdown failed, force killing...")
+                self.process.kill()
+                await self.process.wait()
+        except ProcessLookupError:
+            # Process already died - this is fine
+            log.debug("Process already terminated")
+        except Exception as e:
+            log.debug(f"Error stopping server: {e}")
 
         self.process = None
         log.info("llama-server stopped")

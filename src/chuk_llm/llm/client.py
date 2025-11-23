@@ -146,57 +146,117 @@ def _create_client_internal(
         # Check if target_model is already a valid file path
         model_path = Path(target_model)
         if not model_path.exists():
-            # Try to resolve from Ollama models
+            # Try to resolve from llama.cpp cache first, then Ollama
             try:
-                from chuk_llm.registry.resolvers.llamacpp_ollama import (
-                    OllamaModel,
-                    discover_ollama_models,
-                )
+                import os
 
-                models = [
-                    m
-                    for m in discover_ollama_models()
-                    if not m.name.startswith("sha256-")
-                ]
+                # Check llama.cpp cache directory
+                llamacpp_cache = Path.home() / "Library" / "Caches" / "llama.cpp"
+                if llamacpp_cache.exists():
+                    # Look for GGUF files matching the model name
+                    # Convert model name format: "gpt-oss:20b" -> "gpt-oss-20b"
+                    model_name_normalized = target_model.lower().replace(":", "-")
 
-                # Try to find matching model by name
-                resolved_ollama_model: OllamaModel | None = None
-                target_lower = target_model.lower()
+                    for gguf_file in llamacpp_cache.glob("*.gguf"):
+                        # Skip .etag files and mmproj files (vision projections)
+                        if (
+                            gguf_file.suffix == ".etag"
+                            or "mmproj" in gguf_file.name.lower()
+                        ):
+                            continue
 
-                # Try exact match first
-                for m in models:
-                    if m.name.lower() == target_lower:
-                        resolved_ollama_model = m
-                        break
+                        # For llama.cpp cache, we want an exact match of the model name pattern
+                        # Files are named like: ggml-org_gpt-oss-20b-GGUF_gpt-oss-20b-mxfp4.gguf
+                        filename_lower = gguf_file.stem.lower()
 
-                # Try partial match (e.g., "qwen3" matches "library/qwen3:0.6b")
-                if not resolved_ollama_model:
+                        # Check if the normalized model name appears in the filename
+                        # But also check it's not a vision model (has -vl suffix)
+                        if (
+                            model_name_normalized in filename_lower
+                            and "-vl-" not in filename_lower
+                            and not filename_lower.endswith("-vl")
+                        ):
+                            logger.info(
+                                f"Resolved llamacpp model '{target_model}' to cached file: "
+                                f"{gguf_file.name} ({gguf_file.stat().st_size / 1e9:.1f} GB)"
+                            )
+                            target_model = str(gguf_file)
+                            break
+
+                # If not found in llama.cpp cache, try Ollama models
+                if (
+                    target_model == target_model
+                ):  # Model name unchanged, not resolved yet
+                    pass  # Fall through to Ollama resolution below
+            except Exception as e:
+                logger.debug(f"Error checking llama.cpp cache: {e}")
+
+            # Try to resolve from Ollama models if not found in cache
+            if model_path == Path(target_model) or not Path(target_model).exists():
+                try:
+                    from chuk_llm.registry.resolvers.llamacpp_ollama import (
+                        OllamaModel,
+                        discover_ollama_models,
+                    )
+
+                    models = [
+                        m
+                        for m in discover_ollama_models()
+                        if not m.name.startswith("sha256-")
+                    ]
+
+                    # Try to find matching model by name
+                    resolved_ollama_model: OllamaModel | None = None
+                    target_lower = target_model.lower()
+
+                    # Try exact match first
                     for m in models:
-                        if target_lower in m.name.lower():
+                        if m.name.lower() == target_lower:
                             resolved_ollama_model = m
                             break
 
-                if resolved_ollama_model:
-                    logger.info(
-                        f"Resolved llamacpp model '{target_model}' to {resolved_ollama_model.name} "
-                        f"({resolved_ollama_model.size_bytes / 1e9:.1f} GB)"
+                    # Try exact match with library/ prefix
+                    if not resolved_ollama_model:
+                        for m in models:
+                            if m.name.lower() == f"library/{target_lower}":
+                                resolved_ollama_model = m
+                                break
+
+                    # Try partial match (e.g., "qwen3" matches "library/qwen3:0.6b")
+                    if not resolved_ollama_model:
+                        for m in models:
+                            # Match if target is in the model name (after library/)
+                            model_name_parts = m.name.lower().split("/")
+                            model_basename = (
+                                model_name_parts[-1]
+                                if model_name_parts
+                                else m.name.lower()
+                            )
+                            if target_lower in model_basename:
+                                resolved_ollama_model = m
+                                break
+
+                    if resolved_ollama_model:
+                        logger.info(
+                            f"Resolved llamacpp model '{target_model}' to {resolved_ollama_model.name} "
+                            f"({resolved_ollama_model.size_bytes / 1e9:.1f} GB)"
+                        )
+                        target_model = str(resolved_ollama_model.gguf_path)
+                    else:
+                        # Model not found in Ollama, provide helpful error
+                        available = [m.name for m in models[:5]]
+                        raise ValueError(
+                            f"llamacpp model '{target_model}' not found. "
+                            f"Provide a GGUF file path or install via Ollama.\n"
+                            f"Available Ollama models: {available}{'...' if len(models) > 5 else ''}\n"
+                            f"Install with: ollama pull {target_model}"
+                        )
+                except ImportError:
+                    # Ollama discovery not available, just pass through
+                    logger.warning(
+                        f"Could not resolve llamacpp model '{target_model}' - "
+                        f"provide full GGUF file path"
                     )
-                    target_model = str(resolved_ollama_model.gguf_path)
-                else:
-                    # Model not found in Ollama, provide helpful error
-                    available = [m.name for m in models[:5]]
-                    raise ValueError(
-                        f"llamacpp model '{target_model}' not found. "
-                        f"Provide a GGUF file path or install via Ollama.\n"
-                        f"Available Ollama models: {available}{'...' if len(models) > 5 else ''}\n"
-                        f"Install with: ollama pull {target_model}"
-                    )
-            except ImportError:
-                # Ollama discovery not available, just pass through
-                logger.warning(
-                    f"Could not resolve llamacpp model '{target_model}' - "
-                    f"provide full GGUF file path"
-                )
 
     elif target_model:
         # For non-Azure providers, validate the model exists

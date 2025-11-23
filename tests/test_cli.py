@@ -208,13 +208,14 @@ class TestCLIModelResolution:
     def test_model_resolution_with_ensure_model_available(self):
         """Test that _ensure_model_available is called for resolution"""
         cli = ChukLLMCLI()
-        
+
         # Mock config
         cli.config = Mock()
         cli.config.get_global_aliases.return_value = {}
-        cli.config._ensure_model_available.return_value = 'granite3.3:latest'
+        # _ensure_model_available now returns True/False, not the resolved model
+        cli.config._ensure_model_available.return_value = True
         cli.config.get_provider.return_value = Mock(models=['granite3.3:latest'])
-        
+
         with patch.object(cli, 'stream_response', return_value="Response") as mock_stream:
             result = cli.ask_model(
                 'Test prompt',
@@ -222,14 +223,14 @@ class TestCLIModelResolution:
                 'granite3.3',
                 system_prompt='Be a pirate'
             )
-            
+
             # Verify _ensure_model_available was called
             cli.config._ensure_model_available.assert_called_once_with('ollama', 'granite3.3')
-            
-            # Verify the resolved model was used
+
+            # Verify the original model name was used (no longer modified by _ensure_model_available)
             mock_stream.assert_called_once()
             call_args = mock_stream.call_args
-            assert call_args[0][2] == 'granite3.3:latest'
+            assert call_args[0][2] == 'granite3.3'
     
     def test_model_not_found_warning(self):
         """Test that a warning is shown when model is not found"""

@@ -189,8 +189,13 @@ class LlamaCppLLMClient(OpenAILLMClient):
         """Stop the llama-server process."""
         if self._server_started:
             log.info("Stopping llama-server...")
-            await self._server_manager.stop()
-            self._server_started = False
+            try:
+                await self._server_manager.stop()
+            except Exception as e:
+                # Log at debug level to avoid CLI pollution
+                log.debug(f"Error stopping server: {e}")
+            finally:
+                self._server_started = False
 
     async def is_server_healthy(self) -> bool:
         """Check if server is healthy."""
@@ -266,9 +271,16 @@ class LlamaCppLLMClient(OpenAILLMClient):
                 # If there's a running event loop, schedule cleanup
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
-                    loop.create_task(self.stop_server())
+                    # Create task but don't wait for it - this can cause warnings
+                    # but it's better than blocking __del__
+                    task = loop.create_task(self.stop_server())
+                    # Suppress "Task exception was never retrieved" by adding done callback
+                    task.add_done_callback(
+                        lambda t: None if t.exception() is None else None
+                    )
                 else:
                     # Run in new loop if no loop is running
                     asyncio.run(self.stop_server())
-            except Exception as e:
-                log.warning(f"Failed to stop server in __del__: {e}")
+            except Exception:
+                # Silently ignore all exceptions in __del__
+                pass

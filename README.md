@@ -7,7 +7,7 @@ from chuk_llm import quick_question
 print(quick_question("What is 2+2?"))  # "2 + 2 equals 4."
 ```
 
-## ✨ What's New in v0.12.7
+## ✨ What's New in v0.14
 
 **Revolutionary Registry System:**
 - 🧠 **Dynamic Model Discovery** - No more hardcoded model lists, automatic capability detection

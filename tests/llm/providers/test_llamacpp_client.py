@@ -354,14 +354,16 @@ class TestLlamaCppClientCleanup:
 
         client = LlamaCppLLMClient(model=model_file, port=8080)
 
-        # Mock the server manager's stop method instead
-        client._server_manager.stop = AsyncMock()
+        # Mock stop_server and parent's close method
+        client.stop_server = AsyncMock()
         client._server_started = True
 
-        await client.close()
+        # Mock parent's close method to avoid calling real OpenAI client close
+        with patch.object(client.__class__.__bases__[0], 'close', new_callable=AsyncMock):
+            await client.close()
 
-        # Should call stop_server which calls manager.stop
-        client._server_manager.stop.assert_called_once()
+        # Should call stop_server
+        client.stop_server.assert_called_once()
 
     def test_del_attempts_cleanup(self, tmp_path):
         """Test __del__ attempts to stop server."""

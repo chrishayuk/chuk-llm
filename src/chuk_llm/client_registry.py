@@ -208,9 +208,13 @@ async def cleanup_registry() -> None:
             if hasattr(client, "close"):
                 await client.close()
         except Exception as e:
-            # Ignore "Event loop is closed" errors during cleanup - this is expected
-            if "Event loop is closed" not in str(e):
-                log.warning(f"Error closing client: {e}")
+            # Ignore "Event loop is closed" and "different loop" errors during cleanup
+            error_str = str(e)
+            if (
+                "Event loop is closed" not in error_str
+                and "different loop" not in error_str
+            ):
+                log.debug(f"Error closing client: {e}")
 
     log.info("Client registry cleanup complete")
 
