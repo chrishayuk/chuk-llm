@@ -49,6 +49,7 @@ try:
         demo_reasoning,
         demo_streaming,
         demo_structured_outputs,
+        demo_tokens_per_second,
         demo_vision,
         demo_vision_url,
         run_all_demos,
@@ -64,16 +65,20 @@ def find_available_port(start_port: int = 8082, max_attempts: int = 100) -> int:
     for port in range(start_port, start_port + max_attempts):
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind(('127.0.0.1', port))
+                s.bind(("127.0.0.1", port))
                 return port
         except OSError:
             continue
-    raise RuntimeError(f"No available ports found in range {start_port}-{start_port + max_attempts}")
+    raise RuntimeError(
+        f"No available ports found in range {start_port}-{start_port + max_attempts}"
+    )
 
 
 def display_available_models(models):
     """Display discovered Ollama models."""
-    print(f"\n✓ Found {len(models)} Ollama model(s) (total: {sum(m.size_bytes for m in models) / 1e9:.1f} GB):")
+    print(
+        f"\n✓ Found {len(models)} Ollama model(s) (total: {sum(m.size_bytes for m in models) / 1e9:.1f} GB):"
+    )
     for i, model in enumerate(models[:10], 1):
         size_gb = model.size_bytes / (1024**3)
         print(f"  {i}. {model.name}")
@@ -101,13 +106,13 @@ async def main():
     )
     parser.add_argument(
         "--model",
-        default="gpt-oss",
-        help="Main model pattern to search for (default: gpt-oss)",
+        default="qwen3",
+        help="Main model pattern to search for (default: qwen3 - use smallest model)",
     )
     parser.add_argument(
         "--vision-model",
-        default="llama3.2-vision",
-        help="Vision model pattern to search for (default: llama3.2-vision)",
+        default="granite3.2-vision",
+        help="Vision model pattern to search for (default: granite3.2-vision - smaller and faster)",
     )
     parser.add_argument(
         "--port",
@@ -131,16 +136,28 @@ async def main():
         "--skip-tools", action="store_true", help="Skip function calling demo"
     )
     parser.add_argument(
-        "--skip-vision", action="store_true", help="Skip vision demo"
+        "--skip-vision",
+        action="store_true",
+        default=True,
+        help="Skip vision demo (default: True - llama.cpp requires mmproj files)",
+    )
+    parser.add_argument(
+        "--enable-vision",
+        action="store_true",
+        help="Enable vision demo (requires mmproj file - advanced usage)",
     )
     parser.add_argument(
         "--demo",
         type=int,
-        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
-        help="Run specific demo (1=basic, 2=streaming, 3=tools, 4=vision, 5=vision-url, 6=json, 7=conversation, 8=discovery, 9=parameters, 10=comparison, 11=dynamic, 12=errors)",
+        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        help="Run specific demo (1=basic, 2=streaming, 3=tokens/sec, 4=tools, 5=vision, 6=vision-url, 7=json, 8=conversation, 9=discovery, 10=parameters, 11=comparison, 12=dynamic, 13=errors)",
     )
 
     args = parser.parse_args()
+
+    # Handle --enable-vision flag
+    if args.enable_vision:
+        args.skip_vision = False
 
     print("\n" + "=" * 70)
     print("🦙 llama.cpp + Ollama Bridge Examples")
@@ -161,12 +178,14 @@ async def main():
 
     display_available_models(models)
 
-    # Find main model (prefer gpt-oss for reasoning)
-    main_model = find_model_by_pattern(models, [args.model, "gpt-oss"])
+    # Find main model (prefer qwen3 for speed, fallback to first available)
+    main_model = find_model_by_pattern(models, [args.model, "qwen3", "llama3.2"])
     if not main_model:
-        print(f"\n❌ No model found matching '{args.model}' or 'gpt-oss'")
-        print("   Pull with: ollama pull gpt-oss:20b")
-        sys.exit(1)
+        # Use first (smallest) model as fallback
+        main_model = models[0]
+        print(
+            f"\n⚠️  No model found matching '{args.model}', using smallest: {main_model.name}"
+        )
 
     print(f"\n📦 Main Model: {main_model.name}")
     print(f"   Path: {main_model.gguf_path}")
@@ -175,19 +194,64 @@ async def main():
     # Find vision model if needed
     vision_model = None
     if not args.skip_vision:
-        vision_model = find_model_by_pattern(models, [args.vision_model, "llama3.2-vision", "vision"])
+        # Try to find vision models, preferring smaller ones
+        vision_candidates = []
+        for pattern in [
+            args.vision_model,
+            "granite3.2-vision",
+            "llama3.2-vision",
+            "vision",
+        ]:
+            model = find_model_by_pattern(models, [pattern])
+            if model:
+                vision_candidates.append(model)
+
+        # Remove duplicates and sort by size (prefer smaller models)
+        seen_paths = set()
+        unique_candidates = []
+        for model in vision_candidates:
+            if model.gguf_path not in seen_paths:
+                seen_paths.add(model.gguf_path)
+                unique_candidates.append(model)
+        unique_candidates.sort(key=lambda m: m.size_bytes)
+
+        # Find first model that's reasonably sized (< 5 GB)
+        for candidate in unique_candidates:
+            size_gb = candidate.size_bytes / (1024**3)
+            if size_gb < 5.0:
+                vision_model = candidate
+                break
+
+        # If no small model found, use the smallest available but warn
+        if not vision_model and unique_candidates:
+            vision_model = unique_candidates[0]
+            size_gb = vision_model.size_bytes / (1024**3)
+            if size_gb >= 5.0:
+                print(
+                    f"\n⚠️  Vision model '{vision_model.name}' is large ({size_gb:.2f} GB)"
+                )
+                print("   This may cause llama-server to crash. Skipping vision demos.")
+                print("   Try: ollama pull granite3.2-vision  # Smaller vision model")
+                args.skip_vision = True
+                vision_model = None
+
         if vision_model:
             print(f"\n📦 Vision Model: {vision_model.name}")
             print(f"   Path: {vision_model.gguf_path}")
             print(f"   Size: {vision_model.size_bytes / (1024**3):.2f} GB")
-        else:
+        elif not args.skip_vision:
             print(f"\n⚠️  No vision model found, skipping vision demos")
-            print("   Pull with: ollama pull llama3.2-vision")
+            print("   Pull with: ollama pull granite3.2-vision  # Small vision model")
+            print(
+                "            ollama pull llama3.2-vision       # Larger but more capable"
+            )
             args.skip_vision = True
 
     # Auto-detect capabilities
     model_lower = main_model.name.lower()
-    has_reasoning = "gpt-oss" in model_lower or "deepseek-r1" in model_lower or "qwq" in model_lower
+    has_reasoning = (
+        "gpt-oss" in model_lower or "deepseek-r1" in model_lower or "qwq" in model_lower
+    )
     if has_reasoning:
         print("\n✓ Reasoning model detected")
 
@@ -224,10 +288,15 @@ async def main():
 
             # Get actual model name from server
             import httpx
+
             async with httpx.AsyncClient() as http_client:
                 response = await http_client.get(f"{main_server.base_url}/v1/models")
                 models_data = response.json()
-                actual_model_name = models_data["data"][0]["id"] if models_data.get("data") else main_model.name
+                actual_model_name = (
+                    models_data["data"][0]["id"]
+                    if models_data.get("data")
+                    else main_model.name
+                )
 
             # Create main client
             client = OpenAILLMClient(
@@ -254,9 +323,15 @@ async def main():
 
                     # Get actual vision model name
                     async with httpx.AsyncClient() as http_client:
-                        response = await http_client.get(f"{vision_server.base_url}/v1/models")
+                        response = await http_client.get(
+                            f"{vision_server.base_url}/v1/models"
+                        )
                         models_data = response.json()
-                        actual_vision_model_name = models_data["data"][0]["id"] if models_data.get("data") else vision_model.name
+                        actual_vision_model_name = (
+                            models_data["data"][0]["id"]
+                            if models_data.get("data")
+                            else vision_model.name
+                        )
 
                     vision_client = OpenAILLMClient(
                         model=actual_vision_model_name,
@@ -266,11 +341,20 @@ async def main():
                     print("=" * 70)
 
                     # Run demos with both servers
-                    await run_demos(args, client, vision_client, actual_model_name, actual_vision_model_name, models)
+                    await run_demos(
+                        args,
+                        client,
+                        vision_client,
+                        actual_model_name,
+                        actual_vision_model_name,
+                        models,
+                    )
             else:
                 # Run demos without vision
                 print("=" * 70)
-                await run_demos(args, client, client, actual_model_name, actual_model_name, models)
+                await run_demos(
+                    args, client, client, actual_model_name, actual_model_name, models
+                )
 
         print("\n🛑 Servers stopped")
 
@@ -282,7 +366,9 @@ async def main():
         print("  - Advanced llama.cpp features (grammars, custom sampling)")
         print("  - OpenAI-compatible API (works with existing code)")
         print("  - No API keys needed (100% local)")
-        print(f"\n💡 Total storage saved: {sum(m.size_bytes for m in models) / 1e9:.1f} GB")
+        print(
+            f"\n💡 Total storage saved: {sum(m.size_bytes for m in models) / 1e9:.1f} GB"
+        )
         print("   (no duplicate downloads!)")
 
     except FileNotFoundError as e:
@@ -293,6 +379,7 @@ async def main():
     except Exception as e:
         print(f"\n❌ Error: {e}")
         import traceback
+
         traceback.print_exc()
 
 
@@ -301,18 +388,37 @@ async def run_demos(args, client, vision_client, main_model, vision_model, all_m
     if args.demo:
         # Run specific demo
         demo_map = {
-            1: ("Basic Completion", demo_basic_completion(client, "llamacpp", main_model)),
+            1: (
+                "Basic Completion",
+                demo_basic_completion(client, "llamacpp", main_model),
+            ),
             2: ("Streaming", demo_streaming(client, "llamacpp", main_model)),
-            3: ("Function Calling", demo_function_calling(client, "llamacpp", main_model)),
-            4: ("Vision", demo_vision(vision_client, "llamacpp", vision_model)),
-            5: ("Vision with URL", demo_vision_url(vision_client, "llamacpp", vision_model)),
-            6: ("JSON Mode", demo_json_mode(client, "llamacpp", main_model)),
-            7: ("Conversation", demo_conversation(client, "llamacpp", main_model)),
-            8: ("Model Discovery", demo_model_discovery(client, "llamacpp", main_model)),
-            9: ("Parameters", demo_parameters(client, "llamacpp", main_model)),
-            10: ("Model Comparison", demo_model_comparison("llamacpp", [main_model, vision_model])),
-            11: ("Dynamic Model Call", demo_dynamic_model_call("llamacpp")),
-            12: ("Error Handling", demo_error_handling(client, "llamacpp", main_model)),
+            3: (
+                "Tokens Per Second",
+                demo_tokens_per_second(client, "llamacpp", main_model),
+            ),
+            4: (
+                "Function Calling",
+                demo_function_calling(client, "llamacpp", main_model),
+            ),
+            5: ("Vision", demo_vision(vision_client, "llamacpp", vision_model)),
+            6: (
+                "Vision with URL",
+                demo_vision_url(vision_client, "llamacpp", vision_model),
+            ),
+            7: ("JSON Mode", demo_json_mode(client, "llamacpp", main_model)),
+            8: ("Conversation", demo_conversation(client, "llamacpp", main_model)),
+            9: (
+                "Model Discovery",
+                demo_model_discovery(client, "llamacpp", main_model),
+            ),
+            10: ("Parameters", demo_parameters(client, "llamacpp", main_model)),
+            11: (
+                "Model Comparison",
+                demo_model_comparison("llamacpp", [main_model, vision_model]),
+            ),
+            12: ("Dynamic Model Call", demo_dynamic_model_call("llamacpp")),
+            13: ("Error Handling", demo_error_handling(client, "llamacpp", main_model)),
         }
 
         name, demo_coro = demo_map[args.demo]
@@ -321,6 +427,7 @@ async def run_demos(args, client, vision_client, main_model, vision_model, all_m
         except Exception as e:
             print(f"\n❌ Error in {name}: {e}")
             import traceback
+
             traceback.print_exc()
     else:
         # Run all demos

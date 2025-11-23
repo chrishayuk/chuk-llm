@@ -901,8 +901,15 @@ class OpenAILLMClient(
                             delta = choice.delta
 
                             # Handle content - yield immediately (this works fine)
+                            # FIXED: Also check reasoning_content for llama.cpp thinking models
                             if hasattr(delta, "content") and delta.content is not None:
                                 content_delta = str(delta.content)
+                                total_content_chars += len(content_delta)
+                            elif (
+                                hasattr(delta, "reasoning_content")
+                                and delta.reasoning_content is not None
+                            ):
+                                content_delta = str(delta.reasoning_content)
                                 total_content_chars += len(content_delta)
 
                             # Handle tool calls - FIXED: accumulate until complete

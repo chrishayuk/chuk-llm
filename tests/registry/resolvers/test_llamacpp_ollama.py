@@ -159,7 +159,9 @@ class TestOllamaModelRegistry:
         ollama_dir = tmp_path / "ollama"
 
         # Create manifest structure
-        manifests_dir = ollama_dir / "models" / "manifests" / "registry.ollama.ai" / "library"
+        manifests_dir = (
+            ollama_dir / "models" / "manifests" / "registry.ollama.ai" / "library"
+        )
         manifests_dir.mkdir(parents=True)
 
         # Create manifest file
@@ -168,7 +170,7 @@ class TestOllamaModelRegistry:
             "layers": [
                 {
                     "mediaType": "application/vnd.ollama.image.model",
-                    "digest": "sha256-abc123"
+                    "digest": "sha256-abc123",
                 }
             ]
         }
@@ -184,7 +186,7 @@ class TestOllamaModelRegistry:
         models = registry.discover_models()
 
         assert len(models) == 1
-        assert models[0].name == "registry.ollama.ai/library:llama3.2"
+        assert models[0].name == "library:llama3.2"
         assert models[0].gguf_path == blob_file
 
     def test_discover_models_with_gguf_mediatype(self, tmp_path):
@@ -197,12 +199,7 @@ class TestOllamaModelRegistry:
 
         manifest_file = manifests_dir / "model1"
         manifest = {
-            "layers": [
-                {
-                    "mediaType": "application/vnd.gguf",
-                    "digest": "sha256-def456"
-                }
-            ]
+            "layers": [{"mediaType": "application/vnd.gguf", "digest": "sha256-def456"}]
         }
         manifest_file.write_text(json.dumps(manifest))
 
@@ -216,7 +213,7 @@ class TestOllamaModelRegistry:
         models = registry.discover_models()
 
         assert len(models) == 1
-        assert models[0].name == "registry/lib:model1"
+        assert models[0].name == "lib:model1"
 
     def test_discover_models_ignores_invalid_json(self, tmp_path):
         """Test that invalid manifest JSON is ignored."""
@@ -276,7 +273,12 @@ class TestOllamaModelRegistry:
         manifests_dir.mkdir(parents=True)
         manifest_file = manifests_dir / "llama3"
         manifest = {
-            "layers": [{"mediaType": "application/vnd.ollama.image.model", "digest": "sha256-abc"}]
+            "layers": [
+                {
+                    "mediaType": "application/vnd.ollama.image.model",
+                    "digest": "sha256-abc",
+                }
+            ]
         }
         manifest_file.write_text(json.dumps(manifest))
 
@@ -287,10 +289,10 @@ class TestOllamaModelRegistry:
         blob_file.write_bytes(b"0" * (101 * 1024 * 1024))
 
         registry = OllamaModelRegistry(ollama_data_dir=ollama_dir)
-        model = registry.find_model("registry/lib:llama3")
+        model = registry.find_model("lib:llama3")
 
         assert model is not None
-        assert model.name == "registry/lib:llama3"
+        assert model.name == "lib:llama3"
         assert model.gguf_path == blob_file
 
     def test_find_model_partial_match(self, tmp_path):
@@ -301,7 +303,12 @@ class TestOllamaModelRegistry:
         manifests_dir.mkdir(parents=True)
         manifest_file = manifests_dir / "llama3.2-instruct"
         manifest = {
-            "layers": [{"mediaType": "application/vnd.ollama.image.model", "digest": "sha256-xyz"}]
+            "layers": [
+                {
+                    "mediaType": "application/vnd.ollama.image.model",
+                    "digest": "sha256-xyz",
+                }
+            ]
         }
         manifest_file.write_text(json.dumps(manifest))
 
@@ -382,7 +389,7 @@ class TestOllamaModel:
             name="test-model",
             gguf_path=Path("/path/to/model.gguf"),
             size_bytes=1024 * 1024 * 1024,
-            digest="sha256-abc123"
+            digest="sha256-abc123",
         )
 
         assert model.name == "test-model"

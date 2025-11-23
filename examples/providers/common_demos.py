@@ -12,7 +12,13 @@ import time
 from typing import Any
 
 from chuk_llm.configuration import Feature, get_config
-from chuk_llm.core.models import Message, Tool, ToolFunction, TextContent, ImageUrlContent
+from chuk_llm.core.models import (
+    Message,
+    Tool,
+    ToolFunction,
+    TextContent,
+    ImageUrlContent,
+)
 from chuk_llm.core.enums import MessageRole, ContentType, ToolType
 
 
@@ -20,20 +26,17 @@ from chuk_llm.core.enums import MessageRole, ContentType, ToolType
 # Demo 1: Basic Completion
 # =============================================================================
 
+
 async def demo_basic_completion(client, provider: str, model: str):
     """Basic text completion - works with all providers"""
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("Demo 1: Basic Completion")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     messages = [
+        Message(role=MessageRole.SYSTEM, content="You are a helpful AI assistant."),
         Message(
-            role=MessageRole.SYSTEM,
-            content="You are a helpful AI assistant."
-        ),
-        Message(
-            role=MessageRole.USER,
-            content="Explain quantum computing in 2 sentences."
+            role=MessageRole.USER, content="Explain quantum computing in 2 sentences."
         ),
     ]
 
@@ -56,17 +59,17 @@ async def demo_basic_completion(client, provider: str, model: str):
 # Demo 2: Streaming
 # =============================================================================
 
+
 async def demo_streaming(client, provider: str, model: str):
     """Streaming response - works with all providers"""
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("Demo 2: Streaming")
-    print(f"{'='*70}")
-
+    print(f"{'=' * 70}")
 
     messages = [
         Message(
             role=MessageRole.USER,
-            content="Write a haiku about artificial intelligence."
+            content="Write a haiku about artificial intelligence.",
         ),
     ]
 
@@ -96,14 +99,108 @@ async def demo_streaming(client, provider: str, model: str):
 
 
 # =============================================================================
-# Demo 3: Function Calling
+# Demo 3: Tokens Per Second Benchmark
 # =============================================================================
+
+
+async def demo_tokens_per_second(client, provider: str, model: str):
+    """
+    Benchmark tokens per second generation speed.
+
+    Useful for comparing performance between:
+    - Ollama vs llama.cpp
+    - Different models
+    - Different hardware configurations
+    """
+    print(f"\n{'=' * 70}")
+    print("Demo 3: Tokens Per Second Benchmark")
+    print(f"{'=' * 70}")
+
+    # Use a standardized prompt that generates predictable output length
+    messages = [
+        Message(
+            role=MessageRole.USER,
+            content="Write a detailed 200-word explanation of how neural networks learn through backpropagation.",
+        ),
+    ]
+
+    print(f"Provider: {provider}")
+    print(f"Model: {model}")
+    print(f"User: {messages[0].content}")
+    print("\n⏳ Benchmarking generation speed...")
+    print("-" * 70)
+
+    full_response = ""
+    token_count = 0
+    start_time = time.time()
+    first_token_time = None
+
+    async for chunk in client.create_completion(
+        messages,
+        stream=True,
+        max_tokens=300,
+        temperature=0.7,  # Consistent temperature for fair comparison
+    ):
+        if chunk.get("response"):
+            if first_token_time is None:
+                first_token_time = time.time()
+
+            content = chunk["response"]
+            print(content, end="", flush=True)
+            full_response += content
+            # Rough approximation: ~4 characters per token
+            token_count += max(1, len(content) // 4)
+
+    end_time = time.time()
+
+    # Calculate metrics
+    total_duration = end_time - start_time
+    time_to_first_token = (first_token_time - start_time) if first_token_time else 0
+    generation_duration = end_time - (first_token_time or start_time)
+    tokens_per_second = (
+        token_count / generation_duration if generation_duration > 0 else 0
+    )
+
+    print("\n" + "-" * 70)
+    print(f"\n📊 Performance Metrics:")
+    print(f"  • Total tokens generated: ~{token_count}")
+    print(f"  • Time to first token: {time_to_first_token:.3f}s")
+    print(f"  • Generation time: {generation_duration:.3f}s")
+    print(f"  • Total time: {total_duration:.3f}s")
+    print(f"  • Tokens per second: {tokens_per_second:.1f} tok/s")
+
+    # Performance rating
+    if tokens_per_second > 100:
+        rating = "🚀 Excellent"
+    elif tokens_per_second > 50:
+        rating = "✅ Good"
+    elif tokens_per_second > 20:
+        rating = "⚠️  Moderate"
+    else:
+        rating = "🐌 Slow"
+
+    print(f"  • Performance: {rating}")
+
+    return {
+        "response": full_response,
+        "token_count": token_count,
+        "time_to_first_token": time_to_first_token,
+        "generation_duration": generation_duration,
+        "total_duration": total_duration,
+        "tokens_per_second": tokens_per_second,
+    }
+
+
+# =============================================================================
+# Demo 4: Function Calling
+# =============================================================================
+
 
 async def demo_function_calling(client, provider: str, model: str):
     """Function calling with tools - works with providers that support it"""
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("Demo 3: Function Calling")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     tools = [
         Tool(
@@ -149,11 +246,11 @@ async def demo_function_calling(client, provider: str, model: str):
     messages = [
         Message(
             role=MessageRole.SYSTEM,
-            content="You are a helpful assistant. You must use the provided tools to answer questions. Always call the appropriate function for calculations and data retrieval."
+            content="You are a helpful assistant. You must use the provided tools to answer questions. Always call the appropriate function for calculations and data retrieval.",
         ),
         Message(
             role=MessageRole.USER,
-            content="What's the weather in Tokyo and what is 25 * 8?"
+            content="What's the weather in Tokyo and what is 25 * 8?",
         ),
     ]
 
@@ -180,7 +277,9 @@ async def demo_function_calling(client, provider: str, model: str):
         if round_num == 1:
             print(f"\n🔧 Model called {len(tool_calls)} function(s):")
         else:
-            print(f"\n🔧 Round {round_num}: Model called {len(tool_calls)} more function(s):")
+            print(
+                f"\n🔧 Round {round_num}: Model called {len(tool_calls)} more function(s):"
+            )
 
         tool_results = []
         for tool_call in tool_calls:
@@ -232,18 +331,16 @@ async def demo_function_calling(client, provider: str, model: str):
 
             print(f"     Result: {result}")
 
-            tool_results.append({
-                "tool_call_id": tool_call["id"],
-                "name": func_name,
-                "result": result
-            })
+            tool_results.append(
+                {"tool_call_id": tool_call["id"], "name": func_name, "result": result}
+            )
 
         # Continue conversation with results
         messages.append(
             Message(
                 role=MessageRole.ASSISTANT,
                 content=response.get("response") or "",
-                tool_calls=response.get("tool_calls")
+                tool_calls=response.get("tool_calls"),
             )
         )
 
@@ -253,7 +350,7 @@ async def demo_function_calling(client, provider: str, model: str):
                     role=MessageRole.TOOL,
                     content=tool_result["result"],
                     tool_call_id=tool_result["tool_call_id"],
-                    name=tool_result["name"]
+                    name=tool_result["name"],
                 )
             )
 
@@ -277,11 +374,12 @@ async def demo_function_calling(client, provider: str, model: str):
 # Demo 4: Vision
 # =============================================================================
 
+
 async def demo_vision(client, provider: str, model: str):
     """Vision/multimodal - works with providers that support it"""
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("Demo 4: Vision/Multimodal")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     # Simple 16x16 red square image (properly encoded PNG)
     red_square_base64 = "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAIElEQVR4nGP8z0AaYCJRPcOoBmIAE1GqkMCoBmIAyRoAQC4BH1m1rqAAAAAASUVORK5CYII="
@@ -290,13 +388,10 @@ async def demo_vision(client, provider: str, model: str):
         Message(
             role=MessageRole.USER,
             content=[
-                TextContent(
-                    type=ContentType.TEXT,
-                    text="What color is this image?"
-                ),
+                TextContent(type=ContentType.TEXT, text="What color is this image?"),
                 ImageUrlContent(
                     type=ContentType.IMAGE_URL,
-                    image_url={"url": f"data:image/png;base64,{red_square_base64}"}
+                    image_url={"url": f"data:image/png;base64,{red_square_base64}"},
                 ),
             ],
         )
@@ -317,15 +412,15 @@ async def demo_vision(client, provider: str, model: str):
 
 
 # =============================================================================
-# Demo 4b: Vision with URL
+# Demo 5b: Vision with URL
 # =============================================================================
+
 
 async def demo_vision_url(client, provider: str, model: str):
     """Vision with public URL - providers handle URL fetching automatically"""
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("Demo 4b: Vision with Public URL")
-    print(f"{'='*70}")
-
+    print(f"{'=' * 70}")
 
     # Use a stable, public domain image - Unsplash logo (public API)
     # This is a direct image link that allows programmatic access
@@ -343,11 +438,10 @@ async def demo_vision_url(client, provider: str, model: str):
             content=[
                 TextContent(
                     type=ContentType.TEXT,
-                    text="What is in this image? Describe it briefly."
+                    text="What is in this image? Describe it briefly.",
                 ),
                 ImageUrlContent(
-                    type=ContentType.IMAGE_URL,
-                    image_url={"url": image_url}
+                    type=ContentType.IMAGE_URL, image_url={"url": image_url}
                 ),
             ],
         )
@@ -364,6 +458,7 @@ async def demo_vision_url(client, provider: str, model: str):
     except Exception as e:
         print(f"\n❌ Error processing image URL: {e}")
         import traceback
+
         traceback.print_exc()
         return None
 
@@ -372,21 +467,21 @@ async def demo_vision_url(client, provider: str, model: str):
 # Demo 5: JSON Mode
 # =============================================================================
 
+
 async def demo_json_mode(client, provider: str, model: str):
     """JSON mode - works with providers that support it"""
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("Demo 5: JSON Mode")
-    print(f"{'='*70}")
-
+    print(f"{'=' * 70}")
 
     messages = [
         Message(
             role=MessageRole.SYSTEM,
-            content="You are a helpful assistant that outputs JSON."
+            content="You are a helpful assistant that outputs JSON.",
         ),
         Message(
             role=MessageRole.USER,
-            content="Create a JSON for a person named Alice, age 30, hobbies: reading, coding."
+            content="Create a JSON for a person named Alice, age 30, hobbies: reading, coding.",
         ),
     ]
 
@@ -396,17 +491,15 @@ async def demo_json_mode(client, provider: str, model: str):
     print("\n⏳ Generating JSON...")
 
     response = await client.create_completion(
-        messages,
-        response_format={"type": "json_object"},
-        max_tokens=500
+        messages, response_format={"type": "json_object"}, max_tokens=500
     )
 
     print(f"\n✅ JSON Response:")
     try:
-        parsed = json.loads(response['response'])
+        parsed = json.loads(response["response"])
         print(json.dumps(parsed, indent=2))
     except:
-        print(response['response'])
+        print(response["response"])
 
     return response
 
@@ -415,17 +508,29 @@ async def demo_json_mode(client, provider: str, model: str):
 # Demo 6: Reasoning with Thinking Visibility
 # =============================================================================
 
+
 async def demo_reasoning(client, provider: str, model: str):
     """Reasoning with extended thinking - shows thinking process"""
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("Demo 6: Reasoning with Thinking Visibility")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     # Check if this is a reasoning model
     model_lower = model.lower()
-    is_reasoning = any(pattern in model_lower for pattern in [
-        "o1", "o3", "o4", "reasoning", "r1", "deepseek-r", "gpt-oss", "gpt-5", "thinking"
-    ])
+    is_reasoning = any(
+        pattern in model_lower
+        for pattern in [
+            "o1",
+            "o3",
+            "o4",
+            "reasoning",
+            "r1",
+            "deepseek-r",
+            "gpt-oss",
+            "gpt-5",
+            "thinking",
+        ]
+    )
 
     if not is_reasoning:
         print(f"ℹ️  Model {model} is not a known reasoning model")
@@ -434,7 +539,7 @@ async def demo_reasoning(client, provider: str, model: str):
     messages = [
         Message(
             role=MessageRole.USER,
-            content="A farmer has 17 sheep. All but 9 die. How many are left? Think step by step."
+            content="A farmer has 17 sheep. All but 9 die. How many are left? Think step by step.",
         ),
     ]
 
@@ -472,7 +577,9 @@ async def demo_reasoning(client, provider: str, model: str):
             print(f"\n   Model type: {reasoning_info['model_type']}")
 
         # Check for thinking tokens (different providers use different field names)
-        thinking_tokens = reasoning_info.get("tokens_used") or reasoning_info.get("thinking_tokens")
+        thinking_tokens = reasoning_info.get("tokens_used") or reasoning_info.get(
+            "thinking_tokens"
+        )
         if thinking_tokens:
             print(f"   Thinking tokens: {thinking_tokens}")
 
@@ -491,15 +598,15 @@ async def demo_reasoning(client, provider: str, model: str):
 
 
 # =============================================================================
-# Demo 7: Structured Outputs (JSON Schema)
+# Demo 8: Structured Outputs (JSON Schema)
 # =============================================================================
+
 
 async def demo_structured_outputs(client, provider: str, model: str):
     """Structured outputs with JSON Schema - ensures guaranteed format"""
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("Demo 7: Structured Outputs (JSON Schema)")
-    print(f"{'='*70}")
-
+    print(f"{'=' * 70}")
 
     # Define a JSON schema for structured output
     schema = {
@@ -508,20 +615,17 @@ async def demo_structured_outputs(client, provider: str, model: str):
             "name": {"type": "string"},
             "age": {"type": "integer"},
             "email": {"type": "string"},
-            "skills": {
-                "type": "array",
-                "items": {"type": "string"}
-            },
-            "experience_years": {"type": "integer"}
+            "skills": {"type": "array", "items": {"type": "string"}},
+            "experience_years": {"type": "integer"},
         },
         "required": ["name", "age", "email", "skills"],
-        "additionalProperties": False
+        "additionalProperties": False,
     }
 
     messages = [
         Message(
             role=MessageRole.SYSTEM,
-            content="You are a helpful assistant that outputs JSON. IMPORTANT: Only output the exact fields requested. Do not add any additional fields."
+            content="You are a helpful assistant that outputs JSON. IMPORTANT: Only output the exact fields requested. Do not add any additional fields.",
         ),
         Message(
             role=MessageRole.USER,
@@ -532,7 +636,7 @@ async def demo_structured_outputs(client, provider: str, model: str):
 - skills: ["Python", "JavaScript"]
 - experience_years: 5
 
-Output ONLY these fields, no additional properties."""
+Output ONLY these fields, no additional properties.""",
         ),
     ]
 
@@ -545,26 +649,24 @@ Output ONLY these fields, no additional properties."""
 
     # Use JSON mode
     response = await client.create_completion(
-        messages,
-        response_format={"type": "json_object"},
-        max_tokens=500
+        messages, response_format={"type": "json_object"}, max_tokens=500
     )
 
     print(f"\n✅ Structured JSON Response:")
     try:
         # Extract JSON from response, handling markdown code fences
-        response_text = response['response'].strip()
+        response_text = response["response"].strip()
 
         # Remove markdown code fences if present
         if response_text.startswith("```"):
             # Find the start and end of the JSON content
-            lines = response_text.split('\n')
+            lines = response_text.split("\n")
             # Remove first line (```json or ```)
             lines = lines[1:]
             # Remove last line if it's just ```
             if lines and lines[-1].strip() == "```":
                 lines = lines[:-1]
-            response_text = '\n'.join(lines)
+            response_text = "\n".join(lines)
 
         parsed = json.loads(response_text)
         print(json.dumps(parsed, indent=2))
@@ -579,25 +681,26 @@ Output ONLY these fields, no additional properties."""
 
     except json.JSONDecodeError as e:
         print(f"❌ Invalid JSON: {e}")
-        print(response['response'])
+        print(response["response"])
 
     return response
 
 
 # =============================================================================
-# Demo 8: Multi-turn Conversation
+# Demo 9: Multi-turn Conversation
 # =============================================================================
+
 
 async def demo_conversation(client, provider: str, model: str):
     """Multi-turn conversation with context memory"""
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("Demo 8: Multi-turn Conversation")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     conversation = [
         Message(
             role=MessageRole.SYSTEM,
-            content="You are a helpful assistant with good memory."
+            content="You are a helpful assistant with good memory.",
         ),
     ]
 
@@ -612,7 +715,9 @@ async def demo_conversation(client, provider: str, model: str):
     print(f"  AI: {response1['response']}")
 
     # Turn 2
-    conversation.append(Message(role=MessageRole.ASSISTANT, content=response1['response']))
+    conversation.append(
+        Message(role=MessageRole.ASSISTANT, content=response1["response"])
+    )
     conversation.append(Message(role=MessageRole.USER, content="What's my name?"))
     response2 = await client.create_completion(conversation)
 
@@ -626,14 +731,15 @@ async def demo_conversation(client, provider: str, model: str):
 
 
 # =============================================================================
-# Demo 9: Model Discovery
+# Demo 10: Model Discovery
 # =============================================================================
+
 
 async def demo_model_discovery(client, provider: str, model: str):
     """Discover available models from the provider"""
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("Demo 9: Model Discovery")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     try:
         from chuk_llm.api.discovery import discover_models
@@ -661,15 +767,15 @@ async def demo_model_discovery(client, provider: str, model: str):
 
 
 # =============================================================================
-# Demo 10: Audio Input (Multimodal)
+# Demo 11: Audio Input (Multimodal)
 # =============================================================================
+
 
 async def demo_audio_input(client, provider: str, model: str):
     """Audio input - works with providers that support it"""
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("Demo 10: Audio Input (Multimodal)")
-    print(f"{'='*70}")
-
+    print(f"{'=' * 70}")
 
     print(f"Provider: {provider}")
     print(f"Model: {model}")
@@ -688,21 +794,21 @@ async def demo_audio_input(client, provider: str, model: str):
     duration = 1.0
     frequency = 440.0
 
-    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         wav_file = f.name
 
-    with wave.open(wav_file, 'w') as wav:
+    with wave.open(wav_file, "w") as wav:
         wav.setnchannels(1)  # Mono
         wav.setsampwidth(2)  # 16-bit
         wav.setframerate(sample_rate)
 
         for i in range(int(sample_rate * duration)):
             value = int(32767 * math.sin(2 * math.pi * frequency * i / sample_rate))
-            wav.writeframes(struct.pack('<h', value))
+            wav.writeframes(struct.pack("<h", value))
 
     # Read and encode the audio
-    with open(wav_file, 'rb') as audio_file:
-        audio_data = base64.b64encode(audio_file.read()).decode('utf-8')
+    with open(wav_file, "rb") as audio_file:
+        audio_data = base64.b64encode(audio_file.read()).decode("utf-8")
 
     # Clean up temp file
     os.unlink(wav_file)
@@ -714,15 +820,15 @@ async def demo_audio_input(client, provider: str, model: str):
             Message(
                 role=MessageRole.USER,
                 content=[
-                    TextContent(type=ContentType.TEXT, text="What do you hear in this audio? It's a musical note."),
+                    TextContent(
+                        type=ContentType.TEXT,
+                        text="What do you hear in this audio? It's a musical note.",
+                    ),
                     InputAudioContent(
                         type=ContentType.INPUT_AUDIO,
-                        input_audio={
-                            "data": audio_data,
-                            "format": "wav"
-                        }
-                    )
-                ]
+                        input_audio={"data": audio_data, "format": "wav"},
+                    ),
+                ],
             )
         ]
 
@@ -731,14 +837,16 @@ async def demo_audio_input(client, provider: str, model: str):
 
         start = time.time()
         # Only pass model parameter if it differs from client's model (avoid duplicate parameter)
-        if hasattr(client, 'model') and client.model == model:
+        if hasattr(client, "model") and client.model == model:
             response = await client.create_completion(messages, stream=False)
         else:
-            response = await client.create_completion(messages, stream=False, model=model)
+            response = await client.create_completion(
+                messages, stream=False, model=model
+            )
         elapsed = time.time() - start
 
         print(f"\n✅ Response ({elapsed:.2f}s):")
-        print(response['response'])
+        print(response["response"])
 
         return response
 
@@ -752,14 +860,15 @@ async def demo_audio_input(client, provider: str, model: str):
 
 
 # =============================================================================
-# Demo 11: Temperature and Sampling Parameters
+# Demo 12: Temperature and Sampling Parameters
 # =============================================================================
+
 
 async def demo_parameters(client, provider: str, model: str):
     """Temperature and sampling parameters demonstration"""
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("Demo 11: Temperature and Sampling Parameters")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     print(f"Provider: {provider}")
     print(f"Model: {model}")
@@ -771,15 +880,13 @@ async def demo_parameters(client, provider: str, model: str):
         messages = [
             Message(
                 role=MessageRole.USER,
-                content="Write the first sentence of a story about a robot."
+                content="Write the first sentence of a story about a robot.",
             ),
         ]
 
         try:
             response = await client.create_completion(
-                messages,
-                temperature=temp,
-                max_tokens=300
+                messages, temperature=temp, max_tokens=300
             )
 
             print(f"Temperature {temp}:")
@@ -795,14 +902,15 @@ async def demo_parameters(client, provider: str, model: str):
 
 
 # =============================================================================
-# Demo 12: Model Comparison
+# Demo 13: Model Comparison
 # =============================================================================
+
 
 async def demo_model_comparison(provider: str, models: list[str]):
     """Compare multiple models side by side"""
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("Demo 12: Model Comparison")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     from chuk_llm.llm.client import get_client
 
@@ -815,12 +923,7 @@ async def demo_model_comparison(provider: str, models: list[str]):
     for model in models:
         try:
             client = get_client(provider, model=model)
-            messages = [
-                Message(
-                    role=MessageRole.USER,
-                    content=prompt
-                )
-            ]
+            messages = [Message(role=MessageRole.USER, content=prompt)]
 
             start_time = time.time()
             response = await client.create_completion(messages, max_tokens=300)
@@ -836,14 +939,15 @@ async def demo_model_comparison(provider: str, models: list[str]):
 
 
 # =============================================================================
-# Demo 13: Dynamic Model Call (Discovery + Usage)
+# Demo 14: Dynamic Model Call (Discovery + Usage)
 # =============================================================================
+
 
 async def demo_dynamic_model_call(provider: str):
     """Discover models and call one of them dynamically"""
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("Demo 13: Call Dynamically Discovered Model")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     try:
         from chuk_llm.api.discovery import discover_models
@@ -859,7 +963,16 @@ async def demo_dynamic_model_call(provider: str):
 
         # Find a suitable chat model (skip TTS/audio/image models)
         target_model = None
-        skip_patterns = ["tts", "whisper", "audio", "realtime", "dall-e", "sora", "embedding", "moderation"]
+        skip_patterns = [
+            "tts",
+            "whisper",
+            "audio",
+            "realtime",
+            "dall-e",
+            "sora",
+            "embedding",
+            "moderation",
+        ]
 
         for model in models:
             model_id = model.get("name", model.get("id", ""))
@@ -886,7 +999,7 @@ async def demo_dynamic_model_call(provider: str):
         messages = [
             Message(
                 role=MessageRole.USER,
-                content="In one sentence, what makes you special?"
+                content="In one sentence, what makes you special?",
             )
         ]
 
@@ -905,19 +1018,21 @@ async def demo_dynamic_model_call(provider: str):
     except Exception as e:
         print(f"❌ Error in dynamic model call: {e}")
         import traceback
+
         traceback.print_exc()
         return None
 
 
 # =============================================================================
-# Demo 14: Error Handling
+# Demo 15: Error Handling
 # =============================================================================
+
 
 async def demo_error_handling(client, provider: str, model: str):
     """Demonstrate error handling"""
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("Demo 14: Error Handling")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
 
     # Test 1: Invalid max_tokens
     print("\nTest 1: Handling invalid parameters")
@@ -955,29 +1070,56 @@ async def demo_error_handling(client, provider: str, model: str):
 # Demo Runner Helper
 # =============================================================================
 
-async def run_all_demos(client, provider: str, model: str, skip_tools=False, skip_vision=False, skip_discovery=False, skip_audio=False, skip_parameters=False, skip_comparison=False, comparison_models=None, audio_model=None, vision_client=None, vision_model=None):
+
+async def run_all_demos(
+    client,
+    provider: str,
+    model: str,
+    skip_tools=False,
+    skip_vision=False,
+    skip_discovery=False,
+    skip_audio=False,
+    skip_parameters=False,
+    skip_comparison=False,
+    comparison_models=None,
+    audio_model=None,
+    vision_client=None,
+    vision_model=None,
+):
     """Run all demos for a provider"""
     demos = [
         ("Basic Completion", demo_basic_completion(client, provider, model)),
         ("Streaming", demo_streaming(client, provider, model)),
+        ("Tokens Per Second", demo_tokens_per_second(client, provider, model)),
     ]
 
     if not skip_tools:
-        demos.append(("Function Calling", demo_function_calling(client, provider, model)))
+        demos.append(
+            ("Function Calling", demo_function_calling(client, provider, model))
+        )
 
     if not skip_vision:
         # Use custom vision client if provided (e.g., granite-vision for WatsonX)
         vision_client_to_use = vision_client if vision_client else client
         vision_model_to_use = vision_model if vision_model else model
-        demos.append(("Vision", demo_vision(vision_client_to_use, provider, vision_model_to_use)))
-        demos.append(("Vision with URL", demo_vision_url(vision_client_to_use, provider, vision_model_to_use)))
+        demos.append(
+            ("Vision", demo_vision(vision_client_to_use, provider, vision_model_to_use))
+        )
+        demos.append(
+            (
+                "Vision with URL",
+                demo_vision_url(vision_client_to_use, provider, vision_model_to_use),
+            )
+        )
 
-    demos.extend([
-        ("JSON Mode", demo_json_mode(client, provider, model)),
-        ("Reasoning", demo_reasoning(client, provider, model)),
-        ("Structured Outputs", demo_structured_outputs(client, provider, model)),
-        ("Conversation", demo_conversation(client, provider, model)),
-    ])
+    demos.extend(
+        [
+            ("JSON Mode", demo_json_mode(client, provider, model)),
+            ("Reasoning", demo_reasoning(client, provider, model)),
+            ("Structured Outputs", demo_structured_outputs(client, provider, model)),
+            ("Conversation", demo_conversation(client, provider, model)),
+        ]
+    )
 
     if not skip_discovery:
         demos.append(("Model Discovery", demo_model_discovery(client, provider, model)))
@@ -986,7 +1128,9 @@ async def run_all_demos(client, provider: str, model: str, skip_tools=False, ski
     if not skip_audio:
         # Use custom audio model if provided (e.g., voxtral for Mistral), same client
         audio_model_to_use = audio_model if audio_model else model
-        demos.append(("Audio Input", demo_audio_input(client, provider, audio_model_to_use)))
+        demos.append(
+            ("Audio Input", demo_audio_input(client, provider, audio_model_to_use))
+        )
 
     # Temperature/parameters demo
     if not skip_parameters:
@@ -994,7 +1138,9 @@ async def run_all_demos(client, provider: str, model: str, skip_tools=False, ski
 
     # Model comparison (if models provided)
     if not skip_comparison and comparison_models:
-        demos.append(("Model Comparison", demo_model_comparison(provider, comparison_models)))
+        demos.append(
+            ("Model Comparison", demo_model_comparison(provider, comparison_models))
+        )
 
     # Dynamic model call
     if not skip_discovery:
@@ -1008,6 +1154,7 @@ async def run_all_demos(client, provider: str, model: str, skip_tools=False, ski
         except Exception as e:
             print(f"\n❌ Error in {name}: {e}")
             import traceback
+
             traceback.print_exc()
 
     return True

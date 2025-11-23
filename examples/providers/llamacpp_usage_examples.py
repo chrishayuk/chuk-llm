@@ -35,7 +35,10 @@ from pathlib import Path
 try:
     from chuk_llm.configuration import get_config
     from chuk_llm.llm.client import get_client
-    from chuk_llm.llm.providers.llamacpp_server import LlamaCppServerConfig, LlamaCppServerManager
+    from chuk_llm.llm.providers.llamacpp_server import (
+        LlamaCppServerConfig,
+        LlamaCppServerManager,
+    )
 
     # Import common demos
     examples_dir = Path(__file__).parent.parent
@@ -54,6 +57,7 @@ try:
         demo_reasoning,
         demo_streaming,
         demo_structured_outputs,
+        demo_tokens_per_second,
         demo_vision,
         demo_vision_url,
         run_all_demos,
@@ -69,11 +73,13 @@ def find_available_port(start_port: int = 8033, max_attempts: int = 100) -> int:
     for port in range(start_port, start_port + max_attempts):
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind(('127.0.0.1', port))
+                s.bind(("127.0.0.1", port))
                 return port
         except OSError:
             continue
-    raise RuntimeError(f"No available ports found in range {start_port}-{start_port + max_attempts}")
+    raise RuntimeError(
+        f"No available ports found in range {start_port}-{start_port + max_attempts}"
+    )
 
 
 def find_model_in_ollama_cache(model_name: str) -> Path | None:
@@ -99,7 +105,9 @@ def find_model_in_ollama_cache(model_name: str) -> Path | None:
 
         # Also try matching individual parts (e.g., "gpt-oss" and "20b")
         search_parts = search_name.replace("-", " ").split()
-        if len(search_parts) >= 2 and all(part in file_name_lower for part in search_parts):
+        if len(search_parts) >= 2 and all(
+            part in file_name_lower for part in search_parts
+        ):
             return model_file
 
     return None
@@ -150,8 +158,14 @@ def find_mmproj_for_model(model_path: Path) -> Path | None:
 
     for mmproj_file in model_path.parent.glob("*mmproj*.gguf"):
         # Check if it's related to this model
-        model_name_part = model_path.stem.split("_")[-1] if "_" in model_path.stem else model_path.stem
-        if model_name_part.lower().replace("-", "") in mmproj_file.name.lower().replace("-", ""):
+        model_name_part = (
+            model_path.stem.split("_")[-1]
+            if "_" in model_path.stem
+            else model_path.stem
+        )
+        if model_name_part.lower().replace("-", "") in mmproj_file.name.lower().replace(
+            "-", ""
+        ):
             return mmproj_file
 
     return None
@@ -230,9 +244,7 @@ async def main():
     parser.add_argument(
         "--skip-tools", action="store_true", help="Skip function calling demo"
     )
-    parser.add_argument(
-        "--skip-vision", action="store_true", help="Skip vision demo"
-    )
+    parser.add_argument("--skip-vision", action="store_true", help="Skip vision demo")
     parser.add_argument(
         "--demo",
         type=int,
@@ -350,7 +362,9 @@ async def main():
                     vision_api_base = vision_client._server_manager.base_url
 
                     # Run demos with both servers
-                    await run_demos(args, client, vision_client, main_api_base, vision_api_base)
+                    await run_demos(
+                        args, client, vision_client, main_api_base, vision_api_base
+                    )
                 finally:
                     # Clean up vision server
                     await vision_client.close()
@@ -374,7 +388,9 @@ async def main():
     print(f"  python {__file__} --model llama3.2 --skip-vision")
 
 
-async def run_demos(args, client, vision_client, main_api_base=None, vision_api_base=None):
+async def run_demos(
+    args, client, vision_client, main_api_base=None, vision_api_base=None
+):
     """Run the demos with the given clients."""
     # Get actual model names from clients
     main_model = client.model
@@ -383,14 +399,26 @@ async def run_demos(args, client, vision_client, main_api_base=None, vision_api_
     if args.demo:
         # Run specific demo
         demo_map = {
-            1: ("Basic Completion", demo_basic_completion(client, "llamacpp", main_model)),
+            1: (
+                "Basic Completion",
+                demo_basic_completion(client, "llamacpp", main_model),
+            ),
             2: ("Streaming", demo_streaming(client, "llamacpp", main_model)),
-            3: ("Function Calling", demo_function_calling(client, "llamacpp", main_model)),
+            3: (
+                "Function Calling",
+                demo_function_calling(client, "llamacpp", main_model),
+            ),
             4: ("Vision", demo_vision(vision_client, "llamacpp", vision_model)),
-            5: ("Vision with URL", demo_vision_url(vision_client, "llamacpp", vision_model)),
+            5: (
+                "Vision with URL",
+                demo_vision_url(vision_client, "llamacpp", vision_model),
+            ),
             6: ("JSON Mode", demo_json_mode(client, "llamacpp", main_model)),
             7: ("Conversation", demo_conversation(client, "llamacpp", main_model)),
-            8: ("Model Discovery", demo_model_discovery(client, "llamacpp", main_model)),
+            8: (
+                "Model Discovery",
+                demo_model_discovery(client, "llamacpp", main_model),
+            ),
             9: ("Parameters", demo_parameters(client, "llamacpp", main_model)),
             10: ("Model Comparison", demo_model_comparison("llamacpp", [main_model])),
             11: ("Dynamic Model Call", demo_dynamic_model_call("llamacpp")),
@@ -403,6 +431,7 @@ async def run_demos(args, client, vision_client, main_api_base=None, vision_api_
         except Exception as e:
             print(f"\n❌ Error in {name}: {e}")
             import traceback
+
             traceback.print_exc()
     else:
         # Run all demos

@@ -82,7 +82,8 @@ class OllamaModelRegistry(BaseModel):
         name_to_digest = {}
 
         if manifests_dir.exists():
-            # Walk through registry/provider/model structure
+            # Walk through manifest directory structure
+            # Handles both: registry/provider/tag AND registry/provider/model/tag
             for registry_dir in manifests_dir.iterdir():
                 if not registry_dir.is_dir():
                     continue
@@ -91,13 +92,30 @@ class OllamaModelRegistry(BaseModel):
                     if not provider_dir.is_dir():
                         continue
 
-                    for model_file in provider_dir.iterdir():
-                        if model_file.is_file():
-                            # Model name is registry/provider/model_file
-                            model_name = f"{registry_dir.name}/{provider_dir.name}:{model_file.name}"
+                    for model_entry in provider_dir.iterdir():
+                        # Check if this is a direct manifest file or a model directory
+                        manifest_files = []
 
+                        if model_entry.is_file():
+                            # Format: registry/provider/tag (e.g., library/llama3.2/latest)
+                            manifest_files.append(
+                                (model_entry, f"{provider_dir.name}:{model_entry.name}")
+                            )
+                        elif model_entry.is_dir():
+                            # Format: registry/provider/model/tag (e.g., vanilj/Phi-4/latest)
+                            for tag_file in model_entry.iterdir():
+                                if tag_file.is_file():
+                                    manifest_files.append(
+                                        (
+                                            tag_file,
+                                            f"{provider_dir.name}/{model_entry.name}:{tag_file.name}",
+                                        )
+                                    )
+
+                        # Process each manifest file
+                        for manifest_file, model_name in manifest_files:
                             try:
-                                manifest = json.loads(model_file.read_text())
+                                manifest = json.loads(manifest_file.read_text())
                                 # Extract the model layer digest (the big GGUF blob)
                                 for layer in manifest.get("layers", []):
                                     media_type = layer.get("mediaType", "")
@@ -107,7 +125,9 @@ class OllamaModelRegistry(BaseModel):
                                     ):
                                         digest = layer.get("digest", "")
                                         if digest:
-                                            name_to_digest[model_name] = digest
+                                            # Convert sha256:xxx to sha256-xxx (blob filename format)
+                                            blob_digest = digest.replace(":", "-")
+                                            name_to_digest[model_name] = blob_digest
                                             break
                             except (json.JSONDecodeError, KeyError):
                                 continue
