@@ -148,8 +148,6 @@ def _create_client_internal(
         if not model_path.exists():
             # Try to resolve from llama.cpp cache first, then Ollama
             try:
-                import os
-
                 # Check llama.cpp cache directory
                 llamacpp_cache = Path.home() / "Library" / "Caches" / "llama.cpp"
                 if llamacpp_cache.exists():
