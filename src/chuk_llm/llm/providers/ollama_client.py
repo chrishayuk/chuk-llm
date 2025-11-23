@@ -3,38 +3,46 @@
 Ollama chat-completion adapter with unified configuration integration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 Configuration-driven capabilities with local model support.
+REFACTORED: Now uses Pydantic models throughout - no dictionary goop!
 ENHANCED with GPT-OSS and reasoning model support - FIXED DUPLICATE TOOL CALLS.
 FIXED: Proper context memory preservation for multi-turn conversations.
 """
 
 import asyncio
+import base64
 import json
 import logging
 import uuid
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 # provider
 import ollama
 
 # core
-from chuk_llm.core.enums import MessageRole
+from chuk_llm.core.enums import ContentType, MessageRole
 
 # providers
 from chuk_llm.llm.core.base import BaseLLMClient
 from chuk_llm.llm.providers._config_mixin import ConfigAwareProviderMixin
+from chuk_llm.llm.providers._mixins import OpenAIStyleMixin
+
+if TYPE_CHECKING:
+    pass
 
 log = logging.getLogger(__name__)
 
 
-class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
+class OllamaLLMClient(OpenAIStyleMixin, ConfigAwareProviderMixin, BaseLLMClient):
     """
     Configuration-aware wrapper around `ollama` SDK that gets all capabilities
     from unified YAML configuration for local model support.
 
+    REFACTORED: Uses Pydantic models throughout - no dictionary goop!
     ENHANCED: Now supports reasoning models like GPT-OSS with thinking streams.
     FIXED: Deduplicates tool calls that appear in multiple locations in chunks.
     FIXED: Proper context memory preservation for multi-turn conversations.
+    Inherits from OpenAIStyleMixin for image URL downloading and other utilities.
     """
 
     def __init__(self, model: str = "qwen3", api_base: str | None = None) -> None:
@@ -225,34 +233,33 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
 
     def _validate_request_with_config(
         self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        messages: list,  # List of Message Pydantic objects
+        tools: list | None = None,  # List of Tool Pydantic objects
         stream: bool = False,
         **kwargs,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]] | None, bool, dict[str, Any]]:
+    ) -> tuple[list, list | None, bool, dict[str, Any]]:
         """
         Validate request against configuration before processing.
+        REFACTORED: Uses Pydantic models, not dicts.
         """
         validated_messages = messages
         validated_tools = tools
         validated_stream = stream
         validated_kwargs = kwargs.copy()
 
-        # Check streaming support
+        # Check streaming support (permissive - try anyway)
         if stream and not self.supports_feature("streaming"):
-            log.warning(
-                f"Streaming requested but {self.model} doesn't support streaming according to configuration"
+            log.debug(
+                f"Streaming requested but {self.model} doesn't support streaming according to configuration - trying anyway"
             )
-            validated_stream = False
+            # Don't disable streaming - Ollama generally supports it, let the API handle it
 
         # Permissive approach: Let Ollama API handle tool support
         # Don't block based on capability checks - dynamic models should work
         # Permissive approach: Pass all content to API (vision, audio, etc.)
 
-        # Check system message support
-        has_system = any(
-            msg.get("role") == MessageRole.SYSTEM.value for msg in messages
-        )
+        # Check system message support - use enum, not string
+        has_system = any(msg.role == MessageRole.SYSTEM for msg in messages)
         if has_system and not self.supports_feature("system_messages"):
             log.info(
                 f"System messages will be converted - {self.model} has limited system message support"
@@ -270,80 +277,87 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
 
         return validated_messages, validated_tools, validated_stream, validated_kwargs
 
-    def _prepare_ollama_messages(
-        self, messages: list[dict[str, Any]]
+    async def _prepare_ollama_messages(
+        self,
+        messages: list,  # List of Message Pydantic objects
     ) -> list[dict[str, Any]]:
         """
-        FIXED: Prepare messages for Ollama with proper context preservation.
+        REFACTORED: Prepare messages for Ollama using Pydantic models.
+
+        Convert from Pydantic Message objects to Ollama dict format.
+        This is the ONLY place we convert to dicts - at the API boundary.
 
         This enhanced version ensures that:
         1. Full conversation history is maintained
         2. Tool calls in assistant messages are properly formatted
         3. Tool responses are correctly included in the context
         """
+
         ollama_messages = []
 
-        for m in messages:
-            role = m.get("role")
-            content = m.get("content", "")
+        for msg in messages:
+            # Use enum values, not strings
+            role_value = msg.role.value if hasattr(msg.role, "value") else msg.role
 
-            # Handle different message roles
-            if role == "system":
+            # Handle different message roles using enums
+            if msg.role == MessageRole.SYSTEM:
                 # Check if system messages are supported
                 if self.supports_feature("system_messages"):
-                    message = {"role": "system", "content": content}
+                    message = {"role": "system", "content": msg.content or ""}
                 else:
                     # Convert to user message as fallback
-                    message = {"role": "user", "content": f"System: {content}"}
+                    message = {"role": "user", "content": f"System: {msg.content}"}
                     log.debug(
                         f"Converting system message to user message - {self.model} doesn't support system messages"
                     )
 
-            elif role == "assistant":
+            elif msg.role == MessageRole.ASSISTANT:
                 # CRITICAL FIX: Properly handle assistant messages with tool calls
-                message = {"role": "assistant", "content": content if content else ""}
+                message = {
+                    "role": "assistant",
+                    "content": msg.content if msg.content else "",
+                }
 
                 # Handle tool calls in assistant messages (for context)
-                if tool_calls := m.get("tool_calls"):
+                if msg.tool_calls:
                     formatted_tool_calls = []
-                    for tool_call in tool_calls:
-                        # Create a properly formatted tool call for Ollama
-                        tc_formatted = {
-                            "function": {
-                                "name": tool_call.get("function", {}).get("name", ""),
-                                "arguments": {},
-                            }
-                        }
-
+                    for tool_call in msg.tool_calls:
                         # Parse arguments if they're a string
-                        args = tool_call.get("function", {}).get("arguments", {})
+                        args = tool_call.function.arguments
                         if isinstance(args, str):
                             try:
-                                tc_formatted["function"]["arguments"] = json.loads(args)
+                                args_dict = json.loads(args)
                             except json.JSONDecodeError:
-                                tc_formatted["function"]["arguments"] = {"raw": args}
+                                args_dict = {"raw": args}
                         elif isinstance(args, dict):
-                            tc_formatted["function"]["arguments"] = args
+                            args_dict = args
                         else:
-                            tc_formatted["function"]["arguments"] = {}
+                            args_dict = {}
 
-                        formatted_tool_calls.append(tc_formatted)
+                        formatted_tool_calls.append(
+                            {
+                                "function": {
+                                    "name": tool_call.function.name,
+                                    "arguments": args_dict,
+                                }
+                            }
+                        )
 
                     message["tool_calls"] = formatted_tool_calls
 
                     # Some Ollama models expect tool calls to be mentioned in content too
-                    if not content and formatted_tool_calls:
+                    if not msg.content and formatted_tool_calls:
                         # Add a description of tool calls to content for models that need it
                         tool_names = [
                             tc["function"]["name"] for tc in formatted_tool_calls
                         ]
                         message["content"] = f"[Called tools: {', '.join(tool_names)}]"
 
-            elif role == "tool":
+            elif msg.role == MessageRole.TOOL:
                 # CRITICAL FIX: Handle tool response messages properly
                 # Ollama expects tool responses as user messages with special formatting
-                tool_name = m.get("name", "unknown_tool")
-                tool_content = m.get("content", "")
+                tool_name = msg.name or "unknown_tool"
+                tool_content = msg.content or ""
 
                 # Format tool response for Ollama
                 message = {
@@ -355,41 +369,25 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                 # The API will ignore metadata if not supported
                 message["metadata"] = {"type": "tool_response", "tool_name": tool_name}
 
-            elif role == "user":
-                message = {"role": "user", "content": content}
+            elif msg.role == MessageRole.USER:
+                content = msg.content
+                message = {
+                    "role": "user",
+                    "content": content if isinstance(content, str) else "",
+                }
 
-                # Handle images if present in the message content
+                # Handle multimodal content (images)
                 if isinstance(content, list):
-                    # Permissive approach: Process all multimodal content (text, vision, audio)
-                    # Let Ollama API handle unsupported cases rather than filtering
-                    # Process images for Ollama format (both dict and Pydantic)
-                    import base64
-
-                    from chuk_llm.core.enums import ContentType
-
+                    # Process Pydantic content parts
                     text_parts = []
                     images = []
 
                     for item in content:
-                        if isinstance(item, dict):
-                            # Dict-based content
-                            if item.get("type") == "text":
-                                text_parts.append(item.get("text", ""))
-                            elif item.get("type") in ["image", "image_url"]:
-                                image_url = item.get("image_url", {}).get("url", "")
-                                if image_url.startswith("data:image"):
-                                    _, encoded = image_url.split(",", 1)
-                                    images.append(base64.b64decode(encoded))
-                                else:
-                                    images.append(image_url)
-                        else:
-                            # Pydantic object-based content
-                            if hasattr(item, "type") and item.type == ContentType.TEXT:
+                        # Handle Pydantic content objects using type enum
+                        if hasattr(item, "type"):
+                            if item.type == ContentType.TEXT:
                                 text_parts.append(item.text)
-                            elif (
-                                hasattr(item, "type")
-                                and item.type == ContentType.IMAGE_URL
-                            ):
+                            elif item.type == ContentType.IMAGE_URL:
                                 # Extract URL from Pydantic ImageUrlContent
                                 image_url_data = item.image_url
                                 url = (
@@ -397,7 +395,29 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                                     if isinstance(image_url_data, dict)
                                     else image_url_data
                                 )
-                                if url and url.startswith("data:image"):
+
+                                # Download HTTP(S) URLs and convert to base64
+                                if url and url.startswith(("http://", "https://")):
+                                    try:
+                                        log.debug(
+                                            f"Downloading image from URL for Ollama: {url[:100]}..."
+                                        )
+                                        (
+                                            encoded_data,
+                                            image_format,
+                                        ) = await self._download_and_encode_image(url)
+                                        # Ollama expects raw base64 bytes, not data URL
+                                        images.append(base64.b64decode(encoded_data))
+                                        log.debug(
+                                            "Image downloaded and encoded successfully"
+                                        )
+                                    except Exception as e:
+                                        log.error(
+                                            f"Failed to download image from {url}: {e}"
+                                        )
+                                        # Keep original URL and let Ollama handle the error
+                                        images.append(url)
+                                elif url and url.startswith("data:image"):
                                     _, encoded = url.split(",", 1)
                                     images.append(base64.b64decode(encoded))
                                 elif url:
@@ -408,7 +428,7 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                         message["images"] = images
             else:
                 # Handle any other role types
-                message = {"role": role, "content": content}
+                message = {"role": role_value, "content": msg.content or ""}
 
             ollama_messages.append(message)
 
@@ -427,9 +447,10 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
 
         return ollama_messages
 
-    def _validate_conversation_context(self, messages: list[dict[str, Any]]) -> bool:
+    def _validate_conversation_context(self, messages: list) -> bool:
         """
-        Validate that the conversation context is properly structured.
+        REFACTORED: Validate that the conversation context is properly structured.
+        Uses Pydantic Message objects, not dicts.
 
         Returns True if context is valid, False otherwise.
         """
@@ -439,16 +460,16 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         # Check for proper role alternation (with tool messages allowed)
         last_role = None
         for msg in messages:
-            role = msg.get("role")
+            role = msg.role
 
             # Tool messages can appear anywhere
-            if role == "tool":
+            if role == MessageRole.TOOL:
                 continue
 
             # Check for duplicate consecutive roles (except system at start)
-            if last_role == role and role != "system":
+            if last_role == role and role != MessageRole.SYSTEM:
                 log.debug(
-                    f"Duplicate consecutive {role} messages detected - may cause context issues"
+                    f"Duplicate consecutive {role.value} messages detected - may cause context issues"
                 )
 
             last_role = role
@@ -456,13 +477,13 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         # Check that tool calls have corresponding tool responses
         pending_tool_calls = {}
         for msg in messages:
-            if msg.get("role") == MessageRole.ASSISTANT.value and msg.get("tool_calls"):
-                for tc in msg["tool_calls"]:
-                    tc_id = tc.get("id", tc.get("function", {}).get("name", "unknown"))
+            if msg.role == MessageRole.ASSISTANT and msg.tool_calls:
+                for tc in msg.tool_calls:
+                    tc_id = tc.id or tc.function.name
                     pending_tool_calls[tc_id] = True
 
-            elif msg.get("role") == MessageRole.TOOL.value:
-                tool_id = msg.get("tool_call_id", msg.get("name", "unknown"))
+            elif msg.role == MessageRole.TOOL:
+                tool_id = msg.tool_call_id or msg.name or "unknown"
                 if tool_id in pending_tool_calls:
                     del pending_tool_calls[tool_id]
 
@@ -473,38 +494,34 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
 
         return True
 
-    def _create_sync(
+    async def _create_sync(
         self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        messages: list,  # List of Message Pydantic objects
+        tools: list | None = None,  # List of Tool Pydantic objects
         **kwargs,
     ) -> dict[str, Any]:
         """
-        Synchronous internal completion call with configuration awareness.
+        REFACTORED: Async internal completion call with configuration awareness.
+        Uses Pydantic models, converts to dicts only at API boundary.
         """
         # Prepare messages for Ollama with configuration-aware processing
-        ollama_messages = self._prepare_ollama_messages(messages)
+        ollama_messages = await self._prepare_ollama_messages(messages)
 
         # Convert tools to Ollama format if supported
         ollama_tools = []
         if tools and self.supports_feature("tools"):
             for tool in tools:
-                # Ollama expects a specific format for tools
-                if "function" in tool:
-                    fn = tool["function"]
-                    ollama_tools.append(
-                        {
-                            "type": "function",
-                            "function": {
-                                "name": fn.get("name"),
-                                "description": fn.get("description", ""),
-                                "parameters": fn.get("parameters", {}),
-                            },
-                        }
-                    )
-                else:
-                    # Pass through other tool formats
-                    ollama_tools.append(tool)
+                # Access Pydantic model attributes
+                ollama_tools.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": tool.function.name,
+                            "description": tool.function.description,
+                            "parameters": tool.function.parameters,
+                        },
+                    }
+                )
         elif tools:
             log.warning(
                 f"Tools provided but {self.model} doesn't support tools according to configuration"
@@ -550,8 +567,8 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                 except Exception as e:
                     log.debug(f"Could not check think parameter support: {e}")
 
-        # Make the non-streaming sync call
-        response = self.sync_client.chat(**request_params)  # type: ignore[call-overload]
+        # Make the non-streaming async call
+        response = await self.async_client.chat(**request_params)  # type: ignore[call-overload]
 
         # Process response
         return self._parse_response(response)
@@ -677,7 +694,8 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         **kwargs,
     ) -> AsyncIterator[dict[str, Any]] | Any:
         """
-        ENHANCED: Configuration-aware completion with proper context preservation.
+        REFACTORED: Configuration-aware completion with proper context preservation.
+        Uses Pydantic models throughout - no dictionary goop!
 
         Args:
             messages: List of Pydantic Message objects
@@ -692,30 +710,22 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
         messages = _ensure_pydantic_messages(messages)
         tools = _ensure_pydantic_tools(tools)
 
-        # Convert Pydantic to dicts
-        dict_messages = [msg.to_dict() for msg in messages]
-        dict_tools = [tool.to_dict() for tool in tools] if tools else None
-
-        # CRITICAL: Validate conversation context before processing
-        if not self._validate_conversation_context(dict_messages):
+        # CRITICAL: Validate conversation context before processing (using Pydantic)
+        if not self._validate_conversation_context(messages):
             log.warning(
                 "Conversation context validation failed - responses may lack context"
             )
 
         # Log conversation length for debugging
-        log.debug(f"Creating completion with {len(dict_messages)} messages in context")
-        if len(dict_messages) > 1:
-            # Log the conversation flow
-            roles = [
-                msg.get("role", "unknown") for msg in dict_messages[-5:]
-            ]  # Last 5 messages
+        log.debug(f"Creating completion with {len(messages)} messages in context")
+        if len(messages) > 1:
+            # Log the conversation flow using enum values
+            roles = [msg.role.value for msg in messages[-5:]]  # Last 5 messages
             log.debug(f"Recent conversation flow: {' -> '.join(roles)}")
 
-        # Continue with existing validation and processing...
+        # Continue with existing validation and processing using Pydantic
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
-            self._validate_request_with_config(
-                dict_messages, dict_tools, stream, **kwargs
-            )
+            self._validate_request_with_config(messages, tools, stream, **kwargs)
         )
 
         if validated_stream:
@@ -729,12 +739,13 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
 
     async def _stream_completion_async(
         self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        messages: list,  # List of Message Pydantic objects
+        tools: list | None = None,  # List of Tool Pydantic objects
         **kwargs,
     ) -> AsyncIterator[dict[str, Any]]:
         """
-        ENHANCED: Real streaming using Ollama's AsyncClient with support for reasoning models.
+        REFACTORED: Real streaming using Ollama's AsyncClient with support for reasoning models.
+        Uses Pydantic models, converts to dicts only at API boundary.
         FIXED: Deduplicates tool calls that appear in multiple locations in the same chunk.
 
         This now properly handles:
@@ -750,26 +761,23 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
             )
 
             # Prepare messages for Ollama with configuration-aware processing
-            ollama_messages = self._prepare_ollama_messages(messages)
+            ollama_messages = await self._prepare_ollama_messages(messages)
 
             # Convert tools to Ollama format if supported
             ollama_tools = []
             if tools and self.supports_feature("tools"):
                 for tool in tools:
-                    if "function" in tool:
-                        fn = tool["function"]
-                        ollama_tools.append(
-                            {
-                                "type": "function",
-                                "function": {
-                                    "name": fn.get("name"),
-                                    "description": fn.get("description", ""),
-                                    "parameters": fn.get("parameters", {}),
-                                },
-                            }
-                        )
-                    else:
-                        ollama_tools.append(tool)
+                    # Access Pydantic model attributes
+                    ollama_tools.append(
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": tool.function.name,
+                                "description": tool.function.description,
+                                "parameters": tool.function.parameters,
+                            },
+                        }
+                    )
             elif tools:
                 log.warning(
                     f"Tools provided but {self.model} doesn't support tools according to configuration"
@@ -1093,12 +1101,13 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
 
     async def _regular_completion(
         self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        messages: list,  # List of Message Pydantic objects
+        tools: list | None = None,  # List of Tool Pydantic objects
         **kwargs,
     ) -> dict[str, Any]:
         """
-        ENHANCED: Non-streaming completion using async execution with reasoning model support.
+        REFACTORED: Non-streaming completion using async execution with reasoning model support.
+        Uses Pydantic models, converts to dicts only at API boundary.
         """
         try:
             is_reasoning_model = self._is_reasoning_model()
@@ -1106,9 +1115,7 @@ class OllamaLLMClient(ConfigAwareProviderMixin, BaseLLMClient):
                 f"Starting Ollama completion for {'reasoning' if is_reasoning_model else 'regular'} model: {self.model}"
             )
 
-            result = await asyncio.to_thread(
-                self._create_sync, messages, tools, **kwargs
-            )
+            result = await self._create_sync(messages, tools, **kwargs)
 
             log.debug(
                 f"Ollama completion result: "

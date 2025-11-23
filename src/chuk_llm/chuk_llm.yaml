@@ -57,6 +57,12 @@ ollama:
   default_model: "llama3.2"
   models: ["*"]
 
+llamacpp:
+  client_class: "chuk_llm.llm.providers.llamacpp_client:LlamaCppLLMClient"
+  api_base: "http://localhost:8080"
+  default_model: "llama-3.1-8b-instruct"
+  models: ["*"]
+
 watsonx:
   client_class: "chuk_llm.llm.providers.watsonx_client:WatsonXLLMClient"
   api_key_env: "WATSONX_API_KEY"

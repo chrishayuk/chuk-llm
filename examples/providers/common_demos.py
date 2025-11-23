@@ -43,7 +43,7 @@ async def demo_basic_completion(client, provider: str, model: str):
     print("\n⏳ Generating response...")
 
     start_time = time.time()
-    response = await client.create_completion(messages, max_tokens=150)
+    response = await client.create_completion(messages, max_tokens=500)
     duration = time.time() - start_time
 
     print(f"\n✅ Response ({duration:.2f}s):")
@@ -80,7 +80,7 @@ async def demo_streaming(client, provider: str, model: str):
     chunk_count = 0
     start_time = time.time()
 
-    async for chunk in client.create_completion(messages, stream=True, max_tokens=100):
+    async for chunk in client.create_completion(messages, stream=True, max_tokens=500):
         if chunk.get("response"):
             content = chunk["response"]
             print(content, end="", flush=True)
@@ -148,6 +148,10 @@ async def demo_function_calling(client, provider: str, model: str):
 
     messages = [
         Message(
+            role=MessageRole.SYSTEM,
+            content="You are a helpful assistant. You must use the provided tools to answer questions. Always call the appropriate function for calculations and data retrieval."
+        ),
+        Message(
             role=MessageRole.USER,
             content="What's the weather in Tokyo and what is 25 * 8?"
         ),
@@ -190,9 +194,39 @@ async def demo_function_calling(client, provider: str, model: str):
                 result = json.dumps({"temperature": 22, "conditions": "partly cloudy"})
             elif func_name == "calculate":
                 try:
-                    result = json.dumps({"result": eval(func_args.get("expression", "0"))})
-                except:
-                    result = json.dumps({"error": "Invalid expression"})
+                    # Handle different argument formats models might use
+                    if "expression" in func_args:
+                        # Standard format: {"expression": "25 * 8"}
+                        result_value = eval(func_args["expression"])
+                    elif "a" in func_args and "b" in func_args:
+                        # Alternative format: {"a": 25, "b": 8, "operation": "multiply"}
+                        a, b = func_args["a"], func_args["b"]
+                        operation = func_args.get("operation", "multiply")
+                        if operation == "multiply" or operation == "*":
+                            result_value = a * b
+                        elif operation == "add" or operation == "+":
+                            result_value = a + b
+                        elif operation == "subtract" or operation == "-":
+                            result_value = a - b
+                        elif operation == "divide" or operation == "/":
+                            result_value = a / b
+                        else:
+                            result_value = 0
+                    elif "operands" in func_args:
+                        # Another format: {"operands": [25, 8], "operation": "multiply"}
+                        operands = func_args["operands"]
+                        operation = func_args.get("operation", "multiply")
+                        if operation == "multiply":
+                            result_value = operands[0] * operands[1]
+                        elif operation == "add":
+                            result_value = operands[0] + operands[1]
+                        else:
+                            result_value = 0
+                    else:
+                        result_value = 0
+                    result = json.dumps({"result": result_value})
+                except Exception as e:
+                    result = json.dumps({"error": f"Invalid expression: {str(e)}"})
             else:
                 result = json.dumps({"error": "Unknown function"})
 
@@ -224,7 +258,9 @@ async def demo_function_calling(client, provider: str, model: str):
             )
 
         print(f"\n⏳ Getting {'final ' if round_num > 0 else ''}response...")
-        response = await client.create_completion(messages, tools=tools)
+        # Don't pass tools on continuation - we want a final text response
+        # Use reasonable max_tokens to ensure complete responses
+        response = await client.create_completion(messages, max_tokens=1000)
 
     # Now we have the final response (no more tool calls)
     if round_num > 0:
@@ -272,7 +308,7 @@ async def demo_vision(client, provider: str, model: str):
     print(f"Image: [16x16 red square]")
     print("\n⏳ Analyzing image...")
 
-    response = await client.create_completion(messages, max_tokens=100)
+    response = await client.create_completion(messages, max_tokens=300)
 
     print(f"\n✅ Response:")
     print(f"{response['response']}")
@@ -318,7 +354,7 @@ async def demo_vision_url(client, provider: str, model: str):
     ]
 
     try:
-        response = await client.create_completion(messages, max_tokens=150)
+        response = await client.create_completion(messages, max_tokens=500)
 
         print(f"\n✅ Response:")
         print(f"{response['response']}")
@@ -362,7 +398,7 @@ async def demo_json_mode(client, provider: str, model: str):
     response = await client.create_completion(
         messages,
         response_format={"type": "json_object"},
-        max_tokens=200
+        max_tokens=500
     )
 
     print(f"\n✅ JSON Response:")
@@ -511,7 +547,7 @@ Output ONLY these fields, no additional properties."""
     response = await client.create_completion(
         messages,
         response_format={"type": "json_object"},
-        max_tokens=150
+        max_tokens=500
     )
 
     print(f"\n✅ Structured JSON Response:")
@@ -743,7 +779,7 @@ async def demo_parameters(client, provider: str, model: str):
             response = await client.create_completion(
                 messages,
                 temperature=temp,
-                max_tokens=100
+                max_tokens=300
             )
 
             print(f"Temperature {temp}:")
@@ -787,7 +823,7 @@ async def demo_model_comparison(provider: str, models: list[str]):
             ]
 
             start_time = time.time()
-            response = await client.create_completion(messages, max_tokens=100)
+            response = await client.create_completion(messages, max_tokens=300)
             duration = time.time() - start_time
 
             print(f"{model} ({duration:.2f}s):")
@@ -854,7 +890,7 @@ async def demo_dynamic_model_call(provider: str):
             )
         ]
 
-        response = await client.create_completion(messages, max_tokens=100)
+        response = await client.create_completion(messages, max_tokens=300)
 
         print(f"\n✅ Response from {target_model}:")
         print(f"{response['response']}")

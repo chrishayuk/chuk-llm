@@ -176,7 +176,10 @@ results = await registry.query(ModelQuery(
 - Anthropic known models
 - Google Gemini models API
 - Ollama `/api/tags` (local models)
-- Groq, Mistral, DeepSeek, Moonshot AI, and more
+- llama.cpp `/v1/models` (local GGUF + Ollama bridge)
+- DeepSeek `/v1/models` API
+- Moonshot AI `/v1/models` API
+- Groq, Mistral, Perplexity, and more
 
 Provider APIs are cached on disk and refreshed periodically (or via `chuk-llm discover`), so new models appear without needing a chuk-llm release.
 
@@ -205,6 +208,46 @@ response = ask_ollama_llama3_2_sync("Hello!")
 # Or via CLI
 chuk-llm ask_ollama_mistral_small_latest "Tell me a joke"
 ```
+
+### 🦙 llama.cpp Integration
+
+Run local GGUF models with advanced control via llama.cpp server. **Reuse Ollama's downloaded models** without re-downloading!
+
+```python
+from chuk_llm.registry.resolvers.llamacpp_ollama import discover_ollama_models
+from chuk_llm.llm.providers.llamacpp_server import LlamaCppServerConfig, LlamaCppServerManager
+from chuk_llm.llm.providers.openai_client import OpenAILLMClient
+from chuk_llm.core import Message, MessageRole
+
+# Discover Ollama models (finds GGUF blobs in ~/.ollama/models/blobs/)
+models = discover_ollama_models()
+print(f"Found {len(models)} Ollama models")  # e.g., "Found 48 Ollama models"
+
+# Start llama-server with an Ollama model
+config = LlamaCppServerConfig(
+    model_path=models[0].gguf_path,  # Reuse Ollama's GGUF!
+    port=8033,
+    ctx_size=8192,
+    n_gpu_layers=-1,  # Use all GPU layers
+)
+
+async with LlamaCppServerManager(config) as server:
+    # Use OpenAI-compatible client
+    client = OpenAILLMClient(model="llama-3.2", api_base=server.base_url)
+
+    messages = [Message(role=MessageRole.USER, content="Hello!")]
+    result = await client.create_completion(messages=messages)
+    print(result["response"])
+```
+
+**Key Features:**
+- ✅ **Ollama Bridge** - Automatically discovers and reuses Ollama's downloaded models (no re-download!)
+- ✅ **Process Management** - Async server lifecycle (start/stop/health checks)
+- ✅ **OpenAI-Compatible** - Uses standard OpenAI client (streaming, tools, etc.)
+- ✅ **Advanced Control** - Custom sampling, grammars, GPU layers, context size
+- ✅ **Cross-Platform** - Works on macOS, Linux, Windows
+
+See `examples/providers/llamacpp_with_ollama_models.py` for full examples.
 
 ### 📊 Automatic Session Tracking
 
@@ -262,11 +305,12 @@ All providers are **dynamically discovered** via the registry system - no hardco
 | **Google Gemini** | Models API | Gemini 2.0 / 3.0 Flash, multimodal, vision, video | ✅ Dynamic |
 | **Groq** | `/v1/models` API | Llama 3.3, ultra-fast (our benchmarks: ~526 tok/s) | ✅ Dynamic |
 | **Ollama** | `/api/tags` | Any local model, auto-discovery, offline, privacy | ✅ Dynamic |
+| **llama.cpp** | `/v1/models` | Local GGUF models, Ollama bridge, advanced control | ✅ Dynamic |
 | **IBM watsonx** | Known models† | Granite 3.3, enterprise, on-prem, compliance | ✅ Static |
 | **Perplexity** | Known models† | Sonar, real-time web search, citations | ✅ Static |
 | **Mistral** | Known models† | Large, Medium, Small, Codestral, European sovereignty | ✅ Static |
-| **DeepSeek** | Known models† | DeepSeek V3, efficient, cost-effective | ✅ Static |
-| **Moonshot AI** | Known models† | Kimi K2, 256K context, coding, agent building | ✅ Static |
+| **DeepSeek** | `/v1/models` API | DeepSeek V3, efficient, cost-effective | ✅ Dynamic |
+| **Moonshot AI** | `/v1/models` API | Kimi K2, 256K context, coding, Chinese language | ✅ Dynamic |
 | **OpenRouter** | Known models† | Access to 100+ models via single API | ✅ Static |
 
 † Static = discovered from curated model list + provider docs, not via `/models` endpoint
@@ -286,11 +330,21 @@ All providers are **dynamically discovered** via the registry system - no hardco
 ### Environment Variables
 
 ```bash
-# API Keys
+# API Keys - Cloud Providers
 export OPENAI_API_KEY="sk-..."
 export ANTHROPIC_API_KEY="sk-ant-..."
+export GEMINI_API_KEY="..."
+export GROQ_API_KEY="..."
+export DEEPSEEK_API_KEY="..."
+export MOONSHOT_API_KEY="..."
+export MISTRAL_API_KEY="..."
+
+# Azure Configuration
 export AZURE_OPENAI_API_KEY="..."
 export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com"
+
+# Local Servers
+# (No API keys needed for Ollama or llama.cpp)
 
 # Session Storage (optional)
 export SESSION_PROVIDER=redis  # Default: memory

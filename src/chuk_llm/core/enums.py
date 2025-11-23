@@ -28,6 +28,7 @@ class Provider(str, Enum):
     OPENAI_COMPATIBLE = "openai_compatible"
     OPENROUTER = "openrouter"
     MOONSHOT = "moonshot"
+    LLAMA_CPP = "llamacpp"
 
 
 class Feature(str, Enum):

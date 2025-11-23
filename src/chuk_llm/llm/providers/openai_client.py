@@ -402,17 +402,39 @@ class OpenAILLMClient(
 
         return adjusted_kwargs
 
-    def _prepare_reasoning_model_messages(
-        self, messages: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    def _prepare_reasoning_model_messages(self, messages: list) -> list[dict[str, Any]]:
         """
         Prepare messages for reasoning models that may have restrictions.
+
+        Args:
+            messages: List of Pydantic Message objects OR dicts (already converted)
+
+        Returns:
+            List of dicts (for API boundary)
 
         O1 models don't support system messages - need to convert them.
         GPT-5 models support system messages.
         """
-        if not self._is_reasoning_model(self.model):
+        # Check if messages are already dicts (from _prepare_messages_for_conversation)
+        if messages and isinstance(messages[0], dict):
+            # Already dicts - just apply O1 conversion if needed
+            if not self._is_reasoning_model(self.model):
+                return messages
+
+            generation = self._get_reasoning_model_generation(self.model)
+            if generation == "o1":
+                # Need to convert system messages, but we have dicts not Pydantic
+                # Convert back to Pydantic temporarily
+                from chuk_llm.llm.core.base import _ensure_pydantic_messages
+
+                pydantic_messages = _ensure_pydantic_messages(messages)
+                return self._convert_system_messages_for_o1(pydantic_messages)
             return messages
+
+        # Messages are Pydantic objects
+        if not self._is_reasoning_model(self.model):
+            # Not a reasoning model - convert Pydantic to dicts for API
+            return [msg.to_dict() for msg in messages]
 
         generation = self._get_reasoning_model_generation(self.model)
 
@@ -421,30 +443,56 @@ class OpenAILLMClient(
             return self._convert_system_messages_for_o1(messages)
 
         # GPT-5, O3, O4, O5 models support system messages
-        return messages
+        # Convert Pydantic to dicts for API
+        return [msg.to_dict() for msg in messages]
 
-    def _convert_system_messages_for_o1(
-        self, messages: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        """Convert system messages for O1 models that don't support them"""
+    def _convert_system_messages_for_o1(self, messages: list) -> list[dict[str, Any]]:
+        """
+        Convert system messages for O1 models that don't support them.
 
+        Args:
+            messages: List of Pydantic Message objects OR dicts
+
+        Returns:
+            List of dicts (for API boundary)
+        """
         adjusted_messages = []
         system_instructions = []
 
+        # Check if messages are dicts or Pydantic
+        messages_are_dicts = messages and isinstance(messages[0], dict)
+
         for msg in messages:
-            if msg.get("role") == MessageRole.SYSTEM.value:
-                system_instructions.append(msg["content"])
-                log.debug(
-                    f"[{self.detected_provider}] Converting system message for o1 model"
-                )
+            if messages_are_dicts:
+                # Dict message
+                if (
+                    msg.get("role") == MessageRole.SYSTEM.value
+                    or msg.get("role") == "system"
+                ):
+                    system_instructions.append(msg.get("content", ""))
+                    log.debug(
+                        f"[{self.detected_provider}] Converting system message for o1 model"
+                    )
+                else:
+                    adjusted_messages.append(msg.copy())
             else:
-                adjusted_messages.append(msg.copy())
+                # Pydantic message
+                if msg.role == MessageRole.SYSTEM:
+                    system_instructions.append(msg.content or "")
+                    log.debug(
+                        f"[{self.detected_provider}] Converting system message for o1 model"
+                    )
+                else:
+                    # Convert to dict for API
+                    adjusted_messages.append(msg.to_dict())
 
         # If we have system instructions, prepend to first user message
         if system_instructions and adjusted_messages:
             first_user_idx = None
-            for i, msg in enumerate(adjusted_messages):
-                if msg.get("role") == MessageRole.USER.value:
+            for i, msg_dict in enumerate(adjusted_messages):
+                # Already dict here
+                role = msg_dict.get("role")
+                if role == MessageRole.USER.value or role == "user":
                     first_user_idx = i
                     break
 
@@ -707,49 +755,109 @@ class OpenAILLMClient(
         return result
 
     def _prepare_messages_for_conversation(
-        self, messages: list[dict[str, Any]]
+        self, messages: list
     ) -> list[dict[str, Any]]:
         """
         CRITICAL FIX: Prepare messages for conversation by sanitizing tool names in message history.
+
+        Args:
+            messages: List of Pydantic Message objects
+
+        Returns:
+            List of dicts (for API boundary)
 
         This is the key fix for conversation flows - tool names in assistant messages
         must be sanitized to match what the API expects.
         """
         if not hasattr(self, "_current_name_mapping") or not self._current_name_mapping:
-            return messages
+            # No name mapping needed - convert to dicts if Pydantic, otherwise return as-is
+            if messages and not isinstance(messages[0], dict):
+                return [msg.to_dict() for msg in messages]
+            else:
+                return messages
 
         prepared_messages = []
 
+        # Check if messages are dicts or Pydantic
+        messages_are_dicts = messages and isinstance(messages[0], dict)
+
         for msg in messages:
-            if msg.get("role") == MessageRole.ASSISTANT.value and msg.get("tool_calls"):
-                # Sanitize tool names in assistant message tool calls
-                prepared_msg = msg.copy()
-                sanitized_tool_calls = []
+            if messages_are_dicts:
+                # Dict message - check for tool_calls
+                if (
+                    msg.get("role") == MessageRole.ASSISTANT.value
+                    or msg.get("role") == "assistant"
+                ):
+                    tool_calls = msg.get("tool_calls", [])
+                    if tool_calls:
+                        # Sanitize tool names in dict tool calls
+                        prepared_msg = msg.copy()
+                        sanitized_tool_calls = []
 
-                for tc in msg["tool_calls"]:
-                    tc_copy = tc.copy()
-                    original_name = tc["function"]["name"]
+                        for tc in tool_calls:
+                            tc_copy = tc.copy()
+                            function = tc.get("function", {})
+                            original_name = function.get("name", "")
 
-                    # Find sanitized name from current mapping
-                    sanitized_name = None
-                    for sanitized, original in self._current_name_mapping.items():
-                        if original == original_name:
-                            sanitized_name = sanitized
-                            break
+                            # Find sanitized name from current mapping
+                            sanitized_name = None
+                            for (
+                                sanitized,
+                                original,
+                            ) in self._current_name_mapping.items():
+                                if original == original_name:
+                                    sanitized_name = sanitized
+                                    break
 
-                    if sanitized_name:
-                        tc_copy["function"] = tc["function"].copy()
-                        tc_copy["function"]["name"] = sanitized_name
-                        log.debug(
-                            f"Sanitized tool name in conversation: {original_name} -> {sanitized_name}"
-                        )
+                            if sanitized_name:
+                                tc_copy["function"] = function.copy()
+                                tc_copy["function"]["name"] = sanitized_name
+                                log.debug(
+                                    f"Sanitized tool name in conversation: {original_name} -> {sanitized_name}"
+                                )
 
-                    sanitized_tool_calls.append(tc_copy)
+                            sanitized_tool_calls.append(tc_copy)
 
-                prepared_msg["tool_calls"] = sanitized_tool_calls
-                prepared_messages.append(prepared_msg)
+                        prepared_msg["tool_calls"] = sanitized_tool_calls
+                        prepared_messages.append(prepared_msg)
+                    else:
+                        prepared_messages.append(msg)
+                else:
+                    prepared_messages.append(msg)
             else:
-                prepared_messages.append(msg)
+                # Pydantic message
+                if msg.role == MessageRole.ASSISTANT and msg.tool_calls:
+                    # Sanitize tool names in assistant message tool calls
+                    # Convert to dict first
+                    prepared_msg = msg.to_dict()
+                    sanitized_tool_calls = []
+
+                    for tc in msg.tool_calls:
+                        # tc is a Pydantic ToolCall object
+                        original_name = tc.function.name
+
+                        # Find sanitized name from current mapping
+                        sanitized_name = None
+                        for sanitized, original in self._current_name_mapping.items():
+                            if original == original_name:
+                                sanitized_name = sanitized
+                                break
+
+                        if sanitized_name:
+                            # Create dict version with sanitized name
+                            tc_dict = tc.to_dict()
+                            tc_dict["function"]["name"] = sanitized_name
+                            log.debug(
+                                f"Sanitized tool name in conversation: {original_name} -> {sanitized_name}"
+                            )
+                            sanitized_tool_calls.append(tc_dict)
+                        else:
+                            sanitized_tool_calls.append(tc.to_dict())
+
+                    prepared_msg["tool_calls"] = sanitized_tool_calls
+                    prepared_messages.append(prepared_msg)
+                else:
+                    prepared_messages.append(msg.to_dict())
 
         return prepared_messages
 
@@ -936,14 +1044,21 @@ class OpenAILLMClient(
 
     def _validate_request_with_config(
         self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        messages: list,
+        tools: list | None = None,
         stream: bool = False,
         **kwargs,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]] | None, bool, dict[str, Any]]:
+    ) -> tuple[list, list | None, bool, dict[str, Any]]:
         """
         Validate request against configuration before processing.
         ENHANCED: Uses smart defaults for newly discovered OpenAI models.
+
+        Args:
+            messages: List of Pydantic Message objects
+            tools: List of Pydantic Tool objects or None
+
+        Returns:
+            Tuple of (messages, tools, stream, kwargs) - all validated
         """
         validated_messages = messages
         validated_tools = tools
@@ -1006,30 +1121,32 @@ class OpenAILLMClient(
             messages: List of Pydantic Message objects (or dicts for backward compatibility)
             tools: List of Pydantic Tool objects (or dicts for backward compatibility)
         """
-        # Handle backward compatibility
+        # Handle backward compatibility - convert dicts to Pydantic
         from chuk_llm.llm.core.base import (
             _ensure_pydantic_messages,
             _ensure_pydantic_tools,
         )
 
-        messages = _ensure_pydantic_messages(messages)
-        tools = _ensure_pydantic_tools(tools)
-
-        # Convert Pydantic to dicts using built-in .to_dict() method
-        dict_messages = [msg.to_dict() for msg in messages]
-        dict_tools = [tool.to_dict() for tool in tools] if tools else None
+        pydantic_messages = _ensure_pydantic_messages(messages)
+        pydantic_tools = _ensure_pydantic_tools(tools)
 
         # Validate request against configuration (with smart defaults)
+        # Pass Pydantic objects - they'll be converted to dicts at API boundary
         validated_messages, validated_tools, validated_stream, validated_kwargs = (
             self._validate_request_with_config(
-                dict_messages, dict_tools, stream, **kwargs
+                pydantic_messages, pydantic_tools, stream, **kwargs
             )
+        )
+
+        # Convert tools to dicts for sanitization (tool name sanitization operates on dicts)
+        dict_tools = (
+            [tool.to_dict() for tool in validated_tools] if validated_tools else None
         )
 
         # Apply universal tool name sanitization
         name_mapping = {}
-        if validated_tools:
-            validated_tools = self._sanitize_tool_names(validated_tools)
+        if dict_tools:
+            dict_tools = self._sanitize_tool_names(dict_tools)
             name_mapping = self._current_name_mapping
             log.debug(
                 f"Tool sanitization: {len(name_mapping)} tools processed for {self.detected_provider} compatibility"
@@ -1037,11 +1154,12 @@ class OpenAILLMClient(
 
             # Add strict parameter for OpenAI-compatible APIs that may require it
             if (
-                self.detected_provider == "openai_compatible" and validated_tools
+                self.detected_provider == "openai_compatible" and dict_tools
             ):  # Legacy code - TODO: migrate to Provider enum
-                validated_tools = self._add_strict_parameter_to_tools(validated_tools)
+                dict_tools = self._add_strict_parameter_to_tools(dict_tools)
 
         # Prepare messages for conversation (sanitize tool names in history)
+        # Pass Pydantic messages, this method converts to dicts at API boundary
         if name_mapping:
             validated_messages = self._prepare_messages_for_conversation(
                 validated_messages
@@ -1052,35 +1170,59 @@ class OpenAILLMClient(
 
         if validated_stream:
             return self._stream_completion_async(
-                validated_messages, validated_tools, name_mapping, **validated_kwargs
+                validated_messages, dict_tools, name_mapping, **validated_kwargs
             )
         else:
             return self._regular_completion(
-                validated_messages, validated_tools, name_mapping, **validated_kwargs
+                validated_messages, dict_tools, name_mapping, **validated_kwargs
             )
 
     async def _stream_completion_async(
         self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        messages: list,
+        tools: list | None = None,
         name_mapping: dict[str, str] = None,
         **kwargs: Any,
     ) -> AsyncIterator[dict[str, Any]]:
         """
         Enhanced async streaming with reasoning model support (including GPT-5) and FIXED streaming logic.
+
+        Args:
+            messages: List of Pydantic Message objects OR dicts (if already converted by _prepare_messages_for_conversation)
+            tools: List of dicts (tool definitions for API)
+            name_mapping: Tool name mapping for restoration
+            **kwargs: Additional parameters
+
+        Returns:
+            Async iterator of response dicts
         """
         max_retries = 1
 
         for attempt in range(max_retries + 1):
             try:
                 # Prepare messages and parameters for reasoning models (including GPT-5)
+                # _prepare_reasoning_model_messages converts Pydantic to dicts for API
                 prepared_messages = self._prepare_reasoning_model_messages(messages)
                 prepared_kwargs = self._prepare_reasoning_model_parameters(**kwargs)
+
+                # Tools are already dicts (converted in create_completion)
+                prepared_tools = tools
+
+                # Download image URLs for non-OpenAI providers (like llama.cpp)
+                # OpenAI supports direct URLs, but local servers may not
+                supports_urls = self.detected_provider in [
+                    "openai",
+                    "anthropic",
+                    "google",
+                ]
+                prepared_messages = await self._process_image_urls_in_messages(
+                    prepared_messages, supports_direct_urls=supports_urls
+                )
 
                 log.debug(
                     f"[{self.detected_provider}] Starting streaming (attempt {attempt + 1}): "
                     f"model={self.model}, messages={len(prepared_messages)}, "
-                    f"tools={len(tools) if tools else 0}, "
+                    f"tools={len(prepared_tools) if prepared_tools else 0}, "
                     f"reasoning_model={self._is_reasoning_model(self.model)}, "
                     f"generation={self._get_reasoning_model_generation(self.model)}"
                 )
@@ -1105,7 +1247,7 @@ class OpenAILLMClient(
                 response_stream = await self.client.chat.completions.create(  # type: ignore[call-overload]
                     model=self.model,
                     messages=prepared_messages,
-                    **({"tools": tools} if tools else {}),
+                    **({"tools": prepared_tools} if prepared_tools else {}),
                     stream=True,
                     **prepared_kwargs,
                 )
@@ -1166,21 +1308,43 @@ class OpenAILLMClient(
 
     async def _regular_completion(
         self,
-        messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
+        messages: list,
+        tools: list | None = None,
         name_mapping: dict[str, str] = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Enhanced non-streaming completion with reasoning model support (including GPT-5) and universal tool name restoration."""
+        """
+        Enhanced non-streaming completion with reasoning model support (including GPT-5) and universal tool name restoration.
+
+        Args:
+            messages: List of Pydantic Message objects OR dicts (if already converted by _prepare_messages_for_conversation)
+            tools: List of dicts (tool definitions for API)
+            name_mapping: Tool name mapping for restoration
+            **kwargs: Additional parameters
+
+        Returns:
+            Response dict with response, tool_calls, usage, etc.
+        """
         try:
             # Prepare messages and parameters for reasoning models (including GPT-5)
+            # _prepare_reasoning_model_messages converts Pydantic to dicts for API
             prepared_messages = self._prepare_reasoning_model_messages(messages)
             prepared_kwargs = self._prepare_reasoning_model_parameters(**kwargs)
+
+            # Tools are already dicts (converted in create_completion)
+            prepared_tools = tools
+
+            # Download image URLs for non-OpenAI providers (like llama.cpp)
+            # OpenAI supports direct URLs, but local servers may not
+            supports_urls = self.detected_provider in ["openai", "anthropic", "google"]
+            prepared_messages = await self._process_image_urls_in_messages(
+                prepared_messages, supports_direct_urls=supports_urls
+            )
 
             log.debug(
                 f"[{self.detected_provider}] Starting completion: "
                 f"model={self.model}, messages={len(prepared_messages)}, "
-                f"tools={len(tools) if tools else 0}, "
+                f"tools={len(prepared_tools) if prepared_tools else 0}, "
                 f"reasoning_model={self._is_reasoning_model(self.model)}, "
                 f"generation={self._get_reasoning_model_generation(self.model)}"
             )
@@ -1205,7 +1369,7 @@ class OpenAILLMClient(
             resp = await self.client.chat.completions.create(  # type: ignore[call-overload]
                 model=self.model,
                 messages=prepared_messages,
-                **({"tools": tools} if tools else {}),
+                **({"tools": prepared_tools} if prepared_tools else {}),
                 stream=False,
                 **prepared_kwargs,
             )
