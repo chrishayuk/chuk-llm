@@ -139,6 +139,65 @@ def _create_client_internal(
         if "azure_deployment" not in kwargs:
             kwargs["azure_deployment"] = target_model
 
+    # Special handling for llamacpp: resolve model names to GGUF paths
+    elif provider == "llamacpp" and target_model:
+        from pathlib import Path
+
+        # Check if target_model is already a valid file path
+        model_path = Path(target_model)
+        if not model_path.exists():
+            # Try to resolve from Ollama models
+            try:
+                from chuk_llm.registry.resolvers.llamacpp_ollama import (
+                    OllamaModel,
+                    discover_ollama_models,
+                )
+
+                models = [
+                    m
+                    for m in discover_ollama_models()
+                    if not m.name.startswith("sha256-")
+                ]
+
+                # Try to find matching model by name
+                resolved_ollama_model: OllamaModel | None = None
+                target_lower = target_model.lower()
+
+                # Try exact match first
+                for m in models:
+                    if m.name.lower() == target_lower:
+                        resolved_ollama_model = m
+                        break
+
+                # Try partial match (e.g., "qwen3" matches "library/qwen3:0.6b")
+                if not resolved_ollama_model:
+                    for m in models:
+                        if target_lower in m.name.lower():
+                            resolved_ollama_model = m
+                            break
+
+                if resolved_ollama_model:
+                    logger.info(
+                        f"Resolved llamacpp model '{target_model}' to {resolved_ollama_model.name} "
+                        f"({resolved_ollama_model.size_bytes / 1e9:.1f} GB)"
+                    )
+                    target_model = str(resolved_ollama_model.gguf_path)
+                else:
+                    # Model not found in Ollama, provide helpful error
+                    available = [m.name for m in models[:5]]
+                    raise ValueError(
+                        f"llamacpp model '{target_model}' not found. "
+                        f"Provide a GGUF file path or install via Ollama.\n"
+                        f"Available Ollama models: {available}{'...' if len(models) > 5 else ''}\n"
+                        f"Install with: ollama pull {target_model}"
+                    )
+            except ImportError:
+                # Ollama discovery not available, just pass through
+                logger.warning(
+                    f"Could not resolve llamacpp model '{target_model}' - "
+                    f"provide full GGUF file path"
+                )
+
     elif target_model:
         # For non-Azure providers, validate the model exists
         # Try to ensure model is available (triggers discovery if needed)
@@ -219,6 +278,11 @@ def _create_client_internal(
 
     # Get constructor arguments
     constructor_args = _constructor_kwargs(client_class_type, client_config)
+
+    # Special handling for llamacpp: remove api_base since it constructs it internally
+    if provider == "llamacpp" and "api_base" in constructor_args:
+        # LlamaCppLLMClient constructs api_base from host:port internally
+        del constructor_args["api_base"]
 
     # Create client instance
     try:

@@ -259,15 +259,10 @@ class ChukLLMCLI:
                         # (user explicitly specified a provider)
 
                 # Now try resolution with the config (handles provider-specific aliases and discovery)
-                resolved_model = self.config._ensure_model_available(provider, model)
+                # Note: _ensure_model_available returns True/False, not the resolved model
+                model_available = self.config._ensure_model_available(provider, model)
 
-                if resolved_model and resolved_model != model:
-                    if self.verbose:
-                        self.print_rich(
-                            f"📝 Using model '{resolved_model}' for '{model}'", "info"
-                        )
-                    model = resolved_model
-                elif not resolved_model:
+                if not model_available:
                     # Model couldn't be resolved
                     # Let it pass through - the API will give a proper error message
                     if self.verbose:
@@ -462,6 +457,14 @@ class ChukLLMCLI:
 
             # Try non-streaming fallback
             try:
+                # Debug: print what we're passing
+                import logging
+
+                logger = logging.getLogger(__name__)
+                logger.debug(
+                    f"Fallback ask_sync: provider={provider}, model={model}, kwargs={kwargs}"
+                )
+
                 if provider and model:
                     response = ask_sync(
                         prompt, provider=provider, model=model, **kwargs
@@ -474,6 +477,10 @@ class ChukLLMCLI:
                 print(response)  # Print the fallback response
                 return response
             except Exception as fallback_error:
+                logger.debug(f"Fallback error: {fallback_error}")
+                import traceback
+
+                logger.debug(traceback.format_exc())
                 error_msg = (
                     f"Both streaming and non-streaming failed: {e}, {fallback_error}"
                 )

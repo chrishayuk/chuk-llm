@@ -111,6 +111,10 @@ chuk-llm ask_claude "Explain quantum computing"
 chuk-llm ask_ollama_gemma3 "Hello world"
 chuk-llm stream_ollama_mistral "Write a long story"
 
+# llama.cpp with automatic model resolution
+chuk-llm ask "What is Python?" --provider llamacpp --model qwen3
+chuk-llm ask "Count to 5" --provider llamacpp --model llama3.2
+
 # Discover new models
 chuk-llm discover ollama
 ```
@@ -213,41 +217,81 @@ chuk-llm ask_ollama_mistral_small_latest "Tell me a joke"
 
 Run local GGUF models with advanced control via llama.cpp server. **Reuse Ollama's downloaded models** without re-downloading!
 
+**CLI Usage** (✨ Now fully supported!):
+
+```bash
+# Simple usage - model names automatically resolve to GGUF files
+chuk-llm ask "What is Python?" --provider llamacpp --model qwen3
+chuk-llm ask "Count to 5" --provider llamacpp --model llama3.2
+
+# Streaming (default)
+chuk-llm ask "Write a story" --provider llamacpp --model qwen3
+
+# Non-streaming
+chuk-llm ask "Quick question" --provider llamacpp --model qwen3 --no-stream
+```
+
+**Python API** (Simple - Recommended):
+
+```python
+from chuk_llm import ask
+
+# Model names automatically resolve to Ollama's GGUF files!
+response = await ask(
+    "What is Python?",
+    provider="llamacpp",
+    model="qwen3"  # Auto-resolves to ~/.ollama/models/blobs/sha256-xxx
+)
+print(response)
+
+# Streaming
+from chuk_llm import stream
+async for chunk in stream("Tell me a story", provider="llamacpp", model="llama3.2"):
+    print(chunk, end="", flush=True)
+```
+
+**Python API** (Advanced - Full Control):
+
 ```python
 from chuk_llm.registry.resolvers.llamacpp_ollama import discover_ollama_models
-from chuk_llm.llm.providers.llamacpp_server import LlamaCppServerConfig, LlamaCppServerManager
-from chuk_llm.llm.providers.openai_client import OpenAILLMClient
+from chuk_llm.llm.providers.llamacpp_client import LlamaCppLLMClient
 from chuk_llm.core import Message, MessageRole
 
 # Discover Ollama models (finds GGUF blobs in ~/.ollama/models/blobs/)
 models = discover_ollama_models()
 print(f"Found {len(models)} Ollama models")  # e.g., "Found 48 Ollama models"
 
-# Start llama-server with an Ollama model
-config = LlamaCppServerConfig(
-    model_path=models[0].gguf_path,  # Reuse Ollama's GGUF!
-    port=8033,
+# Create client with auto-managed server
+client = LlamaCppLLMClient(
+    model=str(models[0].gguf_path),  # Reuse Ollama's GGUF!
     ctx_size=8192,
     n_gpu_layers=-1,  # Use all GPU layers
 )
 
-async with LlamaCppServerManager(config) as server:
-    # Use OpenAI-compatible client
-    client = OpenAILLMClient(model="llama-3.2", api_base=server.base_url)
+messages = [Message(role=MessageRole.USER, content="Hello!")]
+result = await client.create_completion(messages=messages)
+print(result["response"])
 
-    messages = [Message(role=MessageRole.USER, content="Hello!")]
-    result = await client.create_completion(messages=messages)
-    print(result["response"])
+# Cleanup
+await client.stop_server()
 ```
 
 **Key Features:**
+- ✅ **CLI Support** - Full integration with chuk-llm CLI (model name resolution)
 - ✅ **Ollama Bridge** - Automatically discovers and reuses Ollama's downloaded models (no re-download!)
-- ✅ **Process Management** - Async server lifecycle (start/stop/health checks)
+- ✅ **Auto-Resolution** - Model names (qwen3, llama3.2) resolve to GGUF file paths automatically
+- ✅ **Process Management** - Auto-managed server lifecycle (start/stop/health checks)
 - ✅ **OpenAI-Compatible** - Uses standard OpenAI client (streaming, tools, etc.)
+- ✅ **High Performance** - Benchmarks show llama.cpp is 1.53x faster than Ollama (311 vs 204 tok/s)
 - ✅ **Advanced Control** - Custom sampling, grammars, GPU layers, context size
 - ✅ **Cross-Platform** - Works on macOS, Linux, Windows
 
-See `examples/providers/llamacpp_with_ollama_models.py` for full examples.
+**Performance Comparison** (same GGUF file, qwen3:0.6b):
+- llama.cpp: 311.4 tok/s
+- Ollama: 204.2 tok/s
+- **llama.cpp is 1.53x faster!**
+
+See `examples/providers/llamacpp_ollama_usage_examples.py` and `examples/providers/benchmark_ollama_vs_llamacpp.py` for full examples.
 
 ### 📊 Automatic Session Tracking
 
@@ -523,8 +567,13 @@ chuk-llm ask_gpt "Your question"
 chuk-llm ask_claude "Your question"
 chuk-llm ask_ollama_llama3_2 "Your question"
 
+# llama.cpp with automatic model resolution
+chuk-llm ask "Your question" --provider llamacpp --model qwen3
+chuk-llm ask "Your question" --provider llamacpp --model llama3.2
+
 # Discover and test
 chuk-llm discover ollama        # Find new models
+chuk-llm test llamacpp          # Test llamacpp provider
 chuk-llm test azure_openai      # Test connection
 chuk-llm providers              # List all providers
 chuk-llm models ollama          # Show available models
@@ -532,6 +581,7 @@ chuk-llm functions              # List all generated functions
 
 # Advanced usage
 chuk-llm ask "Question" --provider azure_openai --model gpt-4o-mini --json
+chuk-llm ask "Question" --provider llamacpp --model qwen3 --no-stream
 chuk-llm ask "Question" --stream --verbose
 
 # Function calling / Tool use from CLI
@@ -540,6 +590,7 @@ chuk-llm stream "What's the weather?" --tools weather_tools.py --return-tool-cal
 
 # Zero-install with uvx
 uvx chuk-llm ask_claude "Hello world"
+uvx chuk-llm ask "Question" --provider llamacpp --model qwen3
 ```
 
 ## Performance
