@@ -35,7 +35,7 @@ from ibm_watsonx_ai import APIClient, Credentials
 from ibm_watsonx_ai.foundation_models import ModelInference
 
 # core
-from chuk_llm.core.enums import MessageRole
+from chuk_llm.core.enums import ContentType, MessageRole
 
 # providers
 from ..core.base import BaseLLMClient
@@ -595,7 +595,10 @@ def _parse_watsonx_response(resp: Any) -> dict[str, Any]:  # noqa: D401 - small 
         # Don't parse regular text that might contain function-like patterns (e.g., "bits (0s and 1s)")
         if content and isinstance(content, str):
             # Only parse if we see explicit tool call markers like <tool_call>, {"name":, etc.
-            if any(marker in content for marker in ['<tool_call>', '"name":', '"function":', "'name':"]):
+            if any(
+                marker in content
+                for marker in ["<tool_call>", '"name":', '"function":', "'name':"]
+            ):
                 parsed_tool_calls = _parse_watsonx_tool_formats(content)
                 if parsed_tool_calls:
                     return {"response": None, "tool_calls": parsed_tool_calls}
@@ -638,7 +641,10 @@ def _parse_watsonx_response(resp: Any) -> dict[str, Any]:  # noqa: D401 - small 
 
         # CRITICAL FIX: Only parse tool calls if we see explicit markers
         if content:
-            if any(marker in content for marker in ['<tool_call>', '"name":', '"function":', "'name':"]):
+            if any(
+                marker in content
+                for marker in ["<tool_call>", '"name":', '"function":', "'name':"]
+            ):
                 parsed_tool_calls = _parse_watsonx_tool_formats(content)
                 if parsed_tool_calls:
                     return {"response": None, "tool_calls": parsed_tool_calls}
@@ -827,6 +833,10 @@ class WatsonXLLMClient(
             return False
 
         if not self._is_granite_model():
+            return False
+
+        # Check for empty messages
+        if not messages:
             return False
 
         # CRITICAL FIX: Disable Granite chat template when tools are present
@@ -1058,7 +1068,10 @@ class WatsonXLLMClient(
                     # Extract text from list format
                     text_content = ""
                     for item in content:
-                        if isinstance(item, dict) and item.get("type") == "text":
+                        if (
+                            isinstance(item, dict)
+                            and item.get("type") == ContentType.TEXT.value
+                        ):
                             text_content += item.get("text", "")
                         elif isinstance(item, str):
                             text_content += item
@@ -1073,11 +1086,11 @@ class WatsonXLLMClient(
                 }
 
                 # Handle tool calls in assistant messages
-                if role == "assistant" and msg.get("tool_calls"):
+                if role == MessageRole.ASSISTANT and msg.get("tool_calls"):
                     formatted_msg["tool_calls"] = msg["tool_calls"]
 
                 # Handle tool messages
-                if role == "tool":
+                if role == MessageRole.TOOL:
                     formatted_msg["tool_call_id"] = msg.get("tool_call_id")
 
                 formatted_messages.append(formatted_msg)
@@ -1127,7 +1140,7 @@ class WatsonXLLMClient(
         self, content_item: dict[str, Any]
     ) -> dict[str, Any]:
         """Convert http/https image URLs to base64 data URIs for WatsonX"""
-        if content_item.get("type") == "image_url":
+        if content_item.get("type") == ContentType.IMAGE_URL.value:
             image_url = content_item.get("image_url", {})
             url = image_url if isinstance(image_url, str) else image_url.get("url", "")
 
@@ -1138,20 +1151,50 @@ class WatsonXLLMClient(
                     # Convert to data URI
                     data_url = f"data:{media_type};base64,{image_data}"
                     return {
-                        "type": "image_url",
+                        "type": ContentType.IMAGE_URL.value,
                         "image_url": {"url": data_url},
                     }
                 except Exception as e:
                     log.error(f"Failed to convert image URL to base64: {e}")
                     # Return error text instead of failing completely
-                    return {"type": "text", "text": f"[Failed to load image from {url}]"}
+                    return {
+                        "type": ContentType.TEXT.value,
+                        "text": f"[Failed to load image from {url}]",
+                    }
 
         # Return unchanged if not http/https or already a data URI
         return content_item
 
-    async def _format_messages_for_watsonx_async(
+    def _format_messages_for_watsonx(
         self,
         messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]] | str:
+        """
+        Sync wrapper for _format_messages_for_watsonx_async.
+
+        For backward compatibility with tests and sync code.
+        """
+        import asyncio
+
+        # Check if we're already in an async context
+        try:
+            asyncio.get_running_loop()
+            # We're in an async context, can't use asyncio.run()
+            raise RuntimeError(
+                "_format_messages_for_watsonx called from async context. "
+                "Use _format_messages_for_watsonx_async instead."
+            )
+        except RuntimeError as e:
+            # Check if it's our error or the "no running loop" error
+            if "async context" in str(e):
+                raise  # Re-raise our error
+            # No running loop, safe to use asyncio.run()
+            return asyncio.run(self._format_messages_for_watsonx_async(messages, tools))
+
+    async def _format_messages_for_watsonx_async(
+        self,
+        messages: list[dict[str, Any]] | str,
         tools: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]] | str:
         """
@@ -1159,6 +1202,10 @@ class WatsonXLLMClient(
 
         CRITICAL FIX: Uses enhanced template checking to avoid errors.
         """
+        # Handle pre-formatted template strings (for tests/backward compatibility)
+        if isinstance(messages, str):
+            return messages
+
         # CRITICAL FIX: Use enhanced template checking
         if tools and self._should_use_granite_chat_template(messages, tools):
             template_result = self._format_granite_chat_template(messages, tools)
@@ -1172,22 +1219,24 @@ class WatsonXLLMClient(
             role = msg.get("role")
             content = msg.get("content")
 
-            # Handle None content early
-            if content is None:
-                log.warning(f"Message with role '{role}' has None content - skipping")
-                continue
-
-            if role == "system":
+            if role == MessageRole.SYSTEM:
                 # Check if system messages are supported
                 if self.supports_feature("system_messages"):
-                    formatted.append({"role": "system", "content": content})
+                    formatted.append(
+                        {"role": MessageRole.SYSTEM.value, "content": content}
+                    )
                 else:
                     # Fallback: convert to user message
                     log.debug(
                         f"System messages not supported by {self.model}, converting to user message"
                     )
-                    formatted.append({"role": "user", "content": f"System: {content}"})
-            elif role == "user":
+                    formatted.append(
+                        {
+                            "role": MessageRole.USER.value,
+                            "content": f"System: {content}",
+                        }
+                    )
+            elif role == MessageRole.USER:
                 # Ensure content is not None
                 if content is None:
                     log.warning("User message has None content - using empty string")
@@ -1195,22 +1244,28 @@ class WatsonXLLMClient(
 
                 if isinstance(content, str):
                     formatted.append(
-                        {"role": "user", "content": [{"type": "text", "text": content}]}
+                        {
+                            "role": MessageRole.USER.value,
+                            "content": [
+                                {"type": ContentType.TEXT.value, "text": content}
+                            ],
+                        }
                     )
                 elif isinstance(content, list):
                     # Permissive approach: Process all multimodal content (text, vision, audio)
                     # Let WatsonX API handle unsupported cases rather than filtering
                     # Handle multimodal content for Watson X - both dict and Pydantic
-                    from chuk_llm.core.enums import ContentType
-
                     # Process multimodal content normally (both dict and Pydantic)
                     watsonx_content = []
                     for item in content:
                         if isinstance(item, dict):
                             # Dict-based content
-                            if item.get("type") == "text":
+                            if item.get("type") == ContentType.TEXT.value:
                                 watsonx_content.append(
-                                    {"type": "text", "text": item.get("text", "")}
+                                    {
+                                        "type": ContentType.TEXT.value,
+                                        "text": item.get("text", ""),
+                                    }
                                 )
                             elif item.get("type") == "image":
                                 source = item.get("source", {})
@@ -1218,19 +1273,21 @@ class WatsonXLLMClient(
                                     data_url = f"data:{source.get('media_type', 'image/png')};base64,{source.get('data', '')}"
                                     watsonx_content.append(
                                         {
-                                            "type": "image_url",
+                                            "type": ContentType.IMAGE_URL.value,
                                             "image_url": {"url": data_url},
                                         }
                                     )
-                            elif item.get("type") == "image_url":
+                            elif item.get("type") == ContentType.IMAGE_URL.value:
                                 # Convert http/https URLs to base64 data URIs
-                                converted_item = await self._convert_image_url_to_base64(item)
+                                converted_item = (
+                                    await self._convert_image_url_to_base64(item)
+                                )
                                 watsonx_content.append(converted_item)
                         else:
                             # Pydantic object-based content
                             if hasattr(item, "type") and item.type == ContentType.TEXT:
                                 watsonx_content.append(
-                                    {"type": "text", "text": item.text}
+                                    {"type": ContentType.TEXT.value, "text": item.text}
                                 )
                             elif (
                                 hasattr(item, "type")
@@ -1244,28 +1301,39 @@ class WatsonXLLMClient(
                                 )
                                 # Convert http/https URLs to base64 data URIs
                                 item_dict = {
-                                    "type": "image_url",
+                                    "type": ContentType.IMAGE_URL.value,
                                     "image_url": {"url": url},
                                 }
-                                converted_item = await self._convert_image_url_to_base64(item_dict)
+                                converted_item = (
+                                    await self._convert_image_url_to_base64(item_dict)
+                                )
                                 watsonx_content.append(converted_item)
 
-                    formatted.append({"role": "user", "content": watsonx_content})
+                    formatted.append(
+                        {"role": MessageRole.USER.value, "content": watsonx_content}
+                    )
                 else:
-                    formatted.append({"role": "user", "content": content})
-            elif role == "assistant":
+                    formatted.append(
+                        {"role": MessageRole.USER.value, "content": content}
+                    )
+            elif role == MessageRole.ASSISTANT:
                 if msg.get("tool_calls"):
                     # Permissive approach: Always pass tool calls to API
                     formatted.append(
-                        {"role": "assistant", "tool_calls": msg["tool_calls"]}
+                        {
+                            "role": MessageRole.ASSISTANT.value,
+                            "tool_calls": msg["tool_calls"],
+                        }
                     )
                 else:
-                    formatted.append({"role": "assistant", "content": content})
-            elif role == "tool":
+                    formatted.append(
+                        {"role": MessageRole.ASSISTANT.value, "content": content}
+                    )
+            elif role == MessageRole.TOOL:
                 # Permissive approach: Always pass tool responses to API
                 formatted.append(
                     {
-                        "role": "tool",
+                        "role": MessageRole.TOOL.value,
                         "tool_call_id": msg.get("tool_call_id"),
                         "content": content,
                     }
@@ -1349,7 +1417,11 @@ class WatsonXLLMClient(
             )
 
         # Convert to WatsonX format (convert to dicts only at this final step)
-        watsonx_tools = self._convert_tools(self._tools_to_dicts(validated_tools))
+        watsonx_tools = (
+            self._convert_tools(self._tools_to_dicts(validated_tools))
+            if validated_tools
+            else []
+        )
 
         # Note: Message formatting is now done in async methods to support image URL downloading
         log.debug(
@@ -1431,7 +1503,9 @@ class WatsonXLLMClient(
                 # Use Watson X streaming (only use tools if supported)
                 if tools and self.supports_feature("tools"):
                     # For tool calling, we need to use chat_stream with tools
-                    stream_response = model.chat_stream(messages=formatted_messages, tools=tools)
+                    stream_response = model.chat_stream(
+                        messages=formatted_messages, tools=tools
+                    )
                 else:
                     # For regular chat, use chat_stream
                     stream_response = model.chat_stream(messages=formatted_messages)
@@ -1489,9 +1563,15 @@ class WatsonXLLMClient(
                                 )
 
                             yield chunk_response
-                        elif "choices" in chunk and not chunk["choices"] and "usage" in chunk:
+                        elif (
+                            "choices" in chunk
+                            and not chunk["choices"]
+                            and "usage" in chunk
+                        ):
                             # Skip final usage statistics chunk (empty choices with usage info)
-                            log.debug(f"Skipping final usage chunk: {chunk.get('usage', {})}")
+                            log.debug(
+                                f"Skipping final usage chunk: {chunk.get('usage', {})}"
+                            )
                             continue
                         else:
                             # Parse WatsonX tool formats from streaming text
@@ -1599,7 +1679,9 @@ class WatsonXLLMClient(
 
             # Safety check: ensure response is never None for non-tool-call responses
             if result.get("response") is None and not result.get("tool_calls"):
-                log.warning("Response is None with no tool calls - setting to empty string")
+                log.warning(
+                    "Response is None with no tool calls - setting to empty string"
+                )
                 result["response"] = ""
 
             return result
