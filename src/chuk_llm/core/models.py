@@ -125,6 +125,11 @@ class ToolCall(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
+    def to_dict(self) -> dict:
+        """Convert to dict with enum values as strings."""
+        # Use mode='json' to serialize enums to their values
+        return self.model_dump(mode="json", exclude_none=True, by_alias=True)
+
 
 class ToolParameter(BaseModel):
     """Tool parameter definition."""

@@ -56,7 +56,19 @@ class OpenAILLMClient(
 
     COMPLETE VERSION: Now includes GPT-5 family support, reasoning model support,
     FIXED streaming, and smart defaults.
+
+    JSON Function Calling Fallback:
+    For APIs that don't natively support function calling, enable fallback mode:
+        ENABLE_JSON_FUNCTION_FALLBACK = True
+        SUPPORTS_TOOL_ROLE = False  # Convert 'tool' to 'user' role
+        SUPPORTS_FUNCTION_ROLE = False
     """
+
+    # JSON Function Calling Fallback Configuration
+    # Subclasses can override these to enable fallback behavior
+    ENABLE_JSON_FUNCTION_FALLBACK = False  # Enable JSON-based function calling
+    SUPPORTS_TOOL_ROLE = True  # Does API support 'tool' role messages?
+    SUPPORTS_FUNCTION_ROLE = True  # Does API support 'function' role messages?
 
     def __init__(
         self,
@@ -107,6 +119,144 @@ class OpenAILLMClient(
     def detect_provider_name(self) -> str:
         """Public method to detect provider name"""
         return self.detected_provider
+
+    # ================================================================
+    # JSON FUNCTION CALLING FALLBACK METHODS
+    # ================================================================
+
+    def _create_json_function_calling_prompt(self, tools: list) -> str:
+        """Create system prompt for JSON-based function calling (when fallback enabled)."""
+
+        tool_descriptions = []
+        for tool in tools:
+            tool_dict = tool.model_dump() if hasattr(tool, "model_dump") else tool
+            func = tool_dict.get("function", {})
+            tool_descriptions.append(
+                f"- {func.get('name')}: {func.get('description', '')}"
+            )
+
+        tools_text = "\n".join(tool_descriptions)
+
+        return (
+            f"You are a helpful assistant with access to functions. "
+            f"Available functions:\n{tools_text}\n\n"
+            f"When you need to call a function, respond with ONLY a JSON object: "
+            f'{{"name": "function_name", "arguments": {{...}}}}. '
+            f"After receiving tool results, answer naturally using that information."
+        )
+
+    def _parse_function_call_from_json(self, content: str) -> dict[str, Any] | None:
+        """Parse function call JSON from response content (when fallback enabled)."""
+        import re
+
+        if not content:
+            return None
+
+        # Try direct JSON parse
+        try:
+            parsed = json.loads(content.strip())
+            if isinstance(parsed, dict) and "name" in parsed and "arguments" in parsed:
+                log.debug(f"[json_fallback] Parsed function call: {parsed['name']}")
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+        # Try JSON in code blocks
+        match = re.search(r"```(?:json)?\s*(\{[^`]+\})\s*```", content, re.DOTALL)
+        if match:
+            try:
+                parsed = json.loads(match.group(1))
+                if (
+                    isinstance(parsed, dict)
+                    and "name" in parsed
+                    and "arguments" in parsed
+                ):
+                    log.debug(
+                        f"[json_fallback] Parsed from code block: {parsed['name']}"
+                    )
+                    return parsed
+            except json.JSONDecodeError:
+                pass
+
+        return None
+
+    def _convert_to_tool_calls_from_json(
+        self, response: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Convert JSON function call in content to tool_calls format (when fallback enabled)."""
+        content = response.get("response", "")
+        if not content:
+            return response
+
+        function_call = self._parse_function_call_from_json(content)
+        if not function_call:
+            return response
+
+        tool_call = {
+            "id": f"call_{uuid.uuid4().hex[:24]}",
+            "type": "function",
+            "function": {
+                "name": function_call["name"],
+                "arguments": json.dumps(function_call["arguments"]),
+            },
+        }
+
+        response["tool_calls"] = [tool_call]
+        response["response"] = None
+
+        log.info(f"[json_fallback] Converted to tool_call: {function_call['name']}")
+        return response
+
+    def _convert_incompatible_message_roles(
+        self, messages_dicts: list[dict]
+    ) -> tuple[list[dict], bool]:
+        """
+        Convert message roles that the API doesn't support (when fallback enabled).
+
+        Returns:
+            tuple: (modified_messages, has_tool_results)
+        """
+        has_tool_results = False
+
+        for msg_dict in messages_dicts:
+            role = msg_dict.get("role")
+
+            # Convert 'tool' role if not supported
+            if role == MessageRole.TOOL.value and not self.SUPPORTS_TOOL_ROLE:
+                has_tool_results = True
+                func_name = msg_dict.get("name", "unknown")
+                result_content = msg_dict.get("content", "")
+                msg_dict["role"] = MessageRole.USER.value
+                msg_dict["content"] = f"Tool result from {func_name}: {result_content}"
+                msg_dict.pop("tool_call_id", None)
+                msg_dict.pop("name", None)
+                log.debug(
+                    f"[json_fallback] Converted 'tool' role to 'user' role for {func_name}"
+                )
+
+            # Convert 'function' role if not supported
+            elif role == "function" and not self.SUPPORTS_FUNCTION_ROLE:
+                has_tool_results = True
+                func_name = msg_dict.get("name", "unknown")
+                result_content = msg_dict.get("content", "")
+                msg_dict["role"] = MessageRole.USER.value
+                msg_dict["content"] = (
+                    f"Function result from {func_name}: {result_content}"
+                )
+                msg_dict.pop("name", None)
+                log.debug(
+                    f"[json_fallback] Converted 'function' role to 'user' role for {func_name}"
+                )
+
+            # Check for tool results in other formats
+            elif role == MessageRole.TOOL.value:
+                has_tool_results = True
+
+        return messages_dicts, has_tool_results
+
+    # ================================================================
+    # END JSON FUNCTION CALLING FALLBACK METHODS
+    # ================================================================
 
     def _add_strict_parameter_to_tools(
         self, tools: list[dict[str, Any]]
@@ -1165,6 +1315,48 @@ class OpenAILLMClient(
             ):  # Legacy code - TODO: migrate to Provider enum
                 dict_tools = self._add_strict_parameter_to_tools(dict_tools)
 
+        # JSON Function Calling Fallback (if enabled)
+        fallback_context = {}
+        if self.ENABLE_JSON_FUNCTION_FALLBACK:
+            # Convert messages to dicts for processing
+            messages_dicts = [msg.model_dump(mode="json") for msg in validated_messages]
+
+            # Convert incompatible message roles
+            messages_dicts, has_tool_results = self._convert_incompatible_message_roles(
+                messages_dicts
+            )
+
+            # Inject function calling prompt if tools provided AND no tool results
+            if dict_tools and not has_tool_results:
+                prompt = self._create_json_function_calling_prompt(dict_tools)
+
+                # Prepend to first system message or add new one
+                if (
+                    messages_dicts
+                    and messages_dicts[0].get("role") == MessageRole.SYSTEM.value
+                ):
+                    messages_dicts[0]["content"] = (
+                        f"{prompt}\n\n{messages_dicts[0]['content']}"
+                    )
+                else:
+                    messages_dicts.insert(
+                        0, {"role": MessageRole.SYSTEM.value, "content": prompt}
+                    )
+
+                # Don't pass tools to API (it doesn't support them natively)
+                dict_tools = None
+                fallback_context["should_convert"] = True
+                log.debug(
+                    "[json_fallback] Enabled: injected prompt, will parse JSON from response"
+                )
+            else:
+                fallback_context["should_convert"] = False
+
+            # Convert back to Pydantic
+            from chuk_llm.llm.core.base import _ensure_pydantic_messages
+
+            validated_messages = _ensure_pydantic_messages(messages_dicts)
+
         # Prepare messages for conversation (sanitize tool names in history)
         # Pass Pydantic messages, this method converts to dicts at API boundary
         if name_mapping:
@@ -1180,6 +1372,8 @@ class OpenAILLMClient(
                 validated_messages, dict_tools, name_mapping, **validated_kwargs
             )
         else:
+            # Store fallback context for post-processing
+            self._fallback_context = fallback_context
             return self._regular_completion(
                 validated_messages, dict_tools, name_mapping, **validated_kwargs
             )
@@ -1410,6 +1604,16 @@ class OpenAILLMClient(
             # Restore original tool names using universal restoration
             if name_mapping and result.get("tool_calls"):
                 result = self._restore_tool_names_in_response(result, name_mapping)
+
+            # JSON Function Calling Fallback: Convert JSON in content to tool_calls
+            if (
+                hasattr(self, "_fallback_context")
+                and self._fallback_context
+                and self._fallback_context.get("should_convert")
+            ):
+                result = self._convert_to_tool_calls_from_json(result)
+                # Clean up
+                delattr(self, "_fallback_context")
 
             log.debug(
                 f"[{self.detected_provider}] Completion successful: "

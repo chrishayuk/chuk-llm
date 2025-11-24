@@ -132,11 +132,97 @@ docs(readme): simplify quick start section
 
 ### Adding New Providers
 
-To add a new LLM provider:
+#### For OpenAI-Compatible Providers
+
+Most modern LLM APIs follow the OpenAI format. Before implementing a custom client, determine the provider's capabilities:
+
+**Step 1: Test the API**
+
+Use the debug script to understand what the API supports:
+
+```bash
+# Test function calling capabilities
+python examples/debug/debug_openai_compatible_function_calling.py \
+    --provider yourprovider \
+    --model your-model-name
+```
+
+The script will test:
+- Native OpenAI tools support
+- Legacy functions parameter
+- JSON mode for function calling
+- Tool result message formats (tool/user/function roles)
+
+**Step 2: Choose Implementation**
+
+Based on debug results:
+
+**Option A: Native OpenAI Support (simplest)**
+```python
+# src/chuk_llm/llm/providers/yourprovider_client.py
+from .openai_client import OpenAILLMClient
+
+class YourProviderClient(OpenAILLMClient):
+    """Simple wrapper - API fully supports OpenAI format"""
+    pass
+```
+
+**Option B: JSON Function Calling Fallback**
+
+If the API accepts tools but doesn't call them natively (debug script will tell you):
+
+```python
+from .openai_client import OpenAILLMClient
+
+class YourProviderClient(OpenAILLMClient):
+    """Uses JSON fallback for function calling"""
+
+    # Enable JSON function calling fallback
+    ENABLE_JSON_FUNCTION_FALLBACK = True
+    SUPPORTS_TOOL_ROLE = False  # Set based on debug results
+    SUPPORTS_FUNCTION_ROLE = False  # Set based on debug results
+
+    def __init__(self, model: str, api_key: str, api_base: str | None = None, **kwargs):
+        super().__init__(model, api_key, api_base, **kwargs)
+        self.detected_provider = "yourprovider"
+```
+
+**Step 3: Add Configuration**
+
+Add to `src/chuk_llm/chuk_llm.yaml`:
+
+```yaml
+yourprovider:
+  client_class: "chuk_llm.llm.providers.yourprovider_client:YourProviderClient"
+  api_key_env: "YOURPROVIDER_API_KEY"
+  api_base: "https://api.yourprovider.com/v1"
+  default_model: "your-default-model"
+  models: ["*"]
+```
+
+**Step 4: Add Examples**
+
+Create `examples/providers/yourprovider_usage_examples.py` following existing patterns.
+
+**Step 5: Test**
+
+```bash
+# Run your examples
+python examples/providers/yourprovider_usage_examples.py
+
+# Run tests
+pytest tests/llm/providers/test_yourprovider_client.py
+```
+
+See `examples/debug/README.md` for detailed debug script documentation.
+
+#### For Custom Providers
+
+For providers with completely different APIs (non-OpenAI-compatible):
 
 1. Create a new client in `src/chuk_llm/llm/providers/`
 2. Inherit from `BaseLLMClient`
-3. Implement required methods: `ask()` and `stream()`
+3. Implement required methods: `create_completion()`, streaming support
 4. Add provider configuration to `chuk_llm.yaml`
 5. Add tests in `tests/llm/providers/`
 6. Update documentation
@@ -144,19 +230,15 @@ To add a new LLM provider:
 Example structure:
 ```python
 # src/chuk_llm/llm/providers/newprovider_client.py
-from ..base import BaseLLMClient
+from chuk_llm.llm.core.base import BaseLLMClient
 
 class NewProviderClient(BaseLLMClient):
     def __init__(self, api_key: str = None, **kwargs):
         super().__init__(provider="newprovider", **kwargs)
         # Initialize client
-    
-    async def ask(self, messages, **kwargs):
-        # Implement ask logic
-        pass
-    
-    async def stream(self, messages, **kwargs):
-        # Implement streaming logic
+
+    async def create_completion(self, messages, tools=None, **kwargs):
+        # Implement completion logic
         pass
 ```
 

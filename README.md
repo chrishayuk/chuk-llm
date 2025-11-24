@@ -730,6 +730,7 @@ Instead of hardcoding "use GPT-4o", CHUK components declare **what they need**, 
 - 🔄 [Lazy Imports](LAZY_IMPORTS.md)
 - 🔐 [Conversation Isolation](CONVERSATION_ISOLATION.md)
 - 📊 [Registry System](REGISTRY_COMPLETE.md)
+- 🔧 [Debug Tools](examples/debug/README.md) - Test OpenAI-compatible API capabilities
 - 🏗️ [Migration Guide](https://github.com/chrishayuk/chuk-llm/wiki/migration)
 - 🤝 [Contributing](https://github.com/chrishayuk/chuk-llm/blob/main/CONTRIBUTING.md)
 
