@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -579,18 +580,25 @@ def _parse_watsonx_response(resp: Any) -> dict[str, Any]:  # noqa: D401 - small 
 
         # Extract text content for further parsing
         content = _safe_get(message, "content", "")
-        if isinstance(content, list) and content:
+
+        # Handle None content
+        if content is None:
+            content = ""
+        elif isinstance(content, list) and content:
             content = (
                 content[0].get("text", "")
                 if isinstance(content[0], dict)
                 else str(content[0])
             )
 
-        # Parse WatsonX-specific tool calling formats from text content
+        # CRITICAL FIX: Only parse tool call formats if we see explicit tool call markers
+        # Don't parse regular text that might contain function-like patterns (e.g., "bits (0s and 1s)")
         if content and isinstance(content, str):
-            parsed_tool_calls = _parse_watsonx_tool_formats(content)
-            if parsed_tool_calls:
-                return {"response": None, "tool_calls": parsed_tool_calls}
+            # Only parse if we see explicit tool call markers like <tool_call>, {"name":, etc.
+            if any(marker in content for marker in ['<tool_call>', '"name":', '"function":', "'name':"]):
+                parsed_tool_calls = _parse_watsonx_tool_formats(content)
+                if parsed_tool_calls:
+                    return {"response": None, "tool_calls": parsed_tool_calls}
 
         return {"response": content, "tool_calls": []}
 
@@ -623,10 +631,17 @@ def _parse_watsonx_response(resp: Any) -> dict[str, Any]:  # noqa: D401 - small 
 
         # Extract text content and parse WatsonX formats
         content = message.get("content", "")
+
+        # Handle None content
+        if content is None:
+            content = ""
+
+        # CRITICAL FIX: Only parse tool calls if we see explicit markers
         if content:
-            parsed_tool_calls = _parse_watsonx_tool_formats(content)
-            if parsed_tool_calls:
-                return {"response": None, "tool_calls": parsed_tool_calls}
+            if any(marker in content for marker in ['<tool_call>', '"name":', '"function":', "'name':"]):
+                parsed_tool_calls = _parse_watsonx_tool_formats(content)
+                if parsed_tool_calls:
+                    return {"response": None, "tool_calls": parsed_tool_calls}
 
         return {"response": content, "tool_calls": []}
 
@@ -775,13 +790,38 @@ class WatsonXLLMClient(
         log.debug(f"WatsonX parameter mapping result: {mapped_params}")
         return mapped_params
 
+    @staticmethod
+    async def _download_image_to_base64(url: str) -> tuple[str, str]:
+        """Download image from URL and convert to base64 (like Anthropic client)"""
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+
+                # Get content type from headers
+                content_type = response.headers.get("content-type", "image/png")
+                if not content_type.startswith("image/"):
+                    content_type = "image/png"  # Default fallback
+
+                # Convert to base64
+                image_data = base64.b64encode(response.content).decode("utf-8")
+
+                return content_type, image_data
+
+        except Exception as e:
+            log.warning(f"Failed to download image from {url}: {e}")
+            raise ValueError(f"Could not download image: {e}") from e
+
     def _should_use_granite_chat_template(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
     ) -> bool:
         """
         Determine if we should use Granite chat template or fall back to standard formatting.
 
-        CRITICAL FIX: Returns False for cases that might cause template errors.
+        CRITICAL FIX: Returns False when tools are present to use WatsonX chat endpoint instead.
+        The chat endpoint with tools provides better tool calling support than text generation.
         """
         if not self.granite_tokenizer:
             return False
@@ -789,7 +829,12 @@ class WatsonXLLMClient(
         if not self._is_granite_model():
             return False
 
-        if not tools:
+        # CRITICAL FIX: Disable Granite chat template when tools are present
+        # Use WatsonX chat endpoint with tools for better tool calling support
+        if tools:
+            log.debug(
+                "Disabling Granite chat template when tools present - using WatsonX chat endpoint instead"
+            )
             return False
 
         # Check if messages contain tool calls (which might cause template issues)
@@ -1078,13 +1123,39 @@ class WatsonXLLMClient(
             log.debug(f"Messages format: {messages}")
             return None
 
-    def _format_messages_for_watsonx(
+    async def _convert_image_url_to_base64(
+        self, content_item: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Convert http/https image URLs to base64 data URIs for WatsonX"""
+        if content_item.get("type") == "image_url":
+            image_url = content_item.get("image_url", {})
+            url = image_url if isinstance(image_url, str) else image_url.get("url", "")
+
+            # If URL starts with http/https, download and convert to base64
+            if url.startswith(("http://", "https://")):
+                try:
+                    media_type, image_data = await self._download_image_to_base64(url)
+                    # Convert to data URI
+                    data_url = f"data:{media_type};base64,{image_data}"
+                    return {
+                        "type": "image_url",
+                        "image_url": {"url": data_url},
+                    }
+                except Exception as e:
+                    log.error(f"Failed to convert image URL to base64: {e}")
+                    # Return error text instead of failing completely
+                    return {"type": "text", "text": f"[Failed to load image from {url}]"}
+
+        # Return unchanged if not http/https or already a data URI
+        return content_item
+
+    async def _format_messages_for_watsonx_async(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]] | str:
         """
-        Format messages for Watson X API with Granite chat template support.
+        Format messages for Watson X API with Granite chat template support and async image URL conversion.
 
         CRITICAL FIX: Uses enhanced template checking to avoid errors.
         """
@@ -1101,17 +1172,27 @@ class WatsonXLLMClient(
             role = msg.get("role")
             content = msg.get("content")
 
+            # Handle None content early
+            if content is None:
+                log.warning(f"Message with role '{role}' has None content - skipping")
+                continue
+
             if role == "system":
                 # Check if system messages are supported
                 if self.supports_feature("system_messages"):
                     formatted.append({"role": "system", "content": content})
                 else:
                     # Fallback: convert to user message
-                    log.warning(
+                    log.debug(
                         f"System messages not supported by {self.model}, converting to user message"
                     )
                     formatted.append({"role": "user", "content": f"System: {content}"})
             elif role == "user":
+                # Ensure content is not None
+                if content is None:
+                    log.warning("User message has None content - using empty string")
+                    content = ""
+
                 if isinstance(content, str):
                     formatted.append(
                         {"role": "user", "content": [{"type": "text", "text": content}]}
@@ -1142,7 +1223,9 @@ class WatsonXLLMClient(
                                         }
                                     )
                             elif item.get("type") == "image_url":
-                                watsonx_content.append(item)
+                                # Convert http/https URLs to base64 data URIs
+                                converted_item = await self._convert_image_url_to_base64(item)
+                                watsonx_content.append(converted_item)
                         else:
                             # Pydantic object-based content
                             if hasattr(item, "type") and item.type == ContentType.TEXT:
@@ -1159,9 +1242,13 @@ class WatsonXLLMClient(
                                     if isinstance(image_url_data, dict)
                                     else image_url_data
                                 )
-                                watsonx_content.append(
-                                    {"type": "image_url", "image_url": {"url": url}}
-                                )
+                                # Convert http/https URLs to base64 data URIs
+                                item_dict = {
+                                    "type": "image_url",
+                                    "image_url": {"url": url},
+                                }
+                                converted_item = await self._convert_image_url_to_base64(item_dict)
+                                watsonx_content.append(converted_item)
 
                     formatted.append({"role": "user", "content": watsonx_content})
                 else:
@@ -1264,43 +1351,44 @@ class WatsonXLLMClient(
         # Convert to WatsonX format (convert to dicts only at this final step)
         watsonx_tools = self._convert_tools(self._tools_to_dicts(validated_tools))
 
-        # Format messages with configuration-aware processing and Granite template support
-        formatted_messages = self._format_messages_for_watsonx(
-            validated_messages, watsonx_tools
-        )
-
+        # Note: Message formatting is now done in async methods to support image URL downloading
         log.debug(
             f"Watson X payload: model={self.model}, "
-            f"messages={len(formatted_messages) if isinstance(formatted_messages, list) else 'template'}, "
+            f"messages={len(validated_messages)} messages to format, "
             f"tools={len(watsonx_tools)}"
         )
 
         # --- streaming: use Watson X streaming -------------------------
         if validated_stream:
             return self._stream_completion_async(
-                formatted_messages, watsonx_tools, name_mapping, validated_kwargs
+                validated_messages, watsonx_tools, name_mapping, validated_kwargs
             )
 
         # --- non-streaming: use regular completion ----------------------
         return self._regular_completion(
-            formatted_messages, watsonx_tools, name_mapping, validated_kwargs
+            validated_messages, watsonx_tools, name_mapping, validated_kwargs
         )
 
     async def _stream_completion_async(
         self,
-        messages: list[dict[str, Any]] | str,
+        messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         name_mapping: dict[str, str] | None = None,
         params: dict[str, Any] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """
-        CRITICAL FIX: Enhanced streaming with proper tool call handling and name restoration.
+        CRITICAL FIX: Enhanced streaming with proper tool call handling, name restoration, and async image URL conversion.
         """
         try:
             log.debug(f"Starting Watson X streaming for model: {self.model}")
 
+            # Format messages with async image URL conversion
+            formatted_messages = await self._format_messages_for_watsonx_async(
+                messages, tools
+            )
+
             # If we have a chat template string (for Granite), use text generation
-            if isinstance(messages, str):
+            if isinstance(formatted_messages, str):
                 # Use text generation with chat template
                 model = self._get_model_inference(params)
 
@@ -1343,10 +1431,10 @@ class WatsonXLLMClient(
                 # Use Watson X streaming (only use tools if supported)
                 if tools and self.supports_feature("tools"):
                     # For tool calling, we need to use chat_stream with tools
-                    stream_response = model.chat_stream(messages=messages, tools=tools)
+                    stream_response = model.chat_stream(messages=formatted_messages, tools=tools)
                 else:
                     # For regular chat, use chat_stream
-                    stream_response = model.chat_stream(messages=messages)
+                    stream_response = model.chat_stream(messages=formatted_messages)
 
                 chunk_count = 0
                 for chunk in stream_response:
@@ -1401,6 +1489,10 @@ class WatsonXLLMClient(
                                 )
 
                             yield chunk_response
+                        elif "choices" in chunk and not chunk["choices"] and "usage" in chunk:
+                            # Skip final usage statistics chunk (empty choices with usage info)
+                            log.debug(f"Skipping final usage chunk: {chunk.get('usage', {})}")
+                            continue
                         else:
                             # Parse WatsonX tool formats from streaming text
                             parsed_tool_calls = _parse_watsonx_tool_formats(str(chunk))
@@ -1445,23 +1537,28 @@ class WatsonXLLMClient(
 
     async def _regular_completion(
         self,
-        messages: list[dict[str, Any]] | str,
+        messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         name_mapping: dict[str, str] | None = None,
         params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
-        CRITICAL FIX: Enhanced non-streaming completion with Granite chat template support.
+        CRITICAL FIX: Enhanced non-streaming completion with Granite chat template support and async image URL conversion.
         """
         try:
             log.debug(f"Starting Watson X completion for model: {self.model}")
 
+            # Format messages with async image URL conversion
+            formatted_messages = await self._format_messages_for_watsonx_async(
+                messages, tools
+            )
+
             # If we have a chat template string (for Granite), use text generation
-            if isinstance(messages, str):
+            if isinstance(formatted_messages, str):
                 model = self._get_model_inference(params)
 
                 # Use text generation for Granite chat templates
-                resp = model.generate_text(prompt=messages)
+                resp = model.generate_text(prompt=formatted_messages)
 
                 # Parse response with enhanced format support
                 if isinstance(resp, str):
@@ -1479,10 +1576,10 @@ class WatsonXLLMClient(
                 # Use tools only if supported
                 if tools and self.supports_feature("tools"):
                     # Use chat with tools
-                    resp = model.chat(messages=messages, tools=tools)
+                    resp = model.chat(messages=formatted_messages, tools=tools)
                 else:
                     # Use regular chat
-                    resp = model.chat(messages=messages)
+                    resp = model.chat(messages=formatted_messages)
 
                 # Parse response with enhanced format support
                 result = _parse_watsonx_response(resp)
@@ -1500,11 +1597,10 @@ class WatsonXLLMClient(
             if name_mapping and result.get("tool_calls"):
                 result = self._restore_tool_names_in_response(result, name_mapping)
 
-            log.debug(
-                f"Watson X completion result: "
-                f"response={len(str(result.get('response', ''))) if result.get('response') else 0} chars, "
-                f"tool_calls={len(result.get('tool_calls') or [])}"  # type: ignore[arg-type]
-            )
+            # Safety check: ensure response is never None for non-tool-call responses
+            if result.get("response") is None and not result.get("tool_calls"):
+                log.warning("Response is None with no tool calls - setting to empty string")
+                result["response"] = ""
 
             return result
 

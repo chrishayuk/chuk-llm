@@ -72,6 +72,11 @@ async def main():
         help="Model to use (default: ibm/granite-3-8b-instruct)",
     )
     parser.add_argument(
+        "--vision-model",
+        default="meta-llama/llama-3-2-11b-vision-instruct",
+        help="Vision model to use (default: meta-llama/llama-3-2-11b-vision-instruct)",
+    )
+    parser.add_argument(
         "--skip-tools", action="store_true", help="Skip function calling demo"
     )
     parser.add_argument(
@@ -90,10 +95,17 @@ async def main():
     print(f"🚀 IBM WatsonX Provider Examples")
     print("=" * 70)
     print(f"Model: {args.model}")
+    print(f"Vision Model: {args.vision_model}")
     print(f"API Key: {os.getenv('WATSONX_API_KEY')[:20]}...")
     print("=" * 70)
 
     client = get_client("watsonx", model=args.model)
+
+    # Create vision client if vision model is different
+    if args.vision_model != args.model:
+        vision_client = get_client("watsonx", model=args.vision_model)
+    else:
+        vision_client = client
 
     # Run specific demo or all demos
     if args.demo:
@@ -101,7 +113,7 @@ async def main():
             1: ("Basic Completion", demo_basic_completion(client, "watsonx", args.model)),
             2: ("Streaming", demo_streaming(client, "watsonx", args.model)),
             3: ("Function Calling", demo_function_calling(client, "watsonx", args.model)),
-            4: ("Vision", demo_vision(client, "watsonx", args.model)),
+            4: ("Vision", demo_vision(vision_client, "watsonx", args.vision_model)),
             5: ("JSON Mode", demo_json_mode(client, "watsonx", args.model)),
             6: ("Reasoning", demo_reasoning(client, "watsonx", args.model)),
             7: ("Structured Outputs", demo_structured_outputs(client, "watsonx", args.model)),
@@ -128,7 +140,10 @@ async def main():
             "watsonx",
             args.model,
             skip_tools=args.skip_tools,
-            skip_vision=args.skip_vision
+            skip_vision=args.skip_vision,
+            skip_audio=True,  # WatsonX models don't support audio input
+            vision_client=vision_client,
+            vision_model=args.vision_model
         )
 
     print("\n" + "=" * 70)
@@ -138,6 +153,10 @@ async def main():
     print("  - Use --demo N to run specific demo")
     print("  - Use --skip-tools to skip function calling")
     print("  - Use --skip-vision to skip vision demo")
+    print("\n💡 Function Calling:")
+    print("  - ibm/granite-3-8b-instruct has limited function calling support")
+    print("  - For better function calling, use: meta-llama/llama-3-3-70b-instruct")
+    print("  - Example: python watsonx_usage_examples.py --model meta-llama/llama-3-3-70b-instruct --demo 3")
     print("=" * 70)
 
 
