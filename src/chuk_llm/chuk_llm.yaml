@@ -89,7 +89,8 @@ openai_compatible:
 advantage:
   client_class: "chuk_llm.llm.providers.advantage_client:AdvantageLLMClient"
   api_key_env: "ADVANTAGE_API_KEY"
-  default_model: "advantage-1"
+  api_base_env: "ADVANTAGE_API_BASE"
+  default_model: "global/gpt-5-chat"
   models: ["*"]
 
 openrouter:
