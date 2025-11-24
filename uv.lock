@@ -421,7 +421,7 @@ redis = [
 
 [[package]]
 name = "chuk-llm"
-version = "0.14.1"
+version = "0.14.2"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
