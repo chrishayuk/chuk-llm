@@ -1,6 +1,6 @@
 # chuk-llm Performance Benchmarks
 
-This directory contains benchmarks for identifying and eliminating performance bottlenecks in chuk-llm.
+This directory contains benchmarks for identifying and eliminating performance bottlenecks in chuk-llm and comparing model performance across providers.
 
 ## Available Benchmarks
 
@@ -71,6 +71,46 @@ Traces a complete request from API layer through provider and back:
 ```bash
 uv run python benchmarks/benchmark_api_to_provider.py
 ```
+
+### 4. Live Model Comparison (`compare_models.py`)
+
+Compare models side-by-side with tokens-per-second (TPS) benchmarking. Supports external test configurations for fair, randomized performance battles.
+
+**Test Suites:**
+- `lightning.json` - Ultra-fast 2-test sprint
+- `quick.json` - Fast 3-test battle (default)
+- `standard.json` - Full 4-test championship
+
+**Example Usage:**
+
+```bash
+# Latest models (December 2025)
+
+# Gemini 2.5/3 comparison
+python benchmarks/compare_models.py gemini "gemini-2.5-flash,gemini-2.5-pro,gemini-3-pro-preview" --suite quick --runs 3
+
+# Mistral Large 3 & Ministral 3 comparison
+python benchmarks/compare_models.py mistral "mistral-large-2512,ministral-8b-2512,ministral-14b-2512" --suite quick
+
+# DeepSeek V3.2 modes (chat vs reasoner)
+python benchmarks/compare_models.py deepseek "deepseek-chat,deepseek-reasoner" --suite standard
+
+# OpenAI models
+python benchmarks/compare_models.py openai "gpt-4o-mini,gpt-4o,o1-mini" --suite quick
+
+# List available test suites
+python benchmarks/compare_models.py --list-suites
+```
+
+**Features:**
+- ✅ TPS-based rankings (sustained throughput)
+- ✅ Quality validation (excludes broken/truncated responses)
+- ✅ Fair round-robin execution (unbiased comparison)
+- ✅ External test configurations (easily customizable)
+- ✅ Detailed timing metrics (first-token latency, end-to-end TPS)
+
+**Custom Test Suites:**
+Create your own test suite by adding a JSON file to `test_configs/` with test definitions (messages, parameters, expected outputs).
 
 ## Benchmark Results Summary
 

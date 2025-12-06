@@ -1,0 +1,32 @@
+{
+  "name": "gemini_lightning",
+  "description": "Ultra-fast 2-test sprint for Gemini (no max_tokens)",
+  "tests": [
+    {
+      "name": "instant",
+      "description": "One-liner (TPS burst)",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Say 'Hello! This is a complete response.' exactly."
+        }
+      ],
+      "temperature": 0,
+      "expected_min_tokens": 8,
+      "test_type": "speed"
+    },
+    {
+      "name": "sustained_generation",
+      "description": "Sustained TPS measurement",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Generate a detailed explanation of how neural networks learn, including forward propagation, backpropagation, and gradient descent. Aim for 300-400 words with consistent detail throughout."
+        }
+      ],
+      "temperature": 0,
+      "expected_min_tokens": 200,
+      "test_type": "technical"
+    }
+  ]
+}
