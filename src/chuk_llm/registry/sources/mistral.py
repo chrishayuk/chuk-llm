@@ -109,7 +109,7 @@ class MistralModelSource(BaseModelSource):
         """
         model_lower = model_id.lower()
 
-        # Mistral families
+        # Mistral families - check more specific patterns first
         if "magistral" in model_lower:
             return "magistral"
         elif "codestral" in model_lower:
@@ -120,8 +120,12 @@ class MistralModelSource(BaseModelSource):
             return "voxtral"
         elif "pixtral" in model_lower:
             return "pixtral"
+        elif "ministral-3" in model_lower:
+            return "ministral-3"
         elif "ministral" in model_lower:
             return "ministral"
+        elif "mistral-large-3" in model_lower:
+            return "mistral-large-3"
         elif "mistral-large" in model_lower:
             return "mistral-large"
         elif "mistral-medium" in model_lower:

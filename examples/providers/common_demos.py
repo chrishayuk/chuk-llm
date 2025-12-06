@@ -46,7 +46,8 @@ async def demo_basic_completion(client, provider: str, model: str):
     print("\n⏳ Generating response...")
 
     start_time = time.time()
-    response = await client.create_completion(messages, max_tokens=500)
+    # Note: Not using max_tokens to avoid issues with Gemini returning empty responses for short content
+    response = await client.create_completion(messages)
     duration = time.time() - start_time
 
     print(f"\n✅ Response ({duration:.2f}s):")
@@ -83,7 +84,11 @@ async def demo_streaming(client, provider: str, model: str):
     chunk_count = 0
     start_time = time.time()
 
-    async for chunk in client.create_completion(messages, stream=True, max_tokens=500):
+    # Create streaming generator
+    # Note: Not using max_tokens for Gemini to avoid async generator issues with short responses
+    stream_gen = client.create_completion(messages, stream=True)
+
+    async for chunk in stream_gen:
         if chunk.get("response"):
             content = chunk["response"]
             print(content, end="", flush=True)
@@ -135,12 +140,17 @@ async def demo_tokens_per_second(client, provider: str, model: str):
     start_time = time.time()
     first_token_time = None
 
-    async for chunk in client.create_completion(
+    # Create streaming generator
+    stream_gen = client.create_completion(
         messages,
         stream=True,
         max_tokens=300,
         temperature=0.7,  # Consistent temperature for fair comparison
-    ):
+    )
+    import sys
+    sys.stdout.flush()  # Ensure output buffer is flushed
+
+    async for chunk in stream_gen:
         if chunk.get("response"):
             if first_token_time is None:
                 first_token_time = time.time()
@@ -403,7 +413,8 @@ async def demo_vision(client, provider: str, model: str):
     print(f"Image: [16x16 red square]")
     print("\n⏳ Analyzing image...")
 
-    response = await client.create_completion(messages, max_tokens=300)
+    # Note: Not using max_tokens to avoid issues with Gemini returning empty responses for short content
+    response = await client.create_completion(messages)
 
     print(f"\n✅ Response:")
     print(f"{response['response']}")
@@ -448,7 +459,8 @@ async def demo_vision_url(client, provider: str, model: str):
     ]
 
     try:
-        response = await client.create_completion(messages, max_tokens=500)
+        # Note: Not using max_tokens to avoid issues with Gemini returning empty responses for short content
+        response = await client.create_completion(messages)
 
         print(f"\n✅ Response:")
         print(f"{response['response']}")
@@ -490,8 +502,9 @@ async def demo_json_mode(client, provider: str, model: str):
     print(f"User: Create a JSON for Alice...")
     print("\n⏳ Generating JSON...")
 
+    # Note: Not using max_tokens to avoid issues with Gemini returning empty responses for short content
     response = await client.create_completion(
-        messages, response_format={"type": "json_object"}, max_tokens=500
+        messages, response_format={"type": "json_object"}
     )
 
     print(f"\n✅ JSON Response:")
@@ -550,7 +563,8 @@ async def demo_reasoning(client, provider: str, model: str):
     print("\n⏳ Processing (reasoning models think before responding)...")
 
     start_time = time.time()
-    response = await client.create_completion(messages, max_tokens=500)
+    # Note: Not using max_tokens to avoid issues with Gemini returning empty responses for short content
+    response = await client.create_completion(messages)
     duration = time.time() - start_time
 
     print(f"\n✅ Response ({duration:.2f}s):")
@@ -648,8 +662,9 @@ Output ONLY these fields, no additional properties.""",
     print("\n⏳ Generating structured output...")
 
     # Use JSON mode
+    # Note: Not using max_tokens to avoid issues with Gemini returning empty responses for short content
     response = await client.create_completion(
-        messages, response_format={"type": "json_object"}, max_tokens=500
+        messages, response_format={"type": "json_object"}
     )
 
     print(f"\n✅ Structured JSON Response:")
@@ -885,8 +900,9 @@ async def demo_parameters(client, provider: str, model: str):
         ]
 
         try:
+            # Note: Not using max_tokens to avoid issues with Gemini returning empty responses for short content
             response = await client.create_completion(
-                messages, temperature=temp, max_tokens=300
+                messages, temperature=temp
             )
 
             print(f"Temperature {temp}:")
@@ -926,7 +942,8 @@ async def demo_model_comparison(provider: str, models: list[str]):
             messages = [Message(role=MessageRole.USER, content=prompt)]
 
             start_time = time.time()
-            response = await client.create_completion(messages, max_tokens=300)
+            # Note: Not using max_tokens to avoid issues with Gemini returning empty responses for short content
+            response = await client.create_completion(messages)
             duration = time.time() - start_time
 
             print(f"{model} ({duration:.2f}s):")
@@ -1003,7 +1020,8 @@ async def demo_dynamic_model_call(provider: str):
             )
         ]
 
-        response = await client.create_completion(messages, max_tokens=300)
+        # Note: Not using max_tokens to avoid issues with Gemini returning empty responses for short content
+        response = await client.create_completion(messages)
 
         print(f"\n✅ Response from {target_model}:")
         print(f"{response['response']}")

@@ -116,6 +116,8 @@ class GeminiModelSource(BaseModelSource):
         # Check in descending version order to match correctly
         if "gemini-3" in model_lower:
             return "gemini-3"
+        elif "gemini-2.5" in model_lower:
+            return "gemini-2.5"
         elif "gemini-2" in model_lower:
             return "gemini-2"
         elif "gemini-1.5" in model_lower:

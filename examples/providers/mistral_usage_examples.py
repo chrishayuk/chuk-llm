@@ -11,7 +11,11 @@ Requirements:
 
 Usage:
     python mistral_usage_examples.py
-    python mistral_usage_examples.py --model mistral-large-latest
+    python mistral_usage_examples.py --model mistral-large-latest  # Mistral Large 3
+    python mistral_usage_examples.py --model mistral-large-2512    # Mistral Large 3 (December 2025)
+    python mistral_usage_examples.py --model ministral-3b-2512     # Ministral 3B
+    python mistral_usage_examples.py --model ministral-8b-2512     # Ministral 8B
+    python mistral_usage_examples.py --model ministral-14b-2512    # Ministral 14B
     python mistral_usage_examples.py --skip-tools
     python mistral_usage_examples.py --skip-vision
 """
@@ -68,8 +72,8 @@ async def main():
     parser = argparse.ArgumentParser(description="Mistral AI Provider Examples")
     parser.add_argument(
         "--model",
-        default="mistral-medium-latest",
-        help="Model to use (default: mistral-medium-latest)",
+        default="mistral-large-latest",
+        help="Model to use (default: mistral-large-latest)",
     )
     parser.add_argument(
         "--skip-tools", action="store_true", help="Skip function calling demo"
@@ -114,7 +118,7 @@ async def main():
             9: ("Model Discovery", demo_model_discovery(client, "mistral", args.model)),
             10: ("Audio Input", demo_audio_input(client, "mistral", audio_model)),
             11: ("Parameters", demo_parameters(client, "mistral", args.model)),
-            12: ("Model Comparison", demo_model_comparison("mistral", ["mistral-small-latest", "mistral-medium-latest"])),
+            12: ("Model Comparison", demo_model_comparison("mistral", ["mistral-large-2512", "ministral-8b-2512", "ministral-14b-2512"])),
             13: ("Dynamic Model Call", demo_dynamic_model_call("mistral")),
             14: ("Error Handling", demo_error_handling(client, "mistral", args.model)),
         }

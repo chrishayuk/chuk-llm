@@ -11,7 +11,9 @@ Requirements:
 
 Usage:
     python gemini_usage_examples.py
-    python gemini_usage_examples.py --model gemini-2.0-flash-exp
+    python gemini_usage_examples.py --model gemini-2.5-flash
+    python gemini_usage_examples.py --model gemini-2.5-pro
+    python gemini_usage_examples.py --model gemini-3-pro-preview
     python gemini_usage_examples.py --skip-tools
     python gemini_usage_examples.py --skip-vision
 """
@@ -68,8 +70,8 @@ async def main():
     parser = argparse.ArgumentParser(description="Google Gemini Provider Examples")
     parser.add_argument(
         "--model",
-        default="gemini-2.0-flash",
-        help="Model to use (default: gemini-2.0-flash)",
+        default="gemini-2.5-flash",
+        help="Model to use (default: gemini-2.5-flash)",
     )
     parser.add_argument(
         "--skip-tools", action="store_true", help="Skip function calling demo"
@@ -109,7 +111,7 @@ async def main():
             9: ("Model Discovery", demo_model_discovery(client, "gemini", args.model)),
             10: ("Audio Input", demo_audio_input(client, "gemini", args.model)),
             11: ("Parameters", demo_parameters(client, "gemini", args.model)),
-            12: ("Model Comparison", demo_model_comparison("gemini", ['gemini-2.0-flash-exp', 'gemini-2.0-flash'])),
+            12: ("Model Comparison", demo_model_comparison("gemini", ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-3-pro-preview'])),
             13: ("Dynamic Model Call", demo_dynamic_model_call("gemini")),
             14: ("Error Handling", demo_error_handling(client, "gemini", args.model)),
         }

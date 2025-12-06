@@ -18,6 +18,11 @@ print(quick_question("What is 2+2?"))  # "2 + 2 equals 4."
 - 📊 **Layered Capability Resolution** - Heuristics → YAML cache → Provider APIs
 - 🚀 **Zero-Config** - Pull a new Ollama model, use it immediately
 
+**Latest Models (December 2025):**
+- 🤖 **Gemini 2.5/3 Pro** - 1M token context, adaptive thinking, multimodal (`gemini-2.5-flash`, `gemini-3-pro-preview`)
+- 🚀 **Mistral Large 3** - 675B MoE, 41B active, Apache 2.0 (`mistral-large-2512`, `ministral-8b-2512`, `ministral-14b-2512`)
+- 💡 **DeepSeek V3.2** - 671B MoE, ultra-efficient at $0.27/M tokens (`deepseek-chat`, `deepseek-reasoner`)
+
 **Performance:**
 - ⚡ **52x faster imports** - Lazy loading reduces import time from 735ms to 14ms
 - 🚀 **112x faster client creation** - Automatic thread-safe caching
@@ -63,6 +68,40 @@ from chuk_llm import ask_openai_sync, ask_claude_sync, ask_ollama_llama3_2_sync
 response = ask_openai_sync("Tell me a joke")
 response = ask_claude_sync("Write a haiku")
 response = ask_ollama_llama3_2_sync("Explain Python")  # Auto-discovered!
+```
+
+### Latest Models (December 2025)
+
+```python
+from chuk_llm import ask
+
+# Gemini 3 Pro - Advanced reasoning with 1M context
+response = await ask(
+    "Explain consciousness vs intelligence in AI",
+    provider="gemini",
+    model="gemini-3-pro-preview"
+)
+
+# Mistral Large 3 - 675B MoE, Apache 2.0
+response = await ask(
+    "Write a Python function for binary search",
+    provider="mistral",
+    model="mistral-large-2512"
+)
+
+# Ministral 8B - Fast, efficient, cost-effective
+response = await ask(
+    "Summarize this text",
+    provider="mistral",
+    model="ministral-8b-2512"
+)
+
+# DeepSeek V3.2 - Ultra-efficient at $0.27/M tokens
+response = await ask(
+    "Solve this math problem step by step",
+    provider="deepseek",
+    model="deepseek-chat"
+)
 ```
 
 ### Async & Streaming
@@ -346,14 +385,14 @@ All providers are **dynamically discovered** via the registry system - no hardco
 | **OpenAI** | `/v1/models` API | GPT-5 / GPT-5.1, o3-family reasoning, industry standard | ✅ Dynamic |
 | **Azure OpenAI** | Deployment config | SOC2, HIPAA compliant, VNet, multi-region | ✅ Dynamic |
 | **Anthropic** | Known models† | Claude 3.5 Sonnet, advanced reasoning, 200K context | ✅ Static |
-| **Google Gemini** | Models API | Gemini 2.0 / 3.0 Flash, multimodal, vision, video | ✅ Dynamic |
+| **Google Gemini** | Models API | Gemini 2.5/3 Pro, 1M token context, adaptive thinking, multimodal | ✅ Dynamic |
 | **Groq** | `/v1/models` API | Llama 3.3, ultra-fast (our benchmarks: ~526 tok/s) | ✅ Dynamic |
 | **Ollama** | `/api/tags` | Any local model, auto-discovery, offline, privacy | ✅ Dynamic |
 | **llama.cpp** | `/v1/models` | Local GGUF models, Ollama bridge, advanced control | ✅ Dynamic |
 | **IBM watsonx** | Known models† | Granite 3.3, enterprise, on-prem, compliance | ✅ Static |
 | **Perplexity** | Known models† | Sonar, real-time web search, citations | ✅ Static |
-| **Mistral** | Known models† | Large, Medium, Small, Codestral, European sovereignty | ✅ Static |
-| **DeepSeek** | `/v1/models` API | DeepSeek V3, efficient, cost-effective | ✅ Dynamic |
+| **Mistral** | Known models† | Large 3 (675B MoE), Ministral 3 (3B/8B/14B), Apache 2.0 | ✅ Static |
+| **DeepSeek** | `/v1/models` API | DeepSeek V3.2 (671B MoE), ultra-efficient, $0.27/M tokens | ✅ Dynamic |
 | **Moonshot AI** | `/v1/models` API | Kimi K2, 256K context, coding, Chinese language | ✅ Dynamic |
 | **OpenRouter** | Known models† | Access to 100+ models via single API | ✅ Static |
 
@@ -377,11 +416,11 @@ All providers are **dynamically discovered** via the registry system - no hardco
 # API Keys - Cloud Providers
 export OPENAI_API_KEY="sk-..."
 export ANTHROPIC_API_KEY="sk-ant-..."
-export GEMINI_API_KEY="..."
+export GOOGLE_API_KEY="..."        # For Gemini 2.5/3 models
 export GROQ_API_KEY="..."
-export DEEPSEEK_API_KEY="..."
+export DEEPSEEK_API_KEY="..."      # For DeepSeek V3.2 (chat/reasoner)
 export MOONSHOT_API_KEY="..."
-export MISTRAL_API_KEY="..."
+export MISTRAL_API_KEY="..."       # For Mistral Large 3 & Ministral 3
 
 # Azure Configuration
 export AZURE_OPENAI_API_KEY="..."

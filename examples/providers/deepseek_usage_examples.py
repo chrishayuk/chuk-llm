@@ -11,7 +11,8 @@ Requirements:
 
 Usage:
     python deepseek_usage_examples.py
-    python deepseek_usage_examples.py --model deepseek-chat
+    python deepseek_usage_examples.py --model deepseek-chat  # V3.2 non-thinking mode
+    python deepseek_usage_examples.py --model deepseek-reasoner  # V3.2 thinking mode
     python deepseek_usage_examples.py --skip-tools
     python deepseek_usage_examples.py --skip-vision
 """

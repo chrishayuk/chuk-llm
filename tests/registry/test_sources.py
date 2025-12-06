@@ -879,8 +879,10 @@ class TestGeminiModelSource:
         """Test _extract_family logic."""
         source = GeminiModelSource(api_key="test-key")
 
-        # Note: "gemini-2" is checked before "gemini-1.5", so "gemini-2.5" returns "gemini-2"
-        assert source._extract_family("gemini-2.5-pro") == "gemini-2"
+        # Test all Gemini model families in descending order
+        assert source._extract_family("gemini-3-pro") == "gemini-3"
+        assert source._extract_family("gemini-2.5-pro") == "gemini-2.5"
+        assert source._extract_family("gemini-2.5-flash") == "gemini-2.5"
         assert source._extract_family("gemini-2.0-flash") == "gemini-2"
         assert source._extract_family("gemini-1.5-pro") == "gemini-1.5"
         assert source._extract_family("gemini-1.5-flash") == "gemini-1.5"
