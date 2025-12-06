@@ -21,7 +21,7 @@ gemini:
   client_class: "chuk_llm.llm.providers.gemini_client:GeminiLLMClient"
   api_key_env: "GEMINI_API_KEY"
   api_base: "https://generativelanguage.googleapis.com/v1"
-  default_model: "gemini-3-pro-preview"
+  default_model: "gemini-2.5-flash"
   models: ["*"]
 
 groq:
@@ -34,7 +34,7 @@ groq:
 mistral:
   client_class: "chuk_llm.llm.providers.mistral_client:MistralLLMClient"
   api_key_env: "MISTRAL_API_KEY"
-  default_model: "mistral-medium-latest"
+  default_model: "mistral-large-latest"
   models: ["*"]
 
 deepseek:

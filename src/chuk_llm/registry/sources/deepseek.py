@@ -42,6 +42,10 @@ class DeepSeekModelSource(OpenAICompatibleSource):
         if "chat" in model_lower:
             return True
 
+        # Include reasoner models (thinking mode)
+        if "reasoner" in model_lower:
+            return True
+
         # Also include versioned models (deepseek-v3, etc.) which are chat models
         if "deepseek-v" in model_lower and "coder" not in model_lower:
             return True
@@ -60,9 +64,9 @@ class DeepSeekModelSource(OpenAICompatibleSource):
         """
         model_lower = model_id.lower()
 
-        # Extract version-based families (deepseek-v3-chat -> deepseek-v3)
+        # Extract version-based families (deepseek-v3.2-chat -> deepseek-v3.2)
         if "deepseek-v" in model_lower:
-            # Extract version part (e.g., deepseek-v3, deepseek-v2.5)
+            # Extract version part (e.g., deepseek-v3.2, deepseek-v3, deepseek-v2.5)
             import re
 
             match = re.match(r"(deepseek-v[\d.]+)", model_lower)
