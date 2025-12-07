@@ -66,9 +66,11 @@ async def discover_models(
             or False,
             CapabilityKey.SUPPORTS_STREAMING.value: model.capabilities.supports_streaming
             or False,
-            "quality_tier": model.capabilities.quality_tier.value
-            if model.capabilities.quality_tier
-            else "unknown",
+            "quality_tier": (
+                model.capabilities.quality_tier.value
+                if model.capabilities.quality_tier
+                else "unknown"
+            ),
             "tokens_per_second": model.capabilities.tokens_per_second,
         }
         for model in provider_models
@@ -137,13 +139,17 @@ async def get_model_info(
                 or False,
                 CapabilityKey.SUPPORTS_STREAMING.value: model.capabilities.supports_streaming
                 or False,
-                "quality_tier": model.capabilities.quality_tier.value
-                if model.capabilities.quality_tier
-                else "unknown",
+                "quality_tier": (
+                    model.capabilities.quality_tier.value
+                    if model.capabilities.quality_tier
+                    else "unknown"
+                ),
                 "tokens_per_second": model.capabilities.tokens_per_second,
-                "known_params": list(model.capabilities.known_params)
-                if model.capabilities.known_params
-                else [],
+                "known_params": (
+                    list(model.capabilities.known_params)
+                    if model.capabilities.known_params
+                    else []
+                ),
             }
 
     return None
@@ -209,9 +215,11 @@ async def find_best_model(
         "context_length": best_model.capabilities.max_context,
         "max_output_tokens": best_model.capabilities.max_output_tokens,
         "features": _capabilities_to_features(best_model.capabilities),
-        "quality_tier": best_model.capabilities.quality_tier.value
-        if best_model.capabilities.quality_tier
-        else "unknown",
+        "quality_tier": (
+            best_model.capabilities.quality_tier.value
+            if best_model.capabilities.quality_tier
+            else "unknown"
+        ),
     }
 
 

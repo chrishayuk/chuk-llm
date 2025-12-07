@@ -85,6 +85,9 @@ def _ensure_pydantic_messages(messages: list) -> list:
                 tool_calls=tool_calls_list,
                 tool_call_id=msg.get("tool_call_id"),
                 name=msg.get("name"),
+                reasoning_content=msg.get(
+                    "reasoning_content"
+                ),  # Preserve for DeepSeek reasoner
             )
         )
     return pydantic_messages
@@ -158,3 +161,25 @@ class BaseLLMClient(abc.ABC):
                  MUST return the async iterator directly (no awaiting).
         """
         ...
+
+    async def close(self):
+        """
+        Cleanup resources and invalidate client cache.
+
+        This default implementation handles cache invalidation to prevent
+        returning closed clients from get_client(). Subclasses should call
+        super().close() and then close their own resources.
+
+        Example:
+            async def close(self):
+                await super().close()  # Invalidate cache
+                await self.client.close()  # Close provider client
+        """
+        # Invalidate cache entry to prevent returning closed clients
+        try:
+            from chuk_llm.client_registry import invalidate_client
+
+            invalidate_client(self)
+        except ImportError:
+            # client_registry not available (shouldn't happen, but be safe)
+            pass
