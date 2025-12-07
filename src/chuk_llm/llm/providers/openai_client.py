@@ -1192,7 +1192,7 @@ class OpenAILLMClient(
                     log.warning(f"Error processing chunk {chunk_count}: {chunk_error}")
                     continue
 
-                # FIXED: Yield if we have content OR completed tool calls
+                # FIXED: Yield if we have content OR reasoning OR completed tool calls
                 if content_delta or reasoning_delta or completed_tool_calls:
                     result = {
                         "response": content_delta,
@@ -1201,11 +1201,19 @@ class OpenAILLMClient(
                         ),
                     }
 
-                    # Include accumulated reasoning_content when we have tool calls
-                    # This is critical for DeepSeek reasoner - the reasoning_content must be
-                    # sent back in the next API call along with the assistant message
-                    if completed_tool_calls and accumulated_reasoning_content:
+                    # Include reasoning_content when available (for DeepSeek reasoner, etc.)
+                    # Send accumulated reasoning_content so the UI can show progress
+                    if accumulated_reasoning_content:
                         result["reasoning_content"] = accumulated_reasoning_content
+                        # Log reasoning progress periodically
+                        if total_reasoning_chars % 1000 < len(reasoning_delta):
+                            log.debug(
+                                f"[{self.detected_provider}] Reasoning progress: "
+                                f"{len(accumulated_reasoning_content)} total chars"
+                            )
+
+                    # For tool calls, reasoning_content is critical - must be sent back in next API call
+                    if completed_tool_calls and accumulated_reasoning_content:
                         log.debug(
                             f"[{self.detected_provider}] Including reasoning_content "
                             f"({len(accumulated_reasoning_content)} chars) with tool calls"
