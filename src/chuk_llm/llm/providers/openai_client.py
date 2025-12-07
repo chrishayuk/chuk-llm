@@ -1193,7 +1193,15 @@ class OpenAILLMClient(
                     continue
 
                 # FIXED: Yield if we have content OR reasoning OR completed tool calls
-                if content_delta or reasoning_delta or completed_tool_calls:
+                # ALSO yield heartbeat chunks to prevent timeout (every 10 chunks)
+                should_yield = (
+                    content_delta
+                    or reasoning_delta
+                    or completed_tool_calls
+                    or (chunk_count % 10 == 0)  # Heartbeat every 10 chunks
+                )
+
+                if should_yield:
                     result = {
                         "response": content_delta,
                         "tool_calls": (

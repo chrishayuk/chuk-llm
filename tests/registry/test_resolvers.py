@@ -469,6 +469,110 @@ class TestYamlCapabilityResolver:
         assert caps.max_context == 100_000
         assert caps.supports_tools is True
 
+    @pytest.mark.asyncio
+    async def test_model_parent_child_inheritance(self, tmp_path):
+        """Test model inheritance with parent-child relationships."""
+        from chuk_llm.registry.resolvers.yaml_config import YamlCapabilityResolver
+        import yaml
+
+        cache_dir = tmp_path / "capabilities"
+        cache_dir.mkdir()
+
+        # Create YAML with parent-child inheritance
+        cache_data = {
+            "models": {
+                "parent-model": {
+                    "max_context": 100_000,
+                    "supports_tools": True,
+                    "supports_vision": False,
+                },
+                "child-model": {
+                    "inherits_from": "parent-model",
+                    "supports_vision": True,  # Override parent
+                }
+            }
+        }
+
+        with open(cache_dir / "test.yaml", "w") as f:
+            yaml.dump(cache_data, f)
+
+        resolver = YamlCapabilityResolver(cache_dir=cache_dir)
+
+        # Get child model - should merge parent + child
+        spec = ModelSpec(provider="test", name="child-model")
+        caps = await resolver.get_capabilities(spec)
+
+        # Should inherit max_context and supports_tools from parent
+        assert caps.max_context == 100_000
+        assert caps.supports_tools is True
+        # But override supports_vision from child
+        assert caps.supports_vision is True
+
+    @pytest.mark.asyncio
+    async def test_model_parent_not_found(self, tmp_path):
+        """Test model inheritance when parent doesn't exist."""
+        from chuk_llm.registry.resolvers.yaml_config import YamlCapabilityResolver
+        import yaml
+
+        cache_dir = tmp_path / "capabilities"
+        cache_dir.mkdir()
+
+        # Create YAML with inheritance pointing to non-existent parent
+        cache_data = {
+            "models": {
+                "child-model": {
+                    "inherits_from": "nonexistent-parent",
+                    "max_context": 50_000,
+                }
+            }
+        }
+
+        with open(cache_dir / "test.yaml", "w") as f:
+            yaml.dump(cache_data, f)
+
+        resolver = YamlCapabilityResolver(cache_dir=cache_dir)
+
+        # Get child model - should just use child data
+        spec = ModelSpec(provider="test", name="child-model")
+        caps = await resolver.get_capabilities(spec)
+
+        # Should just have child capabilities
+        assert caps.max_context == 50_000
+
+    @pytest.mark.asyncio
+    async def test_family_member_skip_self(self, tmp_path):
+        """Test that family inheritance skips the model itself."""
+        from chuk_llm.registry.resolvers.yaml_config import YamlCapabilityResolver
+        import yaml
+
+        cache_dir = tmp_path / "capabilities"
+        cache_dir.mkdir()
+
+        # Create YAML with family members
+        cache_data = {
+            "models": {
+                "model-a": {
+                    "max_context": 100_000,
+                    "inherits_from": "test-family",
+                },
+                "model-a": {  # Same name - should skip itself
+                    "max_context": 50_000,
+                    "inherits_from": "test-family",
+                }
+            }
+        }
+
+        with open(cache_dir / "test.yaml", "w") as f:
+            yaml.dump(cache_data, f)
+
+        resolver = YamlCapabilityResolver(cache_dir=cache_dir)
+
+        spec = ModelSpec(provider="test", name="model-a", family="test-family")
+        caps = await resolver.get_capabilities(spec)
+
+        # Should find exact match first
+        assert caps.max_context == 50_000
+
 
 class TestRuntimeTestingResolver:
     """Test runtime testing resolver."""

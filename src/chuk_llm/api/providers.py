@@ -355,7 +355,7 @@ def _prepare_vision_message(
     image_url = None
     media_type = "image/jpeg"  # default
 
-    if isinstance(image, str | Path):
+    if isinstance(image, (str, Path)):
         image_path = (
             Path(image)
             if not isinstance(image, str)
