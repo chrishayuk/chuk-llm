@@ -278,16 +278,31 @@ class AzureOpenAILLMClient(
         This is the KEY METHOD that enables discovered deployments to work!
         """
         try:
+            # Get smart defaults first for this deployment
+            smart_features = self._get_smart_default_features(self.azure_deployment)
+
             # First try the configuration system
             config_supports = super().supports_feature(feature_name)
 
-            # If configuration gives a definitive answer (True/False), trust it
-            if config_supports is not None:
-                return config_supports
+            # If configuration gives True, trust it
+            if config_supports is True:
+                return True
+
+            # If config says False but smart defaults say True, use smart defaults
+            # This handles cases where config is missing/wrong for new deployments
+            if config_supports is False and feature_name in smart_features:
+                log.info(
+                    f"[azure_openai] Config says no, but smart defaults say yes for '{self.azure_deployment}' - "
+                    f"using smart default: supports {feature_name}"
+                )
+                return True
+
+            # If config gave a definitive False and smart defaults also say False, trust it
+            if config_supports is False:
+                return False
 
             # Configuration returned None (unknown deployment) - use smart defaults
             # This is where we handle "scribeflowgpt4o" and other custom deployments!
-            smart_features = self._get_smart_default_features(self.azure_deployment)
             supports_smart = feature_name in smart_features
 
             if supports_smart:

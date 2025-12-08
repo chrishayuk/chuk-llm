@@ -71,6 +71,7 @@ class ModelInfo(BaseModel):
     supports_tools: bool = True
     supports_streaming: bool = True
     supports_vision: bool = False
+    supports_system_messages: bool = True  # Most models support system messages
 
     # Parameter support (for reasoning models like GPT-5, O-series)
     supports_temperature: bool = True
