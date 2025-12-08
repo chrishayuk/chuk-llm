@@ -479,10 +479,53 @@ def _safe_get(obj: Any, key: str, default: Any = None) -> Any:
     )
 
 
+def _fix_gemini_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """
+    Fix JSON schema for Gemini compatibility.
+
+    Gemini requires that all array properties have an 'items' field.
+    This function recursively adds missing 'items' fields with a permissive schema.
+    """
+    if not isinstance(schema, dict):
+        return schema
+
+    fixed_schema = schema.copy()
+
+    # Fix properties if they exist
+    if "properties" in fixed_schema and isinstance(fixed_schema["properties"], dict):
+        fixed_properties = {}
+        for prop_name, prop_schema in fixed_schema["properties"].items():
+            if isinstance(prop_schema, dict):
+                # If this is an array type without items, add a default items schema
+                if prop_schema.get("type") == "array" and "items" not in prop_schema:
+                    log.debug(
+                        f"Adding missing 'items' field for array property '{prop_name}'"
+                    )
+                    prop_schema = prop_schema.copy()
+                    # Add a permissive items schema - allows any type
+                    prop_schema["items"] = {
+                        "type": "object",
+                        "description": "Array item",
+                    }
+
+                # Recursively fix nested schemas
+                fixed_properties[prop_name] = _fix_gemini_schema(prop_schema)
+            else:
+                fixed_properties[prop_name] = prop_schema
+
+        fixed_schema["properties"] = fixed_properties
+
+    # Fix items if they exist (for nested arrays)
+    if "items" in fixed_schema and isinstance(fixed_schema["items"], dict):
+        fixed_schema["items"] = _fix_gemini_schema(fixed_schema["items"])
+
+    return fixed_schema
+
+
 def _convert_tools_to_gemini_format(
     tools: list[dict[str, Any]] | None,
 ) -> list[gtypes.Tool] | None:
-    """Convert OpenAI-style tools to Gemini format"""
+    """Convert OpenAI-style tools to Gemini format with schema validation fixes"""
     if not tools:
         return None
 
@@ -498,10 +541,15 @@ def _convert_tools_to_gemini_format(
                     log.warning(f"Skipping tool with invalid name: {tool}")
                     continue
 
+                # Fix the parameters schema for Gemini compatibility
+                parameters = func.get("parameters", {})
+                if parameters:
+                    parameters = _fix_gemini_schema(parameters)
+
                 func_decl = {
                     "name": func_name,
                     "description": func.get("description", ""),
-                    "parameters": func.get("parameters", {}),
+                    "parameters": parameters,
                 }
                 function_declarations.append(func_decl)
 
@@ -787,9 +835,11 @@ class GeminiLLMClient(ConfigAwareProviderMixin, ToolCompatibilityMixin, BaseLLMC
             format_type = (
                 response_format.type
                 if isinstance(response_format, ResponseFormat)
-                else response_format.get("type")
-                if isinstance(response_format, dict)
-                else None
+                else (
+                    response_format.get("type")
+                    if isinstance(response_format, dict)
+                    else None
+                )
             )
 
             if format_type == "json_object":

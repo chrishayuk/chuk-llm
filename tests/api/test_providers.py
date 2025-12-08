@@ -1484,3 +1484,214 @@ class TestVisionImagePreparation:
 
         assert "content" in result
         assert isinstance(result["content"], list)
+
+
+class TestEnsureProviderModelsCurrent:
+    """Test _ensure_provider_models_current function with all code paths"""
+
+    @patch("chuk_llm.api.providers._check_ollama_available_models")
+    @patch("chuk_llm.api.providers.get_config")
+    def test_ensure_models_ollama_with_discovery(self, mock_config, mock_ollama_check):
+        """Test Ollama model discovery and merging (lines 243-256)"""
+        from chuk_llm.api.providers import _ensure_provider_models_current
+        from unittest.mock import MagicMock
+
+        # Mock config
+        mock_provider_config = MagicMock()
+        mock_provider_config.models = ["llama2"]
+        mock_provider_config.extra = {}
+        mock_config_mgr = MagicMock()
+        mock_config_mgr.get_provider.return_value = mock_provider_config
+        mock_config.return_value = mock_config_mgr
+
+        # Mock Ollama discovery returns new models
+        mock_ollama_check.return_value = ["llama3", "codellama"]
+
+        result = _ensure_provider_models_current("ollama")
+
+        # Should merge existing + discovered
+        assert "llama2" in result
+        assert "llama3" in result
+        assert "codellama" in result
+
+    @patch("chuk_llm.api.providers._check_ollama_available_models")
+    @patch("chuk_llm.api.providers.get_config")
+    def test_ensure_models_ollama_discovery_exception(self, mock_config, mock_ollama_check):
+        """Test Ollama discovery exception handling (lines 253-256)"""
+        from chuk_llm.api.providers import _ensure_provider_models_current
+        from unittest.mock import MagicMock
+
+        mock_provider_config = MagicMock()
+        mock_provider_config.models = ["llama2"]
+        mock_provider_config.extra = {}
+        mock_config_mgr = MagicMock()
+        mock_config_mgr.get_provider.return_value = mock_provider_config
+        mock_config.return_value = mock_config_mgr
+
+        # Mock Ollama check raises exception
+        mock_ollama_check.side_effect = Exception("Connection failed")
+
+        result = _ensure_provider_models_current("ollama")
+
+        # Should return existing models despite exception
+        assert result == ["llama2"]
+
+    @patch("chuk_llm.api.providers.get_config")
+    def test_ensure_models_with_dynamic_discovery(self, mock_config):
+        """Test dynamic discovery integration (lines 258-286)"""
+        from chuk_llm.api.providers import _ensure_provider_models_current
+        from unittest.mock import MagicMock
+
+        mock_provider_config = MagicMock()
+        mock_provider_config.models = ["model1"]
+        mock_provider_config.extra = {"dynamic_discovery": {"enabled": True}}
+        
+        mock_config_mgr = MagicMock()
+        mock_config_mgr.get_provider.return_value = mock_provider_config
+        mock_config_mgr.get_discovered_models.return_value = ["model2", "model3"]
+        mock_config_mgr._discovery_cache = {
+            "test_provider": {"models": ["model2", "model3", "model4"]}
+        }
+        mock_config_mgr.providers = {}
+        mock_config.return_value = mock_config_mgr
+
+        result = _ensure_provider_models_current("test_provider")
+
+        # Should merge discovered models
+        assert "model1" in result
+        assert "model2" in result or "model4" in result
+
+    @patch("chuk_llm.api.providers.get_config")
+    def test_ensure_models_discovery_exception(self, mock_config):
+        """Test discovery exception handling (lines 285-286)"""
+        from chuk_llm.api.providers import _ensure_provider_models_current
+        from unittest.mock import MagicMock
+
+        mock_provider_config = MagicMock()
+        mock_provider_config.models = ["model1"]
+        mock_provider_config.extra = {"dynamic_discovery": {"enabled": True}}
+        
+        mock_config_mgr = MagicMock()
+        mock_config_mgr.get_provider.return_value = mock_provider_config
+        mock_config_mgr.get_discovered_models.side_effect = Exception("Discovery failed")
+        mock_config.return_value = mock_config_mgr
+
+        result = _ensure_provider_models_current("test_provider")
+
+        # Should return existing models
+        assert result == ["model1"]
+
+    @patch("chuk_llm.api.providers.get_config")
+    def test_ensure_models_general_exception(self, mock_config):
+        """Test general exception handling (lines 290-292)"""
+        from chuk_llm.api.providers import _ensure_provider_models_current
+
+        mock_config.side_effect = Exception("Config error")
+
+        result = _ensure_provider_models_current("test_provider")
+
+        # Should return empty list on error
+        assert result == []
+
+
+class TestGetSafeModelsForProvider:
+    """Test _get_safe_models_for_provider function"""
+
+    @patch("chuk_llm.api.providers._is_startup_discovery_enabled")
+    @patch("chuk_llm.api.providers._ensure_provider_models_current")
+    def test_safe_models_ollama_discovery_disabled(self, mock_ensure, mock_startup):
+        """Test Ollama with startup discovery disabled (lines 302-307)"""
+        from chuk_llm.api.providers import _get_safe_models_for_provider
+        from unittest.mock import MagicMock
+
+        mock_ensure.return_value = ["llama2", "codellama"]
+        mock_startup.return_value = False
+        mock_provider_config = MagicMock()
+
+        result = _get_safe_models_for_provider("ollama", mock_provider_config)
+
+        # Should return all current models
+        assert result == ["llama2", "codellama"]
+
+    @patch("chuk_llm.api.providers._is_startup_discovery_enabled")
+    @patch("chuk_llm.api.providers._ensure_provider_models_current")
+    @patch("chuk_llm.api.providers._check_ollama_available_models")
+    def test_safe_models_ollama_with_available_check(self, mock_check, mock_ensure, mock_startup):
+        """Test Ollama filtering by available models (lines 309-332)"""
+        from chuk_llm.api.providers import _get_safe_models_for_provider
+        from unittest.mock import MagicMock
+
+        mock_ensure.return_value = ["llama2", "codellama", "phi"]
+        mock_startup.return_value = True
+        mock_check.return_value = ["llama2", "codellama"]  # Only these are available
+        mock_provider_config = MagicMock()
+
+        result = _get_safe_models_for_provider("ollama", mock_provider_config)
+
+        # Should only return available models
+        assert "llama2" in result
+        assert "codellama" in result
+        assert "phi" not in result
+
+
+class TestRefreshProviderFunctions:
+    """Test refresh_provider_functions with all code paths"""
+
+    @patch("chuk_llm.api.providers._is_discovery_enabled")
+    def test_refresh_discovery_disabled(self, mock_discovery):
+        """Test refresh with discovery disabled (lines 1436-1440)"""
+        from chuk_llm.api.providers import refresh_provider_functions
+
+        mock_discovery.return_value = False
+
+        result = refresh_provider_functions("test_provider")
+
+        assert result == {}
+
+    @patch("chuk_llm.api.providers.get_config")
+    @patch("chuk_llm.api.providers._is_discovery_enabled")
+    @patch("chuk_llm.api.providers._check_ollama_available_models")
+    @patch("chuk_llm.api.providers._generate_functions_for_models")
+    def test_refresh_ollama_with_discovered_models(
+        self, mock_gen_funcs, mock_check, mock_discovery, mock_config
+    ):
+        """Test Ollama refresh with model discovery (lines 1449-1478)"""
+        from chuk_llm.api.providers import refresh_provider_functions
+        from unittest.mock import MagicMock
+        import sys
+
+        mock_discovery.return_value = True
+        mock_check.return_value = ["llama3", "codellama"]
+        
+        mock_provider_config = MagicMock()
+        mock_provider_config.models = ["llama2"]
+        
+        mock_config_mgr = MagicMock()
+        mock_config_mgr.get_provider.return_value = mock_provider_config
+        mock_config_mgr.providers = {}
+        mock_config_mgr._provider_cache = {}
+        mock_config.return_value = mock_config_mgr
+
+        mock_gen_funcs.return_value = {"ask_ollama_llama3": MagicMock()}
+
+        result = refresh_provider_functions("ollama")
+
+        # Should have generated functions
+        assert len(result) > 0
+        mock_check.assert_called_once()
+
+
+
+# NOTE: Removed fragile implementation-detail tests that were added for coverage
+# but were too brittle and tested internal implementation rather than behavior.
+# These tests included:
+# - TestRunSyncEdgeCases
+# - TestPrepareVisionMessageComprehensive
+# - TestGenerateFunctionsForModels
+# - TestModuleInitializationSimulation
+# - TestHelperUtilityFunctions
+# - TestEdgeCasesAndErrorPaths
+# - TestSafeModelsOllamaSpecific
+#
+# The core functionality is already well-tested through integration and behavior tests.
+# Future coverage improvements should focus on behavior testing rather than implementation details.

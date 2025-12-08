@@ -245,9 +245,11 @@ class AnthropicLLMClient(
             format_type = (
                 response_format.type
                 if isinstance(response_format, ResponseFormat)
-                else response_format.get("type")
-                if isinstance(response_format, dict)
-                else None
+                else (
+                    response_format.get("type")
+                    if isinstance(response_format, dict)
+                    else None
+                )
             )
 
             if format_type == "json_object":

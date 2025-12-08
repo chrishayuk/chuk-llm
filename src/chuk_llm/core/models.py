@@ -179,6 +179,9 @@ class Message(BaseModel):
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None  # For tool response messages
     name: str | None = None  # For function/tool messages
+    reasoning_content: str | None = (
+        None  # For reasoning models (DeepSeek reasoner, etc.)
+    )
 
     model_config = ConfigDict(frozen=True)
 

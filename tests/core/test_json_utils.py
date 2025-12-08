@@ -664,3 +664,97 @@ def test_module_level_variables():
     assert json_utils._json_lib in ["orjson", "ujson", "stdlib"]
     assert isinstance(json_utils._orjson_available, bool)
     assert isinstance(json_utils._ujson_available, bool)
+
+
+# =============================================================================
+# Main module execution tests
+# =============================================================================
+
+def test_main_execution():
+    """Test the __main__ execution block"""
+    # This tests the if __name__ == "__main__" block by importing sys and running the module
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-m", "chuk_llm.core.json_utils"],
+        capture_output=True,
+        text=True
+    )
+
+    # Should execute without error
+    assert result.returncode == 0
+
+    # Should print the library being used
+    assert "Using JSON library:" in result.stdout
+    assert "Performance info:" in result.stdout
+    assert "Serialized:" in result.stdout
+    assert "Deserialized:" in result.stdout
+
+
+def test_dumps_no_kwargs_fast_path():
+    """Test dumps with no kwargs (fast path for all libraries)"""
+    data = {"test": "data"}
+    result = json_utils.dumps(data)
+    assert isinstance(result, str)
+    assert json.loads(result) == data
+
+
+def test_dumps_with_unknown_kwargs():
+    """Test dumps with kwargs that might not be recognized"""
+    data = {"test": "data"}
+    # This should still work, libraries ignore unknown kwargs
+    result = json_utils.dumps(data, indent=2)
+    assert isinstance(result, str)
+
+
+def test_pydantic_json_dumps_with_kwargs():
+    """Test Pydantic JSON dumps with various kwargs"""
+    config = json_utils.get_pydantic_json_config()
+
+    data = {"test": "value", "number": 42}
+
+    # Test dumps function from config with kwargs
+    result = config["json_dumps"](data, indent=2)
+    assert result is not None
+
+    # Should be able to parse it back
+    if isinstance(result, bytes):
+        result = result.decode('utf-8')
+    parsed = json.loads(result)
+    assert parsed == data
+
+
+def test_get_performance_info_speedup_map():
+    """Test that get_performance_info returns correct speedup for each library"""
+    info = json_utils.get_performance_info()
+
+    if info.library == "orjson":
+        assert info.speedup == "2-3x faster than stdlib"
+        assert info.orjson_available is True
+    elif info.library == "ujson":
+        assert info.speedup == "1.5-2x faster than stdlib"
+        assert info.ujson_available is True
+    elif info.library == "stdlib":
+        assert info.speedup == "baseline performance"
+
+
+# =============================================================================
+# Test coverage for all code paths
+# =============================================================================
+
+def test_all_library_imports():
+    """Test that library import flags are set correctly"""
+    # At least one should be True (stdlib is always available via fallback)
+    assert json_utils._orjson_available or json_utils._ujson_available or json_utils._json_lib == "stdlib"
+
+    # Check consistency
+    if json_utils._orjson_available:
+        # orjson should be selected if available (highest priority)
+        assert json_utils._json_lib == "orjson"
+    elif json_utils._ujson_available:
+        # ujson should be selected if orjson not available
+        assert json_utils._json_lib == "ujson"
+    else:
+        # stdlib should be selected as fallback
+        assert json_utils._json_lib == "stdlib"

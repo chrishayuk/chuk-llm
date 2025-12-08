@@ -784,8 +784,10 @@ class OpenAILLMClient(
     def _normalize_message(self, msg) -> dict[str, Any]:
         """
         ENHANCED: Improved content extraction to eliminate warnings.
+        Also extracts reasoning_content for DeepSeek reasoner models.
         """
         content = None
+        reasoning_content = None
         tool_calls = []
 
         # Try multiple methods to extract content
@@ -819,6 +821,17 @@ class OpenAILLMClient(
                             content = msg["content"]
             except Exception as e:
                 log.debug(f"Dict content access failed: {e}")
+
+        # Extract reasoning_content for reasoning models (DeepSeek, etc.)
+        try:
+            if hasattr(msg, "reasoning_content"):
+                reasoning_content = msg.reasoning_content
+            elif hasattr(msg, "message") and hasattr(msg.message, "reasoning_content"):
+                reasoning_content = msg.message.reasoning_content
+            elif isinstance(msg, dict) and "reasoning_content" in msg:
+                reasoning_content = msg["reasoning_content"]
+        except Exception as e:
+            log.debug(f"Reasoning content extraction failed: {e}")
 
         # Extract tool calls with enhanced error handling
         try:
@@ -901,6 +914,13 @@ class OpenAILLMClient(
             response_value = content
 
         result = {"response": response_value, "tool_calls": tool_calls}
+
+        # Include reasoning_content if present (for DeepSeek reasoner and similar models)
+        if reasoning_content is not None:
+            result["reasoning_content"] = reasoning_content
+            log.debug(
+                f"[{self.detected_provider}] Extracted reasoning_content: {len(str(reasoning_content))} chars"
+            )
 
         return result
 
@@ -1029,14 +1049,19 @@ class OpenAILLMClient(
         try:
             chunk_count = 0
             total_content_chars = 0
+            total_reasoning_chars = 0
 
             # Track tool calls for incremental streaming - FIXED structure
             accumulated_tool_calls = {}  # {index: {id, name, arguments, complete}}
+            accumulated_reasoning_content = (
+                ""  # Accumulate reasoning_content for DeepSeek reasoner
+            )
 
             async for chunk in async_stream:
                 chunk_count += 1
 
                 content_delta = ""  # Only new content
+                reasoning_delta = ""  # Only new reasoning content
                 completed_tool_calls = []  # Only complete, parseable tool calls
 
                 try:
@@ -1050,17 +1075,19 @@ class OpenAILLMClient(
                         if hasattr(choice, "delta") and choice.delta:
                             delta = choice.delta
 
-                            # Handle content - yield immediately (this works fine)
-                            # FIXED: Also check reasoning_content for llama.cpp thinking models
+                            # Handle regular content
                             if hasattr(delta, "content") and delta.content is not None:
                                 content_delta = str(delta.content)
                                 total_content_chars += len(content_delta)
-                            elif (
+
+                            # Handle reasoning_content separately (for DeepSeek reasoner, etc.)
+                            if (
                                 hasattr(delta, "reasoning_content")
                                 and delta.reasoning_content is not None
                             ):
-                                content_delta = str(delta.reasoning_content)
-                                total_content_chars += len(content_delta)
+                                reasoning_delta = str(delta.reasoning_content)
+                                accumulated_reasoning_content += reasoning_delta
+                                total_reasoning_chars += len(reasoning_delta)
 
                             # Handle tool calls - FIXED: accumulate until complete
                             if hasattr(delta, "tool_calls") and delta.tool_calls:
@@ -1165,14 +1192,40 @@ class OpenAILLMClient(
                     log.warning(f"Error processing chunk {chunk_count}: {chunk_error}")
                     continue
 
-                # FIXED: Yield if we have content OR completed tool calls
-                if content_delta or completed_tool_calls:
+                # FIXED: Yield if we have content OR reasoning OR completed tool calls
+                # ALSO yield heartbeat chunks to prevent timeout (every 10 chunks)
+                should_yield = (
+                    content_delta
+                    or reasoning_delta
+                    or completed_tool_calls
+                    or (chunk_count % 10 == 0)  # Heartbeat every 10 chunks
+                )
+
+                if should_yield:
                     result = {
                         "response": content_delta,
                         "tool_calls": (
                             completed_tool_calls if completed_tool_calls else None
                         ),
                     }
+
+                    # Include reasoning_content when available (for DeepSeek reasoner, etc.)
+                    # Send accumulated reasoning_content so the UI can show progress
+                    if accumulated_reasoning_content:
+                        result["reasoning_content"] = accumulated_reasoning_content
+                        # Log reasoning progress periodically
+                        if total_reasoning_chars % 1000 < len(reasoning_delta):
+                            log.debug(
+                                f"[{self.detected_provider}] Reasoning progress: "
+                                f"{len(accumulated_reasoning_content)} total chars"
+                            )
+
+                    # For tool calls, reasoning_content is critical - must be sent back in next API call
+                    if completed_tool_calls and accumulated_reasoning_content:
+                        log.debug(
+                            f"[{self.detected_provider}] Including reasoning_content "
+                            f"({len(accumulated_reasoning_content)} chars) with tool calls"
+                        )
 
                     # Restore tool names using universal restoration
                     if name_mapping and result.get("tool_calls"):
@@ -1184,7 +1237,8 @@ class OpenAILLMClient(
 
             log.debug(
                 f"[{self.detected_provider}] Streaming completed: {chunk_count} chunks, "
-                f"{total_content_chars} total characters, {len(accumulated_tool_calls)} tool calls"
+                f"{total_content_chars} content chars, {total_reasoning_chars} reasoning chars, "
+                f"{len(accumulated_tool_calls)} tool calls"
             )
 
         except Exception as e:
@@ -1645,10 +1699,14 @@ class OpenAILLMClient(
             return {"response": f"Error: {str(e)}", "tool_calls": [], "error": True}
 
     async def close(self):
-        """Cleanup resources"""
+        """Cleanup resources and invalidate client cache."""
+        # Invalidate cache (handled by base class)
+        await super().close()
+
         # Reset name mapping from universal system
         if hasattr(self, "_current_name_mapping"):
             self._current_name_mapping = {}
 
+        # Close the underlying OpenAI client
         if hasattr(self.client, "close"):
             await self.client.close()

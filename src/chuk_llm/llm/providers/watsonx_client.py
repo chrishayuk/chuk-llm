@@ -1365,9 +1365,11 @@ class WatsonXLLMClient(
         # Ensure messages are Pydantic
         if messages:
             messages = [
-                msg
-                if isinstance(msg, MessageModel)
-                else MessageModel.model_validate(msg)
+                (
+                    msg
+                    if isinstance(msg, MessageModel)
+                    else MessageModel.model_validate(msg)
+                )
                 for msg in messages
             ]
 

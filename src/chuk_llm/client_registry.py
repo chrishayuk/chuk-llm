@@ -141,6 +141,29 @@ def get_cached_client(
         return client
 
 
+def invalidate_client(client: BaseLLMClient) -> bool:
+    """
+    Remove a client from the cache.
+
+    This should be called when a client is closed to prevent returning
+    closed clients from the cache.
+
+    Args:
+        client: The client instance to remove
+
+    Returns:
+        True if client was found and removed, False otherwise
+    """
+    with _cache_lock:
+        # Find the cache key for this client instance
+        for cache_key, cached_client in list(_client_cache.items()):
+            if cached_client is client:
+                del _client_cache[cache_key]
+                log.debug(f"Invalidated cached client: {cache_key}")
+                return True
+        return False
+
+
 def is_client_cached(provider: str, model: str | None = None, **kwargs) -> bool:
     """
     Check if a client with this config is already cached.

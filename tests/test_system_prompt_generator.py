@@ -585,5 +585,116 @@ class TestErrorHandling:
             assert isinstance(prompt, str)
 
 
+class TestTemplateLoadSave:
+    """Test template loading and saving functionality"""
+
+    def test_load_templates_from_file_success(self, tmp_path):
+        """Test loading templates from a valid JSON file"""
+        generator = SystemPromptGenerator()
+
+        # Create a test template file
+        template_file = tmp_path / "templates.json"
+        template_data = {
+            "test_template": {
+                "name": "test_template",
+                "template": "Test template: {{TASK}}",
+                "supports_tools": True,
+                "supports_json_mode": False,
+                "provider_specific": None,
+                "min_context_length": None
+            }
+        }
+        import json
+        with open(template_file, 'w') as f:
+            json.dump(template_data, f)
+
+        # Load templates
+        loaded = generator.load_templates_from_file(str(template_file))
+
+        assert "test_template" in loaded
+        assert loaded["test_template"].name == "test_template"
+        assert loaded["test_template"].template == "Test template: {{TASK}}"
+        assert loaded["test_template"].supports_tools is True
+
+    def test_load_templates_from_file_error(self, tmp_path):
+        """Test loading templates from invalid file"""
+        generator = SystemPromptGenerator()
+
+        # Try to load from non-existent file
+        loaded = generator.load_templates_from_file(str(tmp_path / "nonexistent.json"))
+
+        assert loaded == {}
+
+    def test_save_templates_to_file_success(self, tmp_path):
+        """Test saving templates to file"""
+        generator = SystemPromptGenerator()
+
+        template_file = tmp_path / "output.json"
+        result = generator.save_templates_to_file(str(template_file))
+
+        assert result is True
+        assert template_file.exists()
+
+        # Verify content
+        import json
+        with open(template_file) as f:
+            data = json.load(f)
+
+        assert "default" in data
+        assert data["default"]["name"] == "default"
+
+    def test_save_templates_to_file_error(self):
+        """Test saving templates to invalid path"""
+        generator = SystemPromptGenerator()
+
+        # Try to save to invalid path
+        result = generator.save_templates_to_file("/invalid/path/that/doesnt/exist.json")
+
+        assert result is False
+
+
+class TestEdgeCases:
+    """Test edge cases and error handling"""
+
+    def test_format_tool_definitions_with_empty_dict(self):
+        """Test _format_tool_definitions with empty dict"""
+        generator = SystemPromptGenerator()
+        formatted = generator._format_tool_definitions({})
+        assert formatted == ""
+
+    def test_format_tool_definitions_with_functions_key(self):
+        """Test _format_tool_definitions with functions key"""
+        generator = SystemPromptGenerator()
+        tools = {
+            "functions": [
+                {
+                    "name": "test_func",
+                    "description": "Test function",
+                    "parameters": {"type": "object"}
+                }
+            ]
+        }
+        formatted = generator._format_tool_definitions(tools)
+        assert "test_func" in formatted
+
+    def test_get_provider_instructions_missing_provider(self):
+        """Test _get_provider_instructions with no provider"""
+        generator = SystemPromptGenerator(provider=None)
+        instructions = generator._get_provider_instructions()
+        assert instructions == ""
+
+    def test_generate_prompt_with_kwargs(self):
+        """Test generate_prompt with additional kwargs"""
+        generator = SystemPromptGenerator()
+        prompt = generator.generate_prompt(
+            custom_instruction="Be concise",
+            user_context="Technical documentation"
+        )
+
+        assert isinstance(prompt, str)
+        # Additional kwargs should be added to variables
+        assert len(prompt) > 0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
