@@ -183,7 +183,9 @@ class Message(BaseModel):
         None  # For reasoning models (DeepSeek reasoner, etc.)
     )
 
-    model_config = ConfigDict(frozen=True)
+    # Not frozen - needs to be mutable for reasoning_content updates
+    # during conversation processing (e.g., DeepSeek reasoner tool calls)
+    model_config = ConfigDict(frozen=False)
 
     @field_validator("content")
     @classmethod
