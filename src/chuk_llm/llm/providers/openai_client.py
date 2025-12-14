@@ -564,12 +564,21 @@ class OpenAILLMClient(
 
         O1 models don't support system messages - need to convert them.
         GPT-5 models support system messages.
+        DeepSeek reasoner models require reasoning_content to be REMOVED from input messages
+        (the API returns 400 if reasoning_content is present in input).
         """
         # Check if messages are already dicts (from _prepare_messages_for_conversation)
         if messages and isinstance(messages[0], dict):
-            # Already dicts - just apply O1 conversion if needed
+            # Already dicts - apply provider-specific transformations
+            result = messages
+
+            # DeepSeek: MUST strip reasoning_content from input messages
+            # API docs: "if reasoning_content is included in input messages, API returns 400 error"
+            if self.detected_provider == "deepseek":
+                result = self._strip_reasoning_content_from_messages(result)
+
             if not self._is_reasoning_model(self.model):
-                return messages
+                return result
 
             generation = self._get_reasoning_model_generation(self.model)
             if generation == "o1":
@@ -577,14 +586,19 @@ class OpenAILLMClient(
                 # Convert back to Pydantic temporarily
                 from chuk_llm.llm.core.base import _ensure_pydantic_messages
 
-                pydantic_messages = _ensure_pydantic_messages(messages)
+                pydantic_messages = _ensure_pydantic_messages(result)
                 return self._convert_system_messages_for_o1(pydantic_messages)
-            return messages
+            return result
 
-        # Messages are Pydantic objects
+        # Messages are Pydantic objects - convert to dicts first
+        dict_messages = [msg.to_dict() for msg in messages]
+
+        # DeepSeek: MUST strip reasoning_content from input messages
+        if self.detected_provider == "deepseek":
+            dict_messages = self._strip_reasoning_content_from_messages(dict_messages)
+
         if not self._is_reasoning_model(self.model):
-            # Not a reasoning model - convert Pydantic to dicts for API
-            return [msg.to_dict() for msg in messages]
+            return dict_messages
 
         generation = self._get_reasoning_model_generation(self.model)
 
@@ -593,8 +607,36 @@ class OpenAILLMClient(
             return self._convert_system_messages_for_o1(messages)
 
         # GPT-5, O3, O4, O5 models support system messages
-        # Convert Pydantic to dicts for API
-        return [msg.to_dict() for msg in messages]
+        return dict_messages
+
+    def _strip_reasoning_content_from_messages(
+        self, messages: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """
+        Strip reasoning_content from all messages for DeepSeek API compatibility.
+
+        DeepSeek API docs explicitly state:
+        "if the reasoning_content field is included in the sequence of input messages,
+        the API will return a 400 error"
+
+        Args:
+            messages: List of message dicts
+
+        Returns:
+            List of message dicts with reasoning_content removed
+        """
+        result = []
+        for msg in messages:
+            if "reasoning_content" in msg:
+                # Create a copy without reasoning_content
+                cleaned_msg = {k: v for k, v in msg.items() if k != "reasoning_content"}
+                log.debug(
+                    f"[{self.detected_provider}] Stripped reasoning_content from {msg.get('role', 'unknown')} message"
+                )
+                result.append(cleaned_msg)
+            else:
+                result.append(msg)
+        return result
 
     def _convert_system_messages_for_o1(self, messages: list) -> list[dict[str, Any]]:
         """
@@ -1285,6 +1327,18 @@ class OpenAILLMClient(
 
         # Check tool support (use smart defaults for unknown models)
         if tools:
+            # CRITICAL: DeepSeek reasoner does NOT support function calling/tools
+            # API docs: "Not Supported Features: Function Calling, FIM (Beta)"
+            if (
+                self.detected_provider == "deepseek"
+                and "reasoner" in str(self.model).lower()
+            ):
+                log.warning(
+                    f"[{self.detected_provider}] WARNING: {self.model} does NOT support function calling/tools. "
+                    f"Tool calls may be hallucinated or fail. Consider using deepseek-chat instead."
+                )
+                # Still pass tools through - let the API handle it (may work partially or fail gracefully)
+
             if not self.supports_feature("tools"):
                 log.debug(
                     f"Tools provided but {self.detected_provider}/{self.model} doesn't support tools according to config - trying anyway"
