@@ -737,6 +737,24 @@ models:
     - temperature
     - top_p
     tokens_per_second: 7.238741948820799
+  chat-gpt-5:
+    inherits_from: gpt-5
+    tested_at: '2025-12-08T00:00:00'
+    supports_chat: true
+    supports_tools: true
+    supports_text: true
+    supports_vision: true
+    supports_audio_input: false
+    supports_json_mode: true
+    supports_structured_outputs: true
+    supports_streaming: true
+    supports_system_messages: true
+    max_context: null
+    known_params:
+    - max_tokens
+    - temperature
+    - top_p
+    tokens_per_second: 80.0
   gpt-5-chat-latest:
     inherits_from: gpt-5
     tested_at: '2025-11-21T08:20:56.556539'
@@ -748,6 +766,7 @@ models:
     supports_json_mode: true
     supports_structured_outputs: true
     supports_streaming: true
+    supports_system_messages: true
     max_context: null
     known_params:
     - max_tokens
